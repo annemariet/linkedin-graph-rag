@@ -2,11 +2,19 @@
 FastAPI application entry point for Code Review Assistant.
 """
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import get_settings
+from src.core.logging import setup_logging
+from src.core.middleware import RequestLoggingMiddleware, ExceptionHandlerMiddleware
 from src.api.routes import health
+
+# Setup logging first
+setup_logging()
+logger = logging.getLogger("src.main")
 
 settings = get_settings()
 
@@ -17,6 +25,10 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Add middleware
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(ExceptionHandlerMiddleware)
 
 # Configure CORS
 app.add_middleware(
@@ -34,6 +46,7 @@ app.include_router(health.router, prefix="/api/v1", tags=["health"])
 @app.get("/")
 async def root():
     """Root endpoint."""
+    logger.info("Root endpoint accessed")
     return {
         "message": "Code Review Assistant API",
         "version": "0.1.0",
