@@ -1,0 +1,156 @@
+{
+    "name": "Multi-Project Development Environment",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "app",
+    "workspaceFolder": "/workspaces",
+    // Features for multi-language support
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.12",
+            "installTools": true
+        },
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "20",
+            "nodeGypDependencies": true
+        },
+        "ghcr.io/devcontainers/features/git:1": {
+            "version": "latest"
+        },
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {
+            "version": "latest",
+            "dockerDashComposeVersion": "v2"
+        },
+        "ghcr.io/devcontainers/features/common-utils:2": {
+            "installZsh": true,
+            "configureZshAsDefaultShell": true,
+            "installOhMyZsh": true,
+            "upgradePackages": true
+        }
+    },
+    // VS Code extensions for development workflow
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                // Python development
+                "ms-python.python",
+                "ms-python.flake8",
+                "ms-python.black-formatter",
+                "ms-python.mypy-type-checker",
+                "ms-python.pylint",
+                // Node.js/JavaScript development
+                "ms-vscode.vscode-typescript-next",
+                "esbenp.prettier-vscode",
+                "dbaeumer.vscode-eslint",
+                // Docker and containers
+                "ms-azuretools.vscode-docker",
+                "ms-vscode-remote.remote-containers",
+                // Git and version control
+                "eamodio.gitlens",
+                "github.vscode-pull-request-github",
+                // Testing and debugging
+                "ms-python.pytest",
+                "hbenl.vscode-test-explorer",
+                "ms-vscode.test-adapter-converter",
+                // Code quality and formatting
+                "ms-vscode.vscode-json",
+                "redhat.vscode-yaml",
+                "ms-vscode.makefile-tools",
+                // Development workflow
+                "ms-vscode.vscode-terminal-tabs",
+                "streetsidesoftware.code-spell-checker",
+                "ms-vscode.hexeditor",
+                // Multi-project support
+                "ms-vscode.vscode-workspace-trust",
+                "alefragnani.project-manager"
+            ],
+            "settings": {
+                // Python settings
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.linting.enabled": true,
+                "python.linting.flake8Enabled": true,
+                "python.linting.mypyEnabled": true,
+                "python.formatting.provider": "black",
+                "python.testing.pytestEnabled": true,
+                "python.testing.unittestEnabled": false,
+                // Node.js settings
+                "typescript.preferences.includePackageJsonAutoImports": "auto",
+                "javascript.preferences.includePackageJsonAutoImports": "auto",
+                // Formatting settings
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit",
+                    "source.fixAll.eslint": "explicit"
+                },
+                // Terminal settings
+                "terminal.integrated.defaultProfile.linux": "zsh",
+                "terminal.integrated.profiles.linux": {
+                    "zsh": {
+                        "path": "/bin/zsh"
+                    }
+                },
+                // Git settings
+                "git.autofetch": true,
+                "git.enableSmartCommit": true,
+                // File associations
+                "files.associations": {
+                    "*.env.example": "dotenv",
+                    "*.env.local": "dotenv",
+                    "Dockerfile*": "dockerfile",
+                    "docker-compose*.yml": "dockercompose"
+                },
+                // Workspace trust
+                "security.workspace.trust.untrustedFiles": "open",
+                // Multi-project settings
+                "explorer.compactFolders": false,
+                "breadcrumbs.enabled": true
+            }
+        }
+    },
+    // Port forwarding for development services
+    "forwardPorts": [
+        3000, // Node.js development server
+        8000, // Python development server
+        8080, // Alternative web server
+        5432, // PostgreSQL
+        6379, // Redis
+        9229, // Node.js debugger
+        5678 // Python debugger
+    ],
+    "portsAttributes": {
+        "3000": {
+            "label": "Node.js Dev Server",
+            "onAutoForward": "notify"
+        },
+        "8000": {
+            "label": "Python Dev Server",
+            "onAutoForward": "notify"
+        },
+        "5432": {
+            "label": "PostgreSQL",
+            "onAutoForward": "silent"
+        },
+        "6379": {
+            "label": "Redis",
+            "onAutoForward": "silent"
+        }
+    },
+    // Environment variable handling
+    "containerEnv": {
+        "WORKSPACE_ROOT": "/workspaces",
+        "PYTHONPATH": "/workspaces",
+        "NODE_ENV": "development",
+        "DOCKER_BUILDKIT": "1"
+    },
+    // Mounts are handled by docker-compose.yml volumes
+    // Post-creation setup
+    "postCreateCommand": "bash /workspaces/scripts/setup-dev.sh",
+    // Development user configuration
+    "remoteUser": "vscode",
+    // Lifecycle scripts
+    "initializeCommand": "echo 'Initializing multi-project devcontainer...'",
+    "onCreateCommand": "echo 'Setting up development environment...'",
+    "updateContentCommand": "echo 'Updating development dependencies...'",
+    // Container configuration
+    "shutdownAction": "stopCompose",
+    "overrideCommand": false
+}

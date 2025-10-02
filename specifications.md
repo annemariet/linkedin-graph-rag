@@ -510,3 +510,19 @@ Kent Beck's principles of software development provide valuable insights for bui
 - **System Uptime**: > 99.9%
 - **Scalability**: Support 100+ concurrent workflows
 - **Developer Experience**: < 5 minutes to create first workflow 
+
+
+```
+Host lightning-ai
+  Hostname ssh.lightning.ai
+  User s_01k0cyqm8ebwc7kppffpnepcjq
+
+Host ssh.lightning.ai
+  IdentityFile C:\Users\annem\.ssh\lightning_rsa
+  IdentitiesOnly yes
+  ServerAliveInterval 15
+  ServerAliveCountMax 4
+  	StrictHostKeyChecking no
+  	UserKnownHostsFile=\\.\NUL
+
+```
