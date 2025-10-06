@@ -7,44 +7,69 @@
   "projects": [
     {
       "name": "code-review-assistant",
-      "path": "projects/code-review-assistant",
+      "path": "projects\\code-review-assistant",
       "type": "python",
       "status": "active",
       "description": "Multi-agent code review system using CrewAI and FastAPI",
-      "ports": [8000, 8001],
-      "services": ["postgres", "redis"]
+      "ports": [
+        8000,
+        8001
+      ],
+      "services": [
+        "postgres",
+        "redis"
+      ]
     },
     {
-      "name": "linkedin-api-client",
-      "path": "projects/linkedin",
+      "name": "fitbit",
+      "path": "projects\\fitbit",
       "type": "python",
       "status": "active",
-      "description": "Official Python client library for LinkedIn APIs",
-      "ports": [8002, 8003],
+      "description": "Fitbit data analysis and visualization project",
+      "ports": [
+        8004,
+        8005
+      ],
       "services": []
     },
     {
-      "name": "fitbit-analysis",
-      "path": "projects/fitbit",
+      "name": "linkedin",
+      "path": "projects\\linkedin",
       "type": "python",
-      "status": "development",
-      "description": "Fitbit data analysis and visualization project",
-      "ports": [8004, 8005],
+      "status": "active",
+      "description": "Official Python client library for LinkedIn APIs",
+      "ports": [
+        8002,
+        8003
+      ],
       "services": []
     }
   ],
   "shared_services": {
     "postgres": {
       "port": 5432,
-      "databases": ["code_review_db"]
+      "databases": [
+        "code_review_assistant_db"
+      ]
     },
     "redis": {
       "port": 6379,
-      "databases": [0, 1, 2]
+      "databases": [
+        0,
+        1,
+        2
+      ]
     }
   },
   "port_allocation": {
     "range": "8000-8099",
-    "reserved": [8000, 8001, 8002, 8003, 8004, 8005]
+    "reserved": [
+      8000,
+      8001,
+      8004,
+      8005,
+      8002,
+      8003
+    ]
   }
 }

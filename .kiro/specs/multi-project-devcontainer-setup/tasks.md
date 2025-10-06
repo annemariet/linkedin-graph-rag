@@ -71,7 +71,10 @@
   - Write host-based secret validation and injection scripts
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 8. Create host-based setup and validation scripts
+- [-] 8. Create host-based setup and validation scripts
+
+
+
   - Write `scripts/setup-secrets.sh` for interactive project-specific secret configuration
   - Write `scripts/validate-secrets.sh` for project environment validation
   - Create `scripts/start-project.sh` to launch project-specific devcontainers
