@@ -18,8 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Node.js tools for JavaScript/TypeScript analysis
 RUN npm install -g eslint prettier typescript @typescript-eslint/parser @typescript-eslint/eslint-plugin
 
+# Install uv for faster Python package management
+RUN pip install --no-cache-dir uv
+
 # Install additional static analysis tools
-RUN pip install --no-cache-dir \
+RUN uv pip install --no-cache-dir \
     semgrep \
     gitpython \
     truffleHog \
@@ -27,8 +30,7 @@ RUN pip install --no-cache-dir \
 
 # Install Python dependencies
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e ".[dev,tools]"
+RUN uv sync --all-extras
 
 # Copy application code
 COPY . .

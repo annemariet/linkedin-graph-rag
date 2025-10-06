@@ -22,13 +22,9 @@ REM Activate virtual environment
 echo Activating virtual environment...
 call venv\Scripts\activate.bat
 
-REM Upgrade pip
-echo Upgrading pip...
-python -m pip install --upgrade pip
-
 REM Install dependencies
 echo Installing development dependencies...
-pip install -e ".[dev,tools]"
+uv sync --all-extras
 
 REM Install pre-commit hooks
 echo Installing pre-commit hooks...

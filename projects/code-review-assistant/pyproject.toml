@@ -144,3 +144,33 @@ ignore = [
 [tool.bandit]
 exclude_dirs = ["tests"]
 skips = ["B101", "B601"]
+
+[project.scripts]
+dev = "uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"
+test = "pytest"
+lint = "flake8 src tests"
+format = "black src tests"
+type-check = "mypy src"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
+    "httpx>=0.25.0",
+    "bandit>=1.7.0",
+    "safety>=2.3.0",
+    "gitpython>=3.1.0",
+    "semgrep>=1.45.0",
+]
+
+[tool.uv.sources]
+# Use local development versions if available

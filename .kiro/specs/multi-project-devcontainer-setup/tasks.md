@@ -1,40 +1,24 @@
 # Implementation Plan
 
-- [x] 1. Create devcontainer base configuration
-
-
-
-
-
-  - Create `.devcontainer/devcontainer.json` with multi-language support (Python, Node.js, Git, Docker CLI)
-  - Configure VS Code extensions for development workflow
-  - Set up port forwarding and environment variable handling
+- [x] 1. Create workspace-level devcontainer configuration (DEPRECATED - moved to project-specific)
+  - ~~Create `.devcontainer/devcontainer.json` with multi-language support~~
+  - ~~Configure VS Code extensions for development workflow~~
+  - ~~Set up port forwarding and environment variable handling~~
+  - _Note: Architecture changed to project-specific devcontainers_
   - _Requirements: 1.1, 1.2_
 
-- [x] 2. Set up Docker Compose development stack
-
-
-
-
-
-
-
-
-  - Create `.devcontainer/docker-compose.yml` with PostgreSQL, Redis, and development services
-  - Configure service networking and volume management
-  - Implement service isolation between projects
+- [x] 2. Set up workspace-level Docker Compose stack (DEPRECATED - moved to project-specific)
+  - ~~Create `.devcontainer/docker-compose.yml` with shared services~~
+  - ~~Configure service networking and volume management~~
+  - ~~Implement service isolation between projects~~
+  - _Note: Architecture changed to project-specific service stacks_
   - _Requirements: 1.1, 4.1, 4.4_
 
-- [x] 3. Create devcontainer Dockerfile
-
-
-
-
-
-
-  - Write `.devcontainer/Dockerfile` with base development tools
-  - Install Python 3.12+, Node.js, Git, Docker CLI, and common development utilities
-  - Configure development environment with proper permissions and user setup
+- [x] 3. Create workspace-level devcontainer Dockerfile (DEPRECATED - moved to project-specific)
+  - ~~Write `.devcontainer/Dockerfile` with base development tools~~
+  - ~~Install Python 3.12+, Node.js, Git, Docker CLI, and common development utilities~~
+  - ~~Configure development environment with proper permissions and user setup~~
+  - _Note: Architecture changed to project-specific Dockerfiles_
   - _Requirements: 1.1, 1.3_
 
 - [x] 4. Implement project directory structure
@@ -50,71 +34,96 @@
   - Update all relative path references in moved projects
   - _Requirements: 2.1, 2.3_
 
-- [ ] 5. Update project configurations for multi-project setup
+- [x] 5. Update project configurations for multi-project setup
+
+
+
+
+
   - Update `projects/code-review-assistant/pyproject.toml` with project-specific settings
   - Update `projects/linkedin/` configuration files as needed
   - Ensure each project can run independently within the devcontainer
   - _Requirements: 2.1, 2.2_
 
-- [ ] 6. Implement secure secret management
+- [x] 6. Migrate to project-specific devcontainer architecture
+
+
+
+
+
+
+  - Move current `.devcontainer/` to `projects/code-review-assistant/.devcontainer/`
+  - Create project-specific devcontainer for LinkedIn API client
+  - Create minimal devcontainer for fitbit-analysis project
+  - Update port assignments to avoid conflicts between projects
+  - Test each project can run independently in its own container
+  - _Requirements: 1.1, 2.2, 4.4_
+
+- [x] 7. Implement host-based secure secret management
+
+
+
+
+
   - Create `.kiroignore` file to prevent AI tools from accessing secret files
   - Update `.gitignore` to exclude all `.env.local` and `.env` files
-  - Create environment template files for each project
-  - Write secret validation scripts
+  - Create project-specific environment template files
+  - Write host-based secret validation and injection scripts
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 7. Create setup and validation scripts
-  - Write `scripts/setup-secrets.sh` for interactive secret configuration
-  - Write `scripts/validate-secrets.sh` for environment validation
+- [ ] 8. Create host-based setup and validation scripts
+  - Write `scripts/setup-secrets.sh` for interactive project-specific secret configuration
+  - Write `scripts/validate-secrets.sh` for project environment validation
+  - Create `scripts/start-project.sh` to launch project-specific devcontainers
   - Create cross-platform script alternatives (PowerShell versions)
-  - Implement project-specific setup workflows
+  - Implement project discovery and validation workflows
   - _Requirements: 3.4, 1.4_
 
-- [ ] 8. Configure code quality and TDD tooling
-  - Set up pre-commit hooks configuration with project-aware rules
-  - Configure shared linting and formatting tools (Black, Flake8, MyPy, ESLint, Prettier)
-  - Create test runner scripts for each project type
-  - Implement fast feedback loops for TDD workflow
+- [ ] 9. Configure project-specific code quality and TDD tooling
+  - Set up project-specific pre-commit hooks with shared base configuration
+  - Configure project-tailored linting and formatting tools in each devcontainer
+  - Create project-specific test runner scripts and TDD workflows
+  - Implement fast feedback loops within each project's container
   - _Requirements: 5.1, 5.2, 5.4, 7.1, 7.2, 7.5_
 
-- [ ] 9. Implement project isolation and port management
-  - Create port allocation system to prevent conflicts between projects
-  - Configure Docker Compose service naming to avoid conflicts
-  - Set up project-specific environment variable isolation
-  - Test service startup and shutdown for multiple projects
+- [ ] 10. Implement complete project isolation
+  - Ensure each project's devcontainer has isolated services (no shared databases)
+  - Validate port allocation system prevents conflicts between running projects
+  - Test project-specific environment variable isolation
+  - Verify multiple projects can run simultaneously without interference
   - _Requirements: 2.2, 4.4, 2.4_
 
-- [ ] 10. Create workspace documentation and README
-  - Write comprehensive workspace README with setup instructions
-  - Document project structure and conventions
-  - Create troubleshooting guide for common issues
-  - Document cross-platform setup procedures
+- [ ] 11. Create comprehensive workspace documentation
+  - Write global workspace README with project-specific devcontainer setup instructions
+  - Document project-specific devcontainer architecture and conventions
+  - Create troubleshooting guide for project isolation and container issues
+  - Document cross-platform setup procedures for each project type
   - _Requirements: 1.4, 3.4_
 
-- [ ] 11. Set up GitHub integration
-  - Create `.github/workflows/` for CI/CD across multiple projects
-  - Configure GitHub Actions to run tests for each project independently
-  - Set up automated code quality checks
-  - Implement security scanning to prevent secret commits
+- [ ] 12. Set up project-aware GitHub integration
+  - Create `.github/workflows/` for CI/CD that detects changed projects
+  - Configure GitHub Actions to run tests only for modified projects
+  - Set up automated code quality checks per project
+  - Implement security scanning to prevent secret commits across all projects
   - _Requirements: 3.1, 7.6_
 
-- [ ] 12. Test cross-platform compatibility
-  - Test devcontainer setup on Windows with WSL
-  - Test devcontainer setup on macOS
-  - Test devcontainer setup on Linux
-  - Validate secret management across all platforms
+- [ ] 13. Test cross-platform project-specific compatibility
+  - Test each project's devcontainer setup on Windows with WSL
+  - Test each project's devcontainer setup on macOS
+  - Test each project's devcontainer setup on Linux
+  - Validate host-based secret management across all platforms
   - _Requirements: 1.1, 1.3, 3.3_
 
-- [ ] 13. Optimize container performance
-  - Implement Docker layer caching for faster rebuilds
-  - Configure volume mounts for optimal performance
-  - Set up development dependency caching
-  - Measure and optimize container startup times
+- [ ] 14. Optimize project-specific container performance
+  - Implement Docker layer caching for each project's container
+  - Configure project-specific volume mounts for optimal performance
+  - Set up per-project development dependency caching
+  - Measure and optimize each project's container startup times
   - _Requirements: 4.1, 4.2_
 
-- [ ] 14. Create project migration validation
-  - Write tests to verify all project files moved correctly
-  - Validate that all import paths and references work after migration
-  - Test that existing functionality works in new structure
-  - Create rollback procedures if needed
+- [ ] 15. Validate project-specific architecture migration
+  - Write tests to verify project-specific devcontainer configurations work
+  - Validate that each project runs independently without cross-project interference
+  - Test that existing functionality works in project-specific containers
+  - Create rollback procedures for reverting to workspace-level containers if needed
   - _Requirements: 2.1, 2.4_

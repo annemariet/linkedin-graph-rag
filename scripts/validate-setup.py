@@ -50,8 +50,8 @@ def main():
     # Check Python version
     checks.append(run_command("python --version", "Python installation"))
     
-    # Check pip
-    checks.append(run_command("pip --version", "pip installation"))
+    # Check uv
+    checks.append(run_command("uv --version", "uv installation"))
     
     # Check required files
     checks.append(check_file_exists("pyproject.toml", "Project configuration"))

@@ -27,13 +27,9 @@ fi
 echo "Activating virtual environment..."
 source venv/bin/activate
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
-
 # Install dependencies
 echo "Installing development dependencies..."
-pip install -e ".[dev,tools]"
+uv sync --all-extras
 
 # Install pre-commit hooks
 echo "Installing pre-commit hooks..."

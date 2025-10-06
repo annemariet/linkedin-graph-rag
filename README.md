@@ -14,16 +14,46 @@ A multi-agent code review system that leverages specialized LLM agents to perfor
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - Docker and Docker Compose
 - Git
 
 ### Installation
 
+#### Option 1: DevPod (Recommended)
+
+1. Install DevPod:
+```bash
+# Windows
+winget install loft-sh.devpod
+
+# macOS
+brew install devpod
+
+# Linux
+curl -L -o devpod https://github.com/loft-sh/devpod/releases/latest/download/devpod-linux-amd64
+sudo install -c -m 0755 devpod /usr/local/bin
+```
+
+2. Clone and setup:
+```bash
+git clone <repository-url>
+cd amai-lab
+
+# Run setup script
+./scripts/devpod-setup.sh    # Linux/macOS
+scripts\devpod-setup.bat     # Windows
+
+# Connect to the workspace
+devpod ssh .
+```
+
+#### Option 2: Local Development
+
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd code-review-assistant
+cd amai-lab
 ```
 
 2. Create and activate virtual environment:
@@ -34,7 +64,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install -e ".[dev,tools]"
+uv sync --all-extras
 ```
 
 4. Set up environment variables:

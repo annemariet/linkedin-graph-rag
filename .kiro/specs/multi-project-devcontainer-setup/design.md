@@ -12,50 +12,69 @@ The architecture follows devcontainer best practices with a monorepo structure t
 
 ```
 workspace/
-├── .devcontainer/                 # Devcontainer configuration
-│   ├── devcontainer.json         # Primary devcontainer config
-│   ├── Dockerfile                # Development environment image
-│   └── docker-compose.yml        # Multi-service development stack
-├── projects/                     # All projects organized here
-│   ├── code-review-assistant/    # Existing project (moved from root)
+├── scripts/                      # Global setup and validation scripts
+│   ├── validate-projects.py     # Project validation
+│   ├── run-project.py           # Project runner
+│   ├── setup-secrets.sh         # Secret management
+│   └── migrate-to-uv.py         # Package manager migration
+├── projects/                     # All projects with individual devcontainers
+│   ├── code-review-assistant/    # Python FastAPI project
+│   │   ├── .devcontainer/       # Project-specific devcontainer
+│   │   │   ├── devcontainer.json
+│   │   │   ├── Dockerfile
+│   │   │   └── docker-compose.yml
 │   │   ├── src/
 │   │   ├── tests/
 │   │   ├── pyproject.toml
-│   │   └── .env.example
-│   ├── linkedin/                 # Existing project (moved from root)
-│   │   └── [existing linkedin project structure]
-│   └── [future-projects]/        # Additional projects
-├── scripts/                      # Shared development scripts
-├── .github/                      # GitHub workflows and templates
+│   │   ├── project.json         # Project configuration
+│   │   ├── .env.example         # Environment template
+│   │   └── README.md            # Project documentation
+│   ├── linkedin-api-client/     # Python library project
+│   │   ├── .devcontainer/       # Different container setup
+│   │   │   ├── devcontainer.json
+│   │   │   └── Dockerfile
+│   │   ├── linkedin_api/
+│   │   ├── tests/
+│   │   ├── pyproject.toml
+│   │   ├── project.json
+│   │   ├── .env.example
+│   │   └── README.md
+│   ├── fitbit-analysis/         # Data analysis project
+│   │   ├── .devcontainer/       # Minimal container setup
+│   │   ├── project.json
+│   │   └── README.md
+│   └── workspace.json           # Project registry
+├── .github/                     # GitHub workflows and templates
 │   └── workflows/
-└── README.md                     # Workspace overview
+└── README.md                    # Global workspace overview
 ```
 
 ### Devcontainer Architecture
 
-The devcontainer setup uses a multi-stage approach:
+The devcontainer setup uses a project-specific approach:
 
-1. **Base Development Image**: Contains common tools (Python, Node.js, Git, Docker CLI)
-2. **Project-Specific Extensions**: Each project can extend the base with specific requirements
-3. **Service Integration**: Docker Compose manages databases, Redis, and other services
-4. **Volume Management**: Separate volumes for each project's data and shared caches
+1. **Project-Specific Containers**: Each project has its own devcontainer configuration tailored to its needs
+2. **Independent Service Stacks**: Each project manages its own services (databases, Redis, etc.) to avoid conflicts
+3. **Shared Base Images**: Projects can share common base images but customize as needed
+4. **Isolated Development**: Each project runs in complete isolation with its own ports, volumes, and environment
+5. **Host-Based Management**: Global scripts run on the host to manage and coordinate between projects
 
 ## Components and Interfaces
 
-### 1. Devcontainer Configuration
+### 1. Project-Specific Devcontainer Configuration
 
-**Primary Configuration** (`.devcontainer/devcontainer.json`):
-- Base image definition with multi-language support
-- VS Code extensions for Python, Docker, Git, testing
-- Port forwarding for web services and databases
-- Environment variable management
-- Post-creation scripts for setup
+**Per-Project Configuration** (`projects/{name}/.devcontainer/devcontainer.json`):
+- Project-tailored base image (Python 3.11 for FastAPI, Python 3.7+ for LinkedIn client, etc.)
+- Project-specific VS Code extensions and settings
+- Unique port forwarding to avoid conflicts
+- Project-specific environment variable injection
+- Custom post-creation scripts for project setup
 
-**Docker Compose Integration**:
-- Development services (PostgreSQL, Redis, etc.)
-- Project-specific service definitions
-- Network isolation between projects
-- Volume management for persistence and caching
+**Project-Specific Docker Compose** (`projects/{name}/.devcontainer/docker-compose.yml`):
+- Independent service stacks per project
+- Project-specific database instances (e.g., code-review-assistant gets PostgreSQL + Redis)
+- Isolated networks to prevent cross-project interference
+- Project-specific volume management
 
 ### 2. Project Organization System
 
@@ -81,25 +100,26 @@ Each project will have a simple `project.json` configuration file:
 - `projects/{project-name}/.env.example` - Environment template
 - `projects/{project-name}/.env.local` - Local secrets (git-ignored)
 
-### 3. Secret Management System
+### 3. Host-Based Secret Management System
 
-**Environment Variable Hierarchy**:
-1. `.env.local` (git-ignored, machine-specific secrets)
-2. `.env.example` (template, committed to git)
-3. Project-specific environment files
-4. Devcontainer environment variables
+**Environment Variable Hierarchy** (per project):
+1. `projects/{name}/.env.local` (git-ignored, machine-specific secrets)
+2. `projects/{name}/.env.example` (template, committed to git)
+3. Host environment variables (for global settings)
+4. Container environment variable injection from host
 
 **AI Tool Security Measures**:
 - All secret files (`.env.local`, `.env`) added to `.gitignore`
 - Secret files added to `.kiroignore` to prevent AI tool access
-- Encrypted secret storage option for sensitive environments
+- Host-based secret storage prevents container secret leakage
 - Clear separation between example templates and actual secrets
 
 **Secret Management Interface**:
 ```bash
-# Setup script interface
+# Host-based secret management
 ./scripts/setup-secrets.sh [project-name]
 ./scripts/validate-secrets.sh [project-name]
+./scripts/inject-secrets.sh [project-name]  # For container startup
 ```
 
 ### 4. Development Tooling Integration
@@ -118,17 +138,20 @@ Each project will have a simple `project.json` configuration file:
 
 ## Configuration Files
 
-### Workspace-Level Configuration
+### Host-Level Configuration
 
-**`.devcontainer/devcontainer.json`** - Main devcontainer configuration
-**`.devcontainer/docker-compose.yml`** - Service definitions
-**`scripts/`** - Shared setup and utility scripts
+**`scripts/`** - Global setup and utility scripts
+**`projects/workspace.json`** - Project registry and global configuration
+**`.gitignore`** - Global ignore patterns including all secret files
+**`.kiroignore`** - AI tool exclusion patterns
 
 ### Project-Level Configuration
 
+**`projects/{name}/.devcontainer/`** - Complete devcontainer setup for the project
 **`projects/{name}/project.json`** - Project metadata and scripts
 **`projects/{name}/.env.example`** - Environment variable template
 **`projects/{name}/.env.local`** - Local environment variables (git-ignored)
+**`projects/{name}/README.md`** - Project-specific documentation
 
 ## Error Handling
 
