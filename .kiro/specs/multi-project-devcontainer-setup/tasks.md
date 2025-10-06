@@ -71,7 +71,9 @@
   - Write host-based secret validation and injection scripts
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [-] 8. Create host-based setup and validation scripts
+- [x] 8. Create host-based setup and validation scripts
+
+
 
 
 
