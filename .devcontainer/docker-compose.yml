@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # LinkedIn API Client development container
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - vscode-extensions:/root/.vscode-server/extensions
+      - vscode-extensions-insiders:/root/.vscode-server-insiders/extensions
+    command: sleep infinity
+    networks:
+      - linkedin-network
+    environment:
+      # LinkedIn API specific environment variables
+      - LINKEDIN_CLIENT_ID=${LINKEDIN_CLIENT_ID:-}
+      - LINKEDIN_CLIENT_SECRET=${LINKEDIN_CLIENT_SECRET:-}
+      - LINKEDIN_REDIRECT_URI=${LINKEDIN_REDIRECT_URI:-}
+    ports:
+      - "8001:8001"
+
+  # Optional Redis for caching (lightweight for library development)
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - linkedin-network
+    ports:
+      - "6380:6379"  # Different port to avoid conflicts
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  linkedin-network:
+    driver: bridge
+    name: linkedin-api-network
+
+volumes:
+  redis-data:
+    name: linkedin-api-redis-data
+  vscode-extensions:
+    name: linkedin-api-vscode-extensions
+  vscode-extensions-insiders:
+    name: linkedin-api-vscode-extensions-insiders

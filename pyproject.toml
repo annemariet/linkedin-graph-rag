@@ -1,0 +1,107 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "linkedin-api-client"
+version = "0.3.0"
+packages = [
+    { include = "linkedin_api" }
+]
+authors = ["Steven Shimizu <sshimizu@linkedin.com>"]
+description = "Official Python client library for LinkedIn APIs"
+homepage = "https://github.com/linkedin-developers/linkedin-api-python-client"
+repository = "https://github.com/linkedin-developers/linkedin-api-python-client"
+documentation = "https://github.com/linkedin-developers/linkedin-api-python-client"
+readme = "README.md"
+license = "Proprietary"
+keywords = ["linkedin", "api", "rest.li"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+
+[tool.poetry.dependencies]
+python = "^3.7"
+requests = "*"
+
+[tool.poetry.group.dev.dependencies]
+curlify = "*"
+flask = "*"
+pytest = "*"
+python-dotenv = "*"
+responses = "*"
+twine = "*"
+pre-commit = "*"
+black = "*"
+flake8 = "*"
+mypy = "*"
+pytest-cov = "*"
+
+[tool.poetry.scripts]
+linkedin-dev = "flask --app examples/flask_app.py run"
+
+[tool.black]
+line-length = 88
+target-version = ['py37']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = [
+    "tests",
+]
+python_files = [
+    "test_*.py",
+    "*_test.py",
+]
+markers = [
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["linkedin_api"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "examples/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "build",
+    "dist",
+]
