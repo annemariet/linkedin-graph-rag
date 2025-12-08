@@ -25,6 +25,7 @@ classifiers = [
 [tool.poetry.dependencies]
 python = "^3.7"
 requests = "*"
+keyring = "*"
 
 [tool.poetry.group.dev.dependencies]
 curlify = "*"
@@ -104,4 +105,12 @@ exclude = [
     ".venv",
     "build",
     "dist",
+]
+
+[dependency-groups]
+dev = [
+    "beautifulsoup4>=4.14.3",
+    "dotenv>=0.9.9",
+    "keyring>=25.7.0",
+    "requests>=2.32.5",
 ]
