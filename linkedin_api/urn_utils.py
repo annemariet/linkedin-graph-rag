@@ -46,12 +46,16 @@ def urn_to_post_url(urn: str) -> Optional[str]:
     Examples:
         urn:li:ugcPost:7398404729531285504 
         -> https://www.linkedin.com/feed/update/urn:li:ugcPost:7398404729531285504
+        urn:li:share:7398404729531285504
+        -> https://www.linkedin.com/feed/update/urn:li:share:7398404729531285504
+        urn:li:activity:7398038757779730432
+        -> https://www.linkedin.com/feed/update/urn:li:activity:7398038757779730432
     
     Note: This format has been validated and works correctly. The URL
     will load the actual post HTML page if the post is public.
     
     Args:
-        urn: The post URN (e.g., "urn:li:ugcPost:7398404729531285504")
+        urn: The post URN (e.g., "urn:li:ugcPost:...", "urn:li:share:...", "urn:li:activity:...")
         
     Returns:
         The public LinkedIn post URL, or None if invalid
@@ -60,10 +64,11 @@ def urn_to_post_url(urn: str) -> Optional[str]:
         return None
     
     # LinkedIn post URLs use the full URN in the path
-    if urn.startswith('urn:li:ugcPost:'):
+    # Handle different URN formats: ugcPost, share, activity
+    if any(urn.startswith(prefix) for prefix in ['urn:li:ugcPost:', 'urn:li:share:', 'urn:li:activity:']):
         return f"https://www.linkedin.com/feed/update/{urn}"
     
-    # Handle other post types
+    # Handle other LinkedIn URNs
     if urn.startswith('urn:li:'):
         return f"https://www.linkedin.com/feed/update/{urn}"
     

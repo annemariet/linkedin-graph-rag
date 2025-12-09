@@ -13,72 +13,12 @@ Extracts statistics for:
 import json
 from collections import Counter, defaultdict
 from datetime import datetime
-from linkedin_api.auth import build_linkedin_session, get_access_token
-
-
-BASE_URL = "https://api.linkedin.com/rest"
+from linkedin_api.changelog_utils import fetch_changelog_data
 
 
 def get_all_changelog_data():
     """Fetch all changelog data by paginating through all results."""
-    
-    access_token = get_access_token()
-    if not access_token:
-        print("❌ LINKEDIN_ACCESS_TOKEN not found")
-        print("   Run 'uv run setup_token.py' to store it in Keychain, or set it as an environment variable")
-        return []
-    
-    print("🔍 Fetching all changelog data...")
-    session = build_linkedin_session(access_token)
-    all_elements = []
-    start = 0
-    count = 50
-    
-    while True:
-        try:
-            print(f"   📡 Fetching batch starting at {start}...")
-            response = session.get(
-                f"{BASE_URL}/memberChangeLogs",
-                params={"q": "memberAndApplication", "start": start, "count": count},
-            )
-            
-            if response.status_code != 200:
-                print(f"❌ Error: {response.status_code}")
-                print(f"Response: {response.text[:200]}...")
-                break
-            
-            data = response.json()
-            elements = data.get('elements', [])
-            
-            if not elements:
-                print("✅ No more data to fetch")
-                break
-            
-            all_elements.extend(elements)
-            print(f"   ✅ Got {len(elements)} elements (total: {len(all_elements)})")
-            
-            # Check for more pages
-            paging = data.get('paging', {})
-            links = paging.get('links', [])
-            next_link = None
-            
-            for link in links:
-                if link.get('rel') == 'next':
-                    next_link = link.get('href')
-                    break
-            
-            if not next_link:
-                print("✅ No more pages")
-                break
-            
-            start += count
-            
-        except Exception as e:
-            print(f"❌ Exception: {str(e)}")
-            break
-    
-    print(f"✅ Total elements fetched: {len(all_elements)}")
-    return all_elements
+    return fetch_changelog_data()
 
 
 def extract_statistics(elements):
@@ -107,6 +47,7 @@ def extract_statistics(elements):
         },
         'resource_types': Counter(),
         'method_types': Counter(),
+        'resource_examples': {},  # resourceName -> example activity object
     }
     
     # Track actor to determine if action is by user
@@ -121,6 +62,10 @@ def extract_statistics(elements):
         # Track resource and method types
         stats['resource_types'][resource_name] += 1
         stats['method_types'][method_name] += 1
+        
+        # Store example activity for each resourceName (first occurrence)
+        if resource_name and resource_name not in stats['resource_examples']:
+            stats['resource_examples'][resource_name] = activity
         
         # Set user actor from first element (assuming consistent actor)
         if not user_actor and actor:
@@ -212,6 +157,22 @@ def print_statistics(stats):
     for resource, count in stats['resource_types'].most_common(10):
         print(f"   • {resource}: {count}")
     
+    # All resource names with examples
+    print(f"\n📋 ALL RESOURCE NAMES WITH EXAMPLES:")
+    print(f"   Total unique resource types: {len(stats['resource_examples'])}")
+    for resource_name in sorted(stats['resource_examples'].keys()):
+        count = stats['resource_types'][resource_name]
+        example = stats['resource_examples'][resource_name]
+        print(f"\n   • {resource_name} (count: {count}):")
+        if example:
+            # Pretty print example activity
+            example_str = json.dumps(example, indent=6, default=str)
+            # Indent each line
+            for line in example_str.split('\n'):
+                print(f"     {line}")
+        else:
+            print(f"     (no activity object)")
+    
     print("\n" + "=" * 60)
 
 
@@ -227,10 +188,11 @@ def save_statistics(stats, filename='linkedin_statistics.json'):
         'comments': stats['comments'],
         'resource_types': dict(stats['resource_types']),
         'method_types': dict(stats['method_types']),
+        'resource_examples': stats['resource_examples'],
     }
     
     with open(filename, 'w') as f:
-        json.dump(stats_json, f, indent=2)
+        json.dump(stats_json, f, indent=2, default=str)
     
     print(f"💾 Statistics saved to {filename}")
 
