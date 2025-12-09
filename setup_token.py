@@ -8,16 +8,15 @@ This script securely stores your token in the system keyring so you only need to
 import sys
 import getpass
 import os
-import dotenv
-
-dotenv.load_dotenv()
-
 try:
-    import keyring
+    import keyring  # type: ignore[import-unresolved]
 except ImportError:
     print("❌ keyring library not installed")
     print("   Install it with: pip install keyring")
     sys.exit(1)
+
+
+from linkedin_api.auth import get_access_token
 
 
 def main():
@@ -25,12 +24,12 @@ def main():
     print("=" * 50)
     
     SERVICE = "LINKEDIN_ACCESS_TOKEN"
-    ACCOUNT = os.getenv('LINKEDIN_ACCOUNT')
+    ACCOUNT = os.getenv("LINKEDIN_ACCOUNT")
     
     # Check if token already exists
-    existing = keyring.get_password(SERVICE, ACCOUNT)
+    existing = keyring.get_password(SERVICE, ACCOUNT) or get_access_token()
     if existing:
-        print(f"✅ Token already stored in keyring")
+        print("✅ Token already available")
         response = input("   Do you want to update it? (y/N): ").strip().lower()
         if response != 'y':
             print("   Keeping existing token.")

@@ -4,24 +4,13 @@ Explore LinkedIn Member Data Portability API changelog details
 Focus on time ranges, resource types, and categories
 """
 
-import os
-import requests
 from datetime import datetime
 from collections import defaultdict, Counter
-from bs4 import BeautifulSoup
-import dotenv
-import keyring
+from bs4 import BeautifulSoup  # type: ignore[import-unresolved]
+from linkedin_api.auth import build_linkedin_session, get_access_token
 
-dotenv.load_dotenv()
 
-# SECURITY: Use keyring or environment variable
-def get_access_token():
-    """Get token from keyring or environment variable."""
-    token = keyring.get_password("LINKEDIN_ACCESS_TOKEN", os.getenv('LINKEDIN_ACCOUNT'))
-    if token:
-        return token
-
-    return os.getenv('LINKEDIN_ACCESS_TOKEN')
+BASE_URL = "https://api.linkedin.com/rest"
 
 LI_REACTIONS = {
             'LIKE': '👍',
@@ -46,25 +35,16 @@ def get_all_reactions():
         return []
     
     print("❤️  Fetching all reactions from changelog...")
-    
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'X-Restli-Protocol-Version': '2.0.0',
-        'LinkedIn-Version': '202312'
-    }
-    
-    base_url = "https://api.linkedin.com/rest"
+    session = build_linkedin_session(access_token)
     all_reactions = []
     start = 0
     count = 50
     
     while True:
         try:
-            response = requests.get(
-                f"{base_url}/memberChangeLogs",
-                headers=headers,
-                params={"q": "memberAndApplication", "start": start, "count": count}
+            response = session.get(
+                f"{BASE_URL}/memberChangeLogs",
+                params={"q": "memberAndApplication", "start": start, "count": count},
             )
             
             if response.status_code != 200:
@@ -125,6 +105,8 @@ def get_all_reactions():
 
 def get_post_details(post_url,):
     """Get post details including author and content."""
+    import requests  # type: ignore[import-unresolved]
+
     try:
         response = requests.get(post_url)
         response.raise_for_status()
@@ -293,22 +275,13 @@ def explore_specific_resources():
         return
     
     print(f"\n🔍 Exploring specific resource types...")
-    
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'application/json',
-        'X-Restli-Protocol-Version': '2.0.0',
-        'LinkedIn-Version': '202312'
-    }
-    
-    base_url = "https://api.linkedin.com/rest"
+    session = build_linkedin_session(access_token)
     
     # Get a larger sample to find more resource types
     try:
-        response = requests.get(
-            f"{base_url}/memberChangeLogs",
-            headers=headers,
-            params={"q": "memberAndApplication", "count": 200}
+        response = session.get(
+            f"{BASE_URL}/memberChangeLogs",
+            params={"q": "memberAndApplication", "count": 200},
         )
         
         if response.status_code == 200:

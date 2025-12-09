@@ -10,26 +10,9 @@ SECURITY NOTES:
 - AI tools should NOT run this script - you should run it yourself to verify
 """
 
-import os
 import sys
 
-import dotenv
-
-dotenv.load_dotenv()
-
-def get_access_token():
-    """Get token from keyring or environment variable."""
-    try:
-        import keyring
-        token = keyring.get_password("LINKEDIN_ACCESS_TOKEN", os.getenv('LINKEDIN_ACCOUNT'))
-        if token:
-            return token
-    except ImportError:
-        pass
-    except Exception:
-        pass
-    
-    return os.getenv('LINKEDIN_ACCESS_TOKEN')
+from linkedin_api.auth import get_access_token
 
 def check_token():
     """Check if token exists and is valid format without exposing value."""

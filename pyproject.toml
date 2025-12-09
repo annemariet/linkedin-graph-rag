@@ -1,47 +1,42 @@
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry]
+[tool.hatch.build.targets.wheel]
+packages = ["linkedin_api"]
+
+[project]
 name = "linkedin-api-client"
 version = "0.3.0"
-packages = [
-    { include = "linkedin_api" }
-]
-authors = ["Steven Shimizu <sshimizu@linkedin.com>"]
-description = "Official Python client library for LinkedIn APIs"
-homepage = "https://github.com/linkedin-developers/linkedin-api-python-client"
-repository = "https://github.com/linkedin-developers/linkedin-api-python-client"
-documentation = "https://github.com/linkedin-developers/linkedin-api-python-client"
+description = "Python client for LinkedIn Portability API"
 readme = "README.md"
-license = "Proprietary"
+requires-python = ">=3.12"
 keywords = ["linkedin", "api", "rest.li"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
 ]
+dependencies = [
+    "requests",
+    "keyring",
+    "beautifulsoup4>=4.12",
+    "python-dotenv>=1.0",
+]
 
-[tool.poetry.dependencies]
-python = "^3.7"
-requests = "*"
-keyring = "*"
-
-[tool.poetry.group.dev.dependencies]
-curlify = "*"
-flask = "*"
-pytest = "*"
-python-dotenv = "*"
-responses = "*"
-twine = "*"
-pre-commit = "*"
-black = "*"
-flake8 = "*"
-mypy = "*"
-pytest-cov = "*"
-
-[tool.poetry.scripts]
-linkedin-dev = "flask --app examples/flask_app.py run"
+[dependency-groups]
+dev = [
+    "black",
+    "curlify",
+    "flake8",
+    "flask",
+    "mypy",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "responses",
+    "twine",
+]
 
 [tool.black]
 line-length = 88
@@ -107,10 +102,13 @@ exclude = [
     "dist",
 ]
 
-[dependency-groups]
-dev = [
-    "beautifulsoup4>=4.14.3",
-    "dotenv>=0.9.9",
-    "keyring>=25.7.0",
-    "requests>=2.32.5",
-]
+[tool.mypy]
+python_version = "3.7"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true

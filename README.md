@@ -137,3 +137,70 @@ This implementation follows:
 - [ ] Cleanup token/keyring setup, check and retrieval, avoid duplication
 - [ ] Review get_linkedin_data.py to extract relevant info from posts
 - [ ] Extract posts and articles from links -- understand linkedin urn/uri thing
+
+## Dev notes
+
+Changelog data:
+list of elements with following schema:
+{
+   'owner',
+   'resourceId',
+   'method',
+   'activity',
+   'configVersion',
+   'parentSiblingActivities',
+   'resourceName',
+   'resourceUri',
+   'actor',
+   'activityId',
+   'processedAt',
+   'activityStatus',
+   'capturedAt',
+   'siblingActivities',
+   'id'
+}
+
+'resourceName': 'messages' -> this is for DMs. I want to skip these, I only want to count how many DMs I sent (and received if that's possible)
+
+Other types of resources:
+{'messages': 25, 'socialActions/likes': 22, 'invitations': 2, 'ugcPosts': 1}
+
+Example:
+```
+'owner': 'urn:li:person:k_ho7OlN0r',
+'resourceId': '2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==',
+'method': 'CREATE',
+'activity': {'owner': 'urn:li:person:k_ho7OlN0r', 'attachments': [], 'clientExperience': {'clientGeneratedToken': 'c248e9b2-3439-43ee-8095-3b3f356f1023'},
+'author': 'urn:li:person:k_ho7OlN0r',
+'thread': 'urn:li:messagingThread:2-OWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==',
+'contentClassification': {'classification': 'SAFE'},
+'content': {'format': 'TEXT', 'fallback': 'Je ne sais pas exactement où est le RV 😂.\nTu peux me contacter au 06 04 42 91 31 si jamais.', 'formatVersion': 1}, 'deliveredAt': 1764099135050, 'actor': 'urn:li:messagingActor:urn:li:person:k_ho7OlN0r',
+'createdAt': 1764099135050, 'mailbox': 'urn:li:messagingMailbox:urn:li:person:k_ho7OlN0r', 'messageContexts': [], 'id': '2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==', '$URN': 'urn:li:messagingMessage:2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA=='}, 'configVersion': 19, 'parentSiblingActivities': [],
+'resourceName': 'messages', 'resourceUri': '/messages/2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==', 'actor': 'urn:li:person:k_ho7OlN0r', 'activityId': 'e53339f6-7abb-4146-b9cb-fc4fbfa692d7', 'processedAt': 1764099135440, 'activityStatus': 'SUCCESS', 'capturedAt': 1764099135260, 'siblingActivities': [], 'id': 5893231114}
+```
+
+Activity object: not all fields are always present. I have an example with just "reactionType". Some don't have the $URN field.
+{
+   'actor', 'reactionType', 'created', 'root', 'lastModified', '$URN', 'object'
+}
+
+Let's examine reactionType.
+Reaction counts: Counter({'LIKE': 11, 'INTEREST': 7, 'APPRECIATION': 2, 'PRAISE': 2, 'n/a': 1})
+
+I'm curious about what invitations and ugcPosts are.
+
+invitations example: 
+```
+{
+   'invitationV2': {
+      'inviter': 'urn:li:person:t0Lo9bjtc-',
+      'trackingId': 'º±2Ì\x0eÕMÕ¨+ø\x80Õ\x100\x1d',
+      'invitee': 'urn:li:person:k_ho7OlN0r'
+   }
+}
+```
+
+UGCPost seems to be simply posts and is quite rich.
+It's not clear whether it's for all posts or basic shares.
+
+Even though I'd like to focus on likes, it might be useful to have the proper initial post structure right.
