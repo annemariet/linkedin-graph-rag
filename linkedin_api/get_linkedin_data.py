@@ -1,80 +1,264 @@
 #!/usr/bin/env python3
 """
-Extract posts, likes, and saved posts from LinkedIn Member Data Portability API
+Extract and analyze all LinkedIn activity history from Member Data Portability API.
+
+Extracts statistics for:
+- DMs (messages sent/received)
+- Invites (sent/received)
+- Reactions (by type)
+- Posts (original, repost, repost with comment)
+- Comments
 """
 
 import json
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import datetime
 from linkedin_api.auth import build_linkedin_session, get_access_token
 
 
 BASE_URL = "https://api.linkedin.com/rest"
 
 
-def get_recent_changelog_data():
-    """Get recent changelog data to see if posts/likes/saves are tracked there."""
+def get_all_changelog_data():
+    """Fetch all changelog data by paginating through all results."""
     
     access_token = get_access_token()
     if not access_token:
         print("❌ LINKEDIN_ACCESS_TOKEN not found")
-        print("   Run 'python3 setup_token.py' to store it in Keychain, or set it as an environment variable")
-        return
+        print("   Run 'uv run setup_token.py' to store it in Keychain, or set it as an environment variable")
+        return []
     
-    print("\n🔍 Getting recent changelog data...")
+    print("🔍 Fetching all changelog data...")
     session = build_linkedin_session(access_token)
-
-    resource_counts = Counter()
-    reaction_counts = Counter()
+    all_elements = []
+    start = 0
+    count = 50
     
-    try:
-        response = session.get(
-            f"{BASE_URL}/memberChangeLogs",
-            params={"q": "memberAndApplication", "count": 50},
-        )
-        
-        if response.status_code == 200:
+    while True:
+        try:
+            print(f"   📡 Fetching batch starting at {start}...")
+            response = session.get(
+                f"{BASE_URL}/memberChangeLogs",
+                params={"q": "memberAndApplication", "start": start, "count": count},
+            )
+            
+            if response.status_code != 200:
+                print(f"❌ Error: {response.status_code}")
+                print(f"Response: {response.text[:200]}...")
+                break
+            
             data = response.json()
             elements = data.get('elements', [])
             
-            print(f"✅ Got {len(elements)} changelog elements")
+            if not elements:
+                print("✅ No more data to fetch")
+                break
             
-            # Look for post/like/save related activities
-            for element in elements:
-                resource_counts[element.get('resourceName', '')] += 1
-                resource_name = element.get('resourceName', '')
-                
-                if "socialActions/likes" in resource_name:
-                    activity = element.get('activity', {})
-                    reaction_counts[activity.get('reactionType', 'n/a')] += 1
-                elif "invitations" in resource_name:
-                    activity = element.get('activity', {})
-                    print(f"Invitation activity: {activity}")
-                elif "ugcPosts" in resource_name:
-                    activity = element.get('activity', {})
-                    print(f"UGC post activity: {activity}")
+            all_elements.extend(elements)
+            print(f"   ✅ Got {len(elements)} elements (total: {len(all_elements)})")
+            
+            # Check for more pages
+            paging = data.get('paging', {})
+            links = paging.get('links', [])
+            next_link = None
+            
+            for link in links:
+                if link.get('rel') == 'next':
+                    next_link = link.get('href')
+                    break
+            
+            if not next_link:
+                print("✅ No more pages")
+                break
+            
+            start += count
+            
+        except Exception as e:
+            print(f"❌ Exception: {str(e)}")
+            break
+    
+    print(f"✅ Total elements fetched: {len(all_elements)}")
+    return all_elements
 
-        else:
-            print(f"❌ Error: {response.status_code}")
-            print(f"Response: {response.text[:200]}...")
-            
-    except Exception as e:
-        print(f"❌ Exception: {str(e)}")
+
+def extract_statistics(elements):
+    """Extract statistics from changelog elements."""
+    
+    stats = {
+        'messages': {
+            'sent': 0,
+            'received': 0,
+            'total': 0
+        },
+        'invites': {
+            'sent': 0,
+            'received': 0,
+            'total': 0
+        },
+        'reactions': Counter(),
+        'posts': {
+            'original': 0,
+            'repost': 0,
+            'repost_with_comment': 0,
+            'total': 0
+        },
+        'comments': {
+            'total': 0
+        },
+        'resource_types': Counter(),
+        'method_types': Counter(),
+    }
+    
+    # Track actor to determine if action is by user
+    user_actor = None
+    
+    for element in elements:
+        resource_name = element.get('resourceName', '')
+        method_name = element.get('methodName', '')
+        actor = element.get('actor', '')
+        activity = element.get('activity', {})
         
-    print(f"Reaction counts: {reaction_counts}")
-    return resource_counts
+        # Track resource and method types
+        stats['resource_types'][resource_name] += 1
+        stats['method_types'][method_name] += 1
+        
+        # Set user actor from first element (assuming consistent actor)
+        if not user_actor and actor:
+            user_actor = actor
+        
+        # Messages (DMs)
+        if 'messages' in resource_name.lower():
+            stats['messages']['total'] += 1
+            if actor == user_actor:
+                stats['messages']['sent'] += 1
+            else:
+                stats['messages']['received'] += 1
+        
+        # Invitations
+        elif 'invitation' in resource_name.lower():
+            stats['invites']['total'] += 1
+            if actor == user_actor:
+                stats['invites']['sent'] += 1
+            else:
+                stats['invites']['received'] += 1
+        
+        # Reactions
+        elif 'socialActions/likes' in resource_name or 'reaction' in resource_name.lower():
+            reaction_type = activity.get('reactionType', 'UNKNOWN')
+            stats['reactions'][reaction_type] += 1
+        
+        # Posts (UGC Posts)
+        elif 'ugcPost' in resource_name.lower() or 'ugcPosts' in resource_name:
+            stats['posts']['total'] += 1
+            
+            # Determine post type from activity
+            # Check if it's a repost (shares another post)
+            if activity.get('resharedPost') or activity.get('resharedActivity'):
+                # Check if there's a comment/commentary
+                if activity.get('commentary') or activity.get('text'):
+                    stats['posts']['repost_with_comment'] += 1
+                else:
+                    stats['posts']['repost'] += 1
+            else:
+                stats['posts']['original'] += 1
+        
+        # Comments
+        elif 'comment' in resource_name.lower() or 'comments' in resource_name.lower():
+            stats['comments']['total'] += 1
+    
+    return stats
+
+
+def print_statistics(stats):
+    """Print formatted statistics."""
+    
+    print("\n" + "=" * 60)
+    print("📊 LINKEDIN ACTIVITY STATISTICS")
+    print("=" * 60)
+    
+    # Messages
+    print(f"\n💬 MESSAGES (DMs):")
+    print(f"   Total: {stats['messages']['total']}")
+    print(f"   Sent: {stats['messages']['sent']}")
+    print(f"   Received: {stats['messages']['received']}")
+    
+    # Invites
+    print(f"\n👋 INVITATIONS:")
+    print(f"   Total: {stats['invites']['total']}")
+    print(f"   Sent: {stats['invites']['sent']}")
+    print(f"   Received: {stats['invites']['received']}")
+    
+    # Reactions
+    print(f"\n❤️  REACTIONS:")
+    total_reactions = sum(stats['reactions'].values())
+    print(f"   Total: {total_reactions}")
+    print(f"   By type:")
+    for reaction_type, count in stats['reactions'].most_common():
+        print(f"     • {reaction_type}: {count}")
+    
+    # Posts
+    print(f"\n📝 POSTS:")
+    print(f"   Total: {stats['posts']['total']}")
+    print(f"   Original: {stats['posts']['original']}")
+    print(f"   Reposts: {stats['posts']['repost']}")
+    print(f"   Reposts with comment: {stats['posts']['repost_with_comment']}")
+    
+    # Comments
+    print(f"\n💬 COMMENTS:")
+    print(f"   Total: {stats['comments']['total']}")
+    
+    # Resource types summary
+    print(f"\n📋 RESOURCE TYPES (Top 10):")
+    for resource, count in stats['resource_types'].most_common(10):
+        print(f"   • {resource}: {count}")
+    
+    print("\n" + "=" * 60)
+
+
+def save_statistics(stats, filename='linkedin_statistics.json'):
+    """Save statistics to JSON file."""
+    
+    # Convert Counter objects to dicts for JSON serialization
+    stats_json = {
+        'messages': stats['messages'],
+        'invites': stats['invites'],
+        'reactions': dict(stats['reactions']),
+        'posts': stats['posts'],
+        'comments': stats['comments'],
+        'resource_types': dict(stats['resource_types']),
+        'method_types': dict(stats['method_types']),
+    }
+    
+    with open(filename, 'w') as f:
+        json.dump(stats_json, f, indent=2)
+    
+    print(f"💾 Statistics saved to {filename}")
+
 
 def main():
     """Main function to extract and analyze LinkedIn data."""
-    print("🚀 LinkedIn Data Extraction")
-    print("=" * 50)
-    # Get changelog data
-    changelog_data = get_recent_changelog_data()
-    print(changelog_data)
-    print(f"\n" + "=" * 50)
-    print("🎯 Next steps:")
-    print("• If posts/likes/saves are found, we can create specific extractors")
-    print("• If not found in snapshot, they might be in different endpoints")
-    print("• Check LinkedIn API documentation for specific data types")
+    print("🚀 LinkedIn Data Extraction & Statistics")
+    print("=" * 60)
+    
+    # Get all changelog data
+    elements = get_all_changelog_data()
+    
+    if not elements:
+        print("❌ No data retrieved")
+        return
+    
+    # Extract statistics
+    print("\n🔍 Analyzing data...")
+    stats = extract_statistics(elements)
+    
+    # Print statistics
+    print_statistics(stats)
+    
+    # Save to file
+    save_statistics(stats)
+    
+    print("\n✅ Analysis complete!")
+
 
 if __name__ == "__main__":
     main()
