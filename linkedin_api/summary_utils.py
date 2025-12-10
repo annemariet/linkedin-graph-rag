@@ -6,7 +6,9 @@ from collections import Counter
 from typing import Dict, List, Tuple
 
 
-def summarize_resources(elements: List[dict]) -> Tuple[Counter, Counter, Dict[str, dict]]:
+def summarize_resources(
+    elements: List[dict],
+) -> Tuple[Counter, Counter, Dict[str, dict]]:
     """
     Build counters and examples for resource and method usage.
 

@@ -14,10 +14,11 @@ import sys
 
 from linkedin_api.auth import get_access_token
 
+
 def check_token():
     """Check if token exists and is valid format without exposing value."""
     token = get_access_token()
-    
+
     if not token:
         print("❌ LINKEDIN_ACCESS_TOKEN not found")
         print("\n📝 To set it up (choose one method):")
@@ -29,18 +30,18 @@ def check_token():
         print("\n   Method 3 (Temporary - Single command):")
         print("     LINKEDIN_ACCESS_TOKEN=your_token_here python3 script.py")
         return False
-    
+
     # Validate token format (LinkedIn tokens are typically long alphanumeric strings)
     if len(token) < 20:
         print("⚠️  Token seems too short. LinkedIn tokens are typically longer.")
         return False
-    
+
     print(f"✅ LINKEDIN_ACCESS_TOKEN is set")
     print(f"   Token length: {len(token)} characters")
-    
+
     return True
+
 
 if __name__ == "__main__":
     success = check_token()
     sys.exit(0 if success else 1)
-

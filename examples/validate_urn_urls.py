@@ -24,11 +24,11 @@ from linkedin_api.urn_utils import (
 def validate_url(url: str, expected_type: str = "page") -> dict:
     """
     Validate a URL by making an HTTP request and checking the response.
-    
+
     Args:
         url: The URL to validate
         expected_type: Type of page expected ('post', 'profile', 'page')
-        
+
     Returns:
         Dictionary with validation results
     """
@@ -42,42 +42,41 @@ def validate_url(url: str, expected_type: str = "page") -> dict:
         "is_linkedin": False,
         "error": None,
     }
-    
+
     try:
         # Follow redirects but track them
         response = requests.get(url, allow_redirects=True, timeout=10)
         result["status_code"] = response.status_code
         result["final_url"] = response.url
         result["redirected"] = response.url != url
-        
+
         if response.status_code == 200:
             result["success"] = True
-            
+
             # Parse HTML to check if it's a LinkedIn page
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
+            soup = BeautifulSoup(response.text, "html.parser")
+
             # Check title
-            title_tag = soup.find('title')
+            title_tag = soup.find("title")
             if title_tag:
                 result["title"] = title_tag.get_text().strip()
-            
+
             # Check if it's LinkedIn (by domain or content)
-            result["is_linkedin"] = (
-                'linkedin.com' in response.url.lower() or
-                (title_tag and 'linkedin' in title_tag.get_text().lower())
+            result["is_linkedin"] = "linkedin.com" in response.url.lower() or (
+                title_tag and "linkedin" in title_tag.get_text().lower()
             )
-            
+
             # Check for common LinkedIn page indicators
-            if soup.find('meta', property='og:site_name', content='LinkedIn'):
+            if soup.find("meta", property="og:site_name", content="LinkedIn"):
                 result["is_linkedin"] = True
-            
+
     except requests.exceptions.Timeout:
         result["error"] = "Request timeout"
     except requests.exceptions.ConnectionError:
         result["error"] = "Connection error"
     except Exception as e:
         result["error"] = str(e)
-    
+
     return result
 
 
@@ -87,24 +86,24 @@ def print_validation_result(result: dict, label: str):
     print(f"🔍 {label}")
     print(f"{'='*60}")
     print(f"URL: {result['url']}")
-    
-    if result['redirected']:
+
+    if result["redirected"]:
         print(f"🔄 Redirected to: {result['final_url']}")
-    
-    if result['status_code']:
-        status_emoji = "✅" if result['status_code'] == 200 else "❌"
+
+    if result["status_code"]:
+        status_emoji = "✅" if result["status_code"] == 200 else "❌"
         print(f"{status_emoji} Status Code: {result['status_code']}")
-    
-    if result['success']:
+
+    if result["success"]:
         print(f"✅ Page loaded successfully")
-        if result['title']:
+        if result["title"]:
             print(f"📄 Title: {result['title']}")
-        if result['is_linkedin']:
+        if result["is_linkedin"]:
             print(f"✅ Confirmed LinkedIn page")
         else:
             print(f"⚠️  May not be a LinkedIn page")
     else:
-        if result['error']:
+        if result["error"]:
             print(f"❌ Error: {result['error']}")
         else:
             print(f"❌ Page did not load successfully")
@@ -112,10 +111,10 @@ def print_validation_result(result: dict, label: str):
 
 def main():
     """Validate URN-to-URL conversions with real HTTP requests."""
-    
+
     print("🔗 LinkedIn URN URL Validation")
     print("=" * 60)
-    
+
     # Test data from your sample
     test_cases = [
         {
@@ -129,7 +128,7 @@ def main():
             "url_func": urn_to_profile_url,
         },
     ]
-    
+
     # Additional test cases
     additional_tests = [
         {
@@ -138,16 +137,16 @@ def main():
             "url_func": urn_to_post_url,
         },
     ]
-    
+
     all_tests = test_cases + additional_tests
-    
+
     results = []
-    
+
     for test in all_tests:
         urn = test["urn"]
         url_func = test["url_func"]
         url = url_func(urn)
-        
+
         if url:
             print(f"\n🧪 Testing: {urn}")
             result = validate_url(url, test["type"])
@@ -157,36 +156,36 @@ def main():
             print_validation_result(result, f"{test['type'].title()} URL")
         else:
             print(f"\n❌ Could not convert URN: {urn}")
-    
+
     # Summary
     print(f"\n{'='*60}")
     print("📊 VALIDATION SUMMARY")
     print(f"{'='*60}")
-    
-    successful = [r for r in results if r['success']]
-    failed = [r for r in results if not r['success']]
-    
+
+    successful = [r for r in results if r["success"]]
+    failed = [r for r in results if not r["success"]]
+
     print(f"\n✅ Successful: {len(successful)}/{len(results)}")
     print(f"❌ Failed: {len(failed)}/{len(results)}")
-    
+
     if successful:
         print(f"\n✅ Working URLs:")
         for r in successful:
             print(f"   • {r['urn']}")
             print(f"     → {r['final_url']}")
-            if r['title']:
+            if r["title"]:
                 print(f"     Title: {r['title']}")
-    
+
     if failed:
         print(f"\n❌ Failed URLs:")
         for r in failed:
             print(f"   • {r['urn']}")
             print(f"     → {r['url']}")
-            if r['error']:
+            if r["error"]:
                 print(f"     Error: {r['error']}")
-            elif r['status_code']:
+            elif r["status_code"]:
                 print(f"     Status: {r['status_code']}")
-    
+
     print(f"\n💡 Notes:")
     print(f"   • Post URLs use full URN in path")
     print(f"   • Profile URLs may redirect or require authentication")

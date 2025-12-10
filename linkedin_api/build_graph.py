@@ -13,12 +13,10 @@ NEO4J_DATABASE = getenv("NEO4J_DATABASE") or "neo4j"
 BATCH_SIZE = 500
 
 
-driver = GraphDatabase.driver(
-    NEO4J_URL,
-    auth=(NEO4J_USERNAME, NEO4J_PASSWORD)
-)
+driver = GraphDatabase.driver(NEO4J_URL, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
-driver.verify_connectivity() # Throws an error if the connection is not successful
+driver.verify_connectivity()  # Throws an error if the connection is not successful
+
 
 def db_cleanup(driver):
     print("Doing Database Cleanup.")
@@ -55,7 +53,7 @@ def create_relationships_batch(tx, rels_batch):
             query,
             startNode=rel["startNode"],
             endNode=rel["endNode"],
-            props=rel["properties"]
+            props=rel["properties"],
         )
         if result.single():
             created += 1
@@ -66,26 +64,26 @@ def load_graph_data(driver, json_file):
     """Load nodes and relationships from JSON into Neo4j."""
     with open(json_file, "r") as f:
         data = json.load(f)
-    
+
     nodes = data.get("nodes", [])
     relationships = data.get("relationships", [])
-    
+
     print(f"Loading {len(nodes)} nodes and {len(relationships)} relationships...")
-    
+
     # Create nodes in batches
     with driver.session() as session:
         for i in range(0, len(nodes), BATCH_SIZE):
-            batch = nodes[i:i + BATCH_SIZE]
+            batch = nodes[i : i + BATCH_SIZE]
             count = session.execute_write(create_nodes_batch, batch)
             print(f"Created {count} nodes (batch {i // BATCH_SIZE + 1})")
-    
+
     # Create relationships in batches
     with driver.session() as session:
         for i in range(0, len(relationships), BATCH_SIZE):
-            batch = relationships[i:i + BATCH_SIZE]
+            batch = relationships[i : i + BATCH_SIZE]
             count = session.execute_write(create_relationships_batch, batch)
             print(f"Created {count} relationships (batch {i // BATCH_SIZE + 1})")
-    
+
     print("Graph built successfully!")
 
 

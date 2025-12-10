@@ -14,6 +14,7 @@ from neo4j import GraphDatabase
 # Apply DNS fix before importing Google libraries
 try:
     from linkedin_api.dns_utils import setup_gcp_dns_fix
+
     setup_gcp_dns_fix(use_custom_resolver=True)
 except ImportError:
     pass
@@ -38,7 +39,7 @@ VECTOR_INDEX_NAME = os.getenv("VECTOR_INDEX_NAME", "linkedin_content_index")
 def find_vector_index(driver, preferred_name: str) -> Optional[str]:
     """
     Find a vector index, preferring the specified name but falling back to any available.
-    
+
     Returns:
         Index name if found, None otherwise
     """
@@ -47,13 +48,13 @@ def find_vector_index(driver, preferred_name: str) -> Optional[str]:
             # First, try to find the preferred index
             result = session.run(
                 "SHOW INDEXES WHERE type = 'VECTOR' AND name = $name",
-                name=preferred_name
+                name=preferred_name,
             )
             index_info = result.single()
             if index_info:
                 print(f"   ✅ Found preferred index '{preferred_name}'")
                 return preferred_name
-            
+
             # If not found, list all vector indexes
             print(f"   ⚠️  Index '{preferred_name}' not found")
             all_indexes = session.run("SHOW INDEXES WHERE type = 'VECTOR'")
@@ -61,25 +62,33 @@ def find_vector_index(driver, preferred_name: str) -> Optional[str]:
             if indexes:
                 print(f"   Available vector indexes:")
                 for idx in indexes:
-                    idx_name = idx.get('name', 'unknown')
+                    idx_name = idx.get("name", "unknown")
                     print(f"     • {idx_name}")
-                
+
                 # Auto-select if only one exists
                 if len(indexes) == 1:
-                    selected = indexes[0].get('name')
+                    selected = indexes[0].get("name")
                     print(f"   ✅ Auto-selecting '{selected}' (only available index)")
                     return selected
                 else:
                     # Use the first one that looks like a content index
                     for idx in indexes:
-                        idx_name = idx.get('name', '')
-                        if 'chunk' in idx_name.lower() or 'embedding' in idx_name.lower() or 'content' in idx_name.lower():
-                            print(f"   ✅ Auto-selecting '{idx_name}' (looks like content index)")
+                        idx_name = idx.get("name", "")
+                        if (
+                            "chunk" in idx_name.lower()
+                            or "embedding" in idx_name.lower()
+                            or "content" in idx_name.lower()
+                        ):
+                            print(
+                                f"   ✅ Auto-selecting '{idx_name}' (looks like content index)"
+                            )
                             return idx_name
-                    
+
                     # Fall back to first available
-                    selected = indexes[0].get('name')
-                    print(f"   ⚠️  Auto-selecting '{selected}' (first available, may not be correct)")
+                    selected = indexes[0].get("name")
+                    print(
+                        f"   ⚠️  Auto-selecting '{selected}' (first available, may not be correct)"
+                    )
                     return selected
             else:
                 print(f"   ❌ No vector indexes found in database")
@@ -104,10 +113,12 @@ def create_vector_retriever(driver, embedder):
             f"No vector index found. "
             f"Please run index_content.py first to create the index."
         )
-    
+
     if actual_index_name != VECTOR_INDEX_NAME:
-        print(f"   ℹ️  Using index '{actual_index_name}' instead of '{VECTOR_INDEX_NAME}'")
-    
+        print(
+            f"   ℹ️  Using index '{actual_index_name}' instead of '{VECTOR_INDEX_NAME}'"
+        )
+
     return VectorRetriever(
         driver,
         index_name=actual_index_name,
@@ -125,10 +136,12 @@ def create_vector_cypher_retriever(driver, embedder):
             f"No vector index found. "
             f"Please run index_content.py first to create the index."
         )
-    
+
     if actual_index_name != VECTOR_INDEX_NAME:
-        print(f"   ℹ️  Using index '{actual_index_name}' instead of '{VECTOR_INDEX_NAME}'")
-    
+        print(
+            f"   ℹ️  Using index '{actual_index_name}' instead of '{VECTOR_INDEX_NAME}'"
+        )
+
     return VectorCypherRetriever(
         driver,
         index_name=actual_index_name,
@@ -169,14 +182,14 @@ def create_vector_cypher_retriever(driver, embedder):
                CASE WHEN original_text <> '' THEN 
                    '\n\n=== Reposted From ===\n' + original_text
                ELSE '' END AS info
-        """
+        """,
     )
 
 
 def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
     """
     Query the GraphRAG system.
-    
+
     Args:
         query_text: Natural language query
         use_cypher: If True, use VectorCypherRetriever, else VectorRetriever
@@ -187,17 +200,14 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
     print(f"\n📝 Query: {query_text}")
     print(f"   Retriever: {'Vector + Cypher' if use_cypher else 'Vector'}")
     print(f"   Top K: {top_k}")
-    
+
     # Connect to Neo4j
-    driver = GraphDatabase.driver(
-        NEO4J_URI,
-        auth=(NEO4J_USERNAME, NEO4J_PASSWORD)
-    )
-    
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
+
     try:
         driver.verify_connectivity()
         print(f"   Database: {NEO4J_DATABASE}")
-        
+
         # Initialize embedder and LLM - fail immediately on error
         try:
             embedder = VertexAIEmbeddings(model=EMBEDDING_MODEL)
@@ -209,53 +219,58 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
             print(f"\n❌ FATAL ERROR: Failed to initialize embedder")
             print(f"   Error: {str(e)}")
             print(f"   Model: {EMBEDDING_MODEL}")
-            print(f"\n💡 Try a different model: textembedding-gecko@002 or textembedding-gecko")
-            raise RuntimeError(f"Embedder initialization failed: {str(e)}") from e
-        
-        try:
-            llm = VertexAILLM(
-                model_name=LLM_MODEL,
-                model_params={"temperature": 0.0}
+            print(
+                f"\n💡 Try a different model: textembedding-gecko@002 or textembedding-gecko"
             )
+            raise RuntimeError(f"Embedder initialization failed: {str(e)}") from e
+
+        try:
+            llm = VertexAILLM(model_name=LLM_MODEL, model_params={"temperature": 0.0})
         except Exception as e:
             print(f"\n❌ FATAL ERROR: Failed to initialize LLM")
             print(f"   Error: {str(e)}")
             print(f"   Model: {LLM_MODEL}")
             raise RuntimeError(f"LLM initialization failed: {str(e)}") from e
-        
+
         # Create retriever
         if use_cypher:
             retriever = create_vector_cypher_retriever(driver, embedder)
         else:
             retriever = create_vector_retriever(driver, embedder)
-        
+
         # Debug: Check if chunks exist and have embeddings
         print(f"\n🔍 Verifying chunks in database...")
         with driver.session(database=NEO4J_DATABASE) as session:
-            chunk_count = session.run("MATCH (c:Chunk) RETURN count(c) as count").single()['count']
+            chunk_count = session.run(
+                "MATCH (c:Chunk) RETURN count(c) as count"
+            ).single()["count"]
             chunk_with_embedding = session.run(
                 "MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) as count"
-            ).single()['count']
+            ).single()["count"]
             print(f"   Total Chunk nodes: {chunk_count}")
             print(f"   Chunks with embeddings: {chunk_with_embedding}")
-            
+
             if chunk_count == 0:
                 print(f"   ⚠️  No chunks found! Run index_content.py first.")
             elif chunk_with_embedding == 0:
                 print(f"   ⚠️  Chunks exist but no embeddings found!")
             elif chunk_with_embedding < chunk_count:
-                print(f"   ⚠️  Warning: {chunk_count - chunk_with_embedding} chunks missing embeddings")
-        
+                print(
+                    f"   ⚠️  Warning: {chunk_count - chunk_with_embedding} chunks missing embeddings"
+                )
+
         # Create GraphRAG
         rag = GraphRAG(llm=llm, retriever=retriever)
-        
+
         # Query
         print(f"\n🔍 Searching...")
-        
+
         # Test the retriever directly first
         print(f"   Testing retriever directly...")
         try:
-            test_results = retriever.get_search_results(query_text=query_text, top_k=top_k)
+            test_results = retriever.get_search_results(
+                query_text=query_text, top_k=top_k
+            )
             print(f"   ✅ Retriever returned {len(test_results.records)} results")
             if len(test_results.records) == 0:
                 print(f"   ⚠️  WARNING: Retriever found no results!")
@@ -265,8 +280,12 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
                 print(f"     • Vector index isn't working correctly")
                 print(f"   Trying a very generic query to test...")
                 # Try a very generic query
-                generic_results = retriever.get_search_results(query_text="post", top_k=3)
-                print(f"   Generic query 'post' returned {len(generic_results.records)} results")
+                generic_results = retriever.get_search_results(
+                    query_text="post", top_k=3
+                )
+                print(
+                    f"   Generic query 'post' returned {len(generic_results.records)} results"
+                )
                 if len(generic_results.records) > 0:
                     print(f"   Sample result:")
                     sample = generic_results.records[0]
@@ -274,22 +293,23 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
         except Exception as retriever_error:
             print(f"   ❌ Error testing retriever: {str(retriever_error)}")
             import traceback
+
             traceback.print_exc()
-        
+
         response = rag.search(
             query_text=query_text,
             retriever_config={"top_k": top_k},
-            return_context=True
+            return_context=True,
         )
-        
+
         # Display results
         print(f"\n{'='*60}")
         print(f"💬 ANSWER")
         print(f"{'='*60}")
         print(response.answer)
-        
+
         # Show context if available
-        if hasattr(response, 'retriever_result') and response.retriever_result:
+        if hasattr(response, "retriever_result") and response.retriever_result:
             print(f"\n{'='*60}")
             print(f"📚 RETRIEVED CONTEXT")
             print(f"{'='*60}")
@@ -299,24 +319,25 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
             else:
                 for i, item in enumerate(response.retriever_result.items[:3], 1):
                     print(f"\n--- Context {i} ---")
-                    if hasattr(item, 'content'):
+                    if hasattr(item, "content"):
                         content = item.content
                         # Truncate if too long
                         if len(content) > 500:
                             print(content[:500] + "...")
                         else:
                             print(content)
-                    elif hasattr(item, 'data'):
+                    elif hasattr(item, "data"):
                         print(item.data())
         else:
             print(f"\n{'='*60}")
             print(f"📚 RETRIEVED CONTEXT")
             print(f"{'='*60}")
             print(f"   ⚠️  No retriever_result available")
-        
+
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         import traceback
+
         traceback.print_exc()
     finally:
         driver.close()
@@ -333,37 +354,39 @@ def interactive_query():
     print("  - 'topk <number>' to set top_k")
     print("  - 'quit' or 'exit' to exit")
     print()
-    
+
     use_cypher = False
     top_k = 5
-    
+
     while True:
         try:
             query = input("Query> ").strip()
-            
+
             if not query:
                 continue
-            
-            if query.lower() in ['quit', 'exit', 'q']:
+
+            if query.lower() in ["quit", "exit", "q"]:
                 print("👋 Goodbye!")
                 break
-            
-            if query.lower() == 'cypher':
+
+            if query.lower() == "cypher":
                 use_cypher = not use_cypher
-                print(f"   {'✅' if use_cypher else '❌'} Cypher retriever: {'enabled' if use_cypher else 'disabled'}")
+                print(
+                    f"   {'✅' if use_cypher else '❌'} Cypher retriever: {'enabled' if use_cypher else 'disabled'}"
+                )
                 continue
-            
-            if query.lower().startswith('topk '):
+
+            if query.lower().startswith("topk "):
                 try:
                     top_k = int(query.split()[1])
                     print(f"   ✅ Top K set to {top_k}")
                 except:
                     print("   ❌ Invalid number")
                 continue
-            
+
             query_graphrag(query, use_cypher=use_cypher, top_k=top_k)
             print()
-            
+
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
             break
@@ -374,11 +397,11 @@ def interactive_query():
 def main():
     """Main entry point."""
     import sys
-    
+
     if len(sys.argv) > 1:
         # Command line query
         query = " ".join(sys.argv[1:])
-        use_cypher = '--cypher' in sys.argv
+        use_cypher = "--cypher" in sys.argv
         query_graphrag(query, use_cypher=use_cypher)
     else:
         # Interactive mode

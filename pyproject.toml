@@ -43,7 +43,7 @@ dev = [
 
 [tool.black]
 line-length = 88
-target-version = ['py37']
+target-version = ['py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -101,12 +101,16 @@ exclude = [
     ".git",
     "__pycache__",
     ".venv",
+    "venv",
     "build",
     "dist",
 ]
+per-file-ignores = [
+    "__init__.py:F401",
+]
 
 [tool.mypy]
-python_version = "3.7"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false

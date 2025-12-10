@@ -17,10 +17,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # Apply DNS fix before importing Google libraries
 try:
     from linkedin_api.dns_utils import setup_gcp_dns_fix, test_dns_resolution
-    
+
     # Setup DNS fix for VPN issues
     setup_gcp_dns_fix(use_custom_resolver=True)
-    
+
     # Test DNS resolution
     location = os.environ.get("VERTEX_LOCATION", "europe-west9")
     test_host = f"{location}-aiplatform.googleapis.com"
