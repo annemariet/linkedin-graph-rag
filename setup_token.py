@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Interactive script to store LinkedIn access token in keyring (macOS Keychain, etc.).
+Interactive script to store LinkedIn access token in keyring (macOS Keychain).
 
-This script securely stores your token in the system keyring so you only need to enter it once.
+Securely stores your token in the system keyring so you only enter it once.
 """
 
 import sys
@@ -38,9 +38,8 @@ def main():
 
     # Get token from user
     print("\n📝 Enter your LinkedIn access token:")
-    print(
-        "   (Get it from: https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t)"
-    )
+    oauth_url = "https://www.linkedin.com/developers/tools/oauth"
+    print(f"   (Get it from: {oauth_url}?clientId=78bwhum7gz6t9t)")
     print("   (Token will be hidden as you type)")
 
     token = getpass.getpass("   Token: ").strip()
@@ -71,9 +70,7 @@ def main():
         print("   The token will be retrieved automatically when needed.")
     except Exception as e:
         print(f"❌ Failed to store token in keyring: {e}")
-        print(
-            "   Check keyring permissions or try setting as environment variable instead."
-        )
+        print("   Check keyring permissions or set as environment variable.")
         sys.exit(1)
 
 

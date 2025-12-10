@@ -1,6 +1,6 @@
 [flake8]
-max-line-length = 88
-extend-ignore = E203, W503
+max-line-length = 120
+extend-ignore = E203, W503, F541, W291, W293
 exclude =
     .git,
     __pycache__,
@@ -11,3 +11,5 @@ exclude =
     *.egg-info
 per-file-ignores =
     __init__.py:F401
+    examples/*.py:E402,F401
+    linkedin_api/gradio_app.py:E402,F401

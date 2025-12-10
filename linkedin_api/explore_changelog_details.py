@@ -51,7 +51,6 @@ def extract_entities_and_relationships(elements):
     people = {}  # person_urn -> person_data
     posts = {}  # post_urn -> post_data
     comments = {}  # comment_urn -> comment_data
-    reactions = {}  # reaction_id -> reaction_data
 
     # Track relationships
     relationships = []
@@ -64,7 +63,6 @@ def extract_entities_and_relationships(elements):
 
     for element in elements:
         resource_name = element.get("resourceName", "")
-        method_name = element.get("methodName", "")
         # Actor can be in element or activity
         actor = element.get("actor", "") or element.get("activity", {}).get("actor", "")
         activity = element.get("activity", {})

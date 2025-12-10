@@ -457,9 +457,11 @@ def main():
 
         # Warn if different from expected, but use actual dimensions
         if actual_dimensions != EMBEDDING_DIMENSIONS:
-            print(
-                f"   ⚠️  Note: Using actual dimensions ({actual_dimensions}) instead of default ({EMBEDDING_DIMENSIONS})"
+            msg = (
+                f"   ⚠️  Note: Using actual dimensions ({actual_dimensions}) "
+                f"instead of default ({EMBEDDING_DIMENSIONS})"
             )
+            print(msg)
     except Exception as e:
         print(f"\n❌ FATAL ERROR: Failed to initialize embedder")
         print(f"   Error: {str(e)}")

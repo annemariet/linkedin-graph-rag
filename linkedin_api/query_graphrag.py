@@ -380,7 +380,7 @@ def interactive_query():
                 try:
                     top_k = int(query.split()[1])
                     print(f"   ✅ Top K set to {top_k}")
-                except:
+                except (ValueError, IndexError):
                     print("   ❌ Invalid number")
                 continue
 

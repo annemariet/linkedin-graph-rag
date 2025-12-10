@@ -1,7 +1,7 @@
 """Tests for changelog_utils module."""
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from linkedin_api.changelog_utils import (
     BASE_URL,
     fetch_changelog_data,

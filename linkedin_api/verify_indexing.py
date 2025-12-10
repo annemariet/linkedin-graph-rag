@@ -130,7 +130,7 @@ def verify_vector_index(driver):
                     print(f"   Type: {details.get('type', 'unknown')}")
                     print(f"   Entity type: {details.get('entityType', 'unknown')}")
                     print(f"   Properties: {details.get('properties', [])}")
-            except:
+            except Exception:
                 pass
 
         return index_list[0].get("name") if index_list else None

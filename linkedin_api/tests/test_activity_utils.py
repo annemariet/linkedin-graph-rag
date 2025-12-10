@@ -1,7 +1,5 @@
 """Tests for activity_utils module."""
 
-import pytest
-from datetime import datetime
 from linkedin_api.activity_utils import (
     extract_element_fields,
     determine_post_type,
