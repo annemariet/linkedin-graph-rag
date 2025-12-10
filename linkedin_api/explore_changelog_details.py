@@ -19,7 +19,8 @@ import json
 from collections import defaultdict
 from datetime import datetime
 from linkedin_api.changelog_utils import fetch_changelog_data
-from linkedin_api.urn_utils import urn_to_post_url, extract_urn_id
+from linkedin_api.summary_utils import print_resource_summary, summarize_resources
+from linkedin_api.urn_utils import extract_urn_id, urn_to_post_url
 
 
 def get_all_post_activities():
@@ -55,8 +56,8 @@ def extract_entities_and_relationships(elements):
     # Track relationships
     relationships = []
     
-    # Debug counters
-    processed_by_type = defaultdict(int)
+    # Precompute resource stats for summary
+    resource_counts, method_counts, resource_examples = summarize_resources(elements)
     skipped_by_reason = defaultdict(int)
     
     print(f"\n🔍 Processing {len(elements)} elements...")
@@ -68,8 +69,6 @@ def extract_entities_and_relationships(elements):
         actor = element.get('actor', '') or element.get('activity', {}).get('actor', '')
         activity = element.get('activity', {})
         timestamp = activity.get('created', {}).get('time')
-        
-        processed_by_type[resource_name] += 1
         
         # Extract person (actor) - check both element and activity
         if actor and actor.startswith('urn:li:person:'):
@@ -406,9 +405,7 @@ def extract_entities_and_relationships(elements):
     
     # Debug output
     print(f"\n📊 Processing summary:")
-    print(f"   Elements processed by type:")
-    for resource_type, count in sorted(processed_by_type.items()):
-        print(f"     • {resource_type}: {count}")
+    print_resource_summary(resource_counts, method_counts, resource_examples, top_n=10)
     if skipped_by_reason:
         print(f"   Skipped elements:")
         for reason, count in sorted(skipped_by_reason.items()):

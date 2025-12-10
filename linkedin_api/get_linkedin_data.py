@@ -11,9 +11,9 @@ Extracts statistics for:
 """
 
 import json
-from collections import Counter, defaultdict
-from datetime import datetime
+from collections import Counter
 from linkedin_api.changelog_utils import fetch_changelog_data
+from linkedin_api.summary_utils import print_resource_summary, summarize_resources
 
 
 def get_all_changelog_data():
@@ -22,7 +22,9 @@ def get_all_changelog_data():
 
 
 def extract_statistics(elements):
-    """Extract statistics from changelog elements."""
+    """Extract statistics from changelog elements and track data quality."""
+    
+    resource_types, method_types, resource_examples = summarize_resources(elements)
     
     stats = {
         'messages': {
@@ -45,27 +47,33 @@ def extract_statistics(elements):
         'comments': {
             'total': 0
         },
-        'resource_types': Counter(),
-        'method_types': Counter(),
-        'resource_examples': {},  # resourceName -> example activity object
+        'resource_types': resource_types,
+        'method_types': method_types,
+        'resource_examples': resource_examples,
+        'data_quality': {
+            'total_elements': len(elements),
+            'importable': 0,
+            'skipped': 0,
+            'skipped_by_reason': Counter(),
+            'reactions_importable': 0,
+            'reactions_incomplete': 0,
+            'comments_importable': 0,
+            'comments_incomplete': 0,
+        }
     }
+    
+    # Track skipped elements for investigation
+    skipped_elements = []
     
     # Track actor to determine if action is by user
     user_actor = None
     
     for element in elements:
         resource_name = element.get('resourceName', '')
-        method_name = element.get('methodName', '')
         actor = element.get('actor', '')
         activity = element.get('activity', {})
-        
-        # Track resource and method types
-        stats['resource_types'][resource_name] += 1
-        stats['method_types'][method_name] += 1
-        
-        # Store example activity for each resourceName (first occurrence)
-        if resource_name and resource_name not in stats['resource_examples']:
-            stats['resource_examples'][resource_name] = activity
+        is_importable = True
+        skip_reason = None
         
         # Set user actor from first element (assuming consistent actor)
         if not user_actor and actor:
@@ -87,10 +95,25 @@ def extract_statistics(elements):
             else:
                 stats['invites']['received'] += 1
         
-        # Reactions
+        # Reactions - validate for Neo4j import
         elif 'socialActions/likes' in resource_name or 'reaction' in resource_name.lower():
             reaction_type = activity.get('reactionType', 'UNKNOWN')
             stats['reactions'][reaction_type] += 1
+            
+            # Check if reaction has required fields for import
+            post_urn = activity.get('root') or activity.get('object', '')
+            reaction_actor = activity.get('actor', '') or actor
+            
+            if not post_urn:
+                is_importable = False
+                skip_reason = 'reaction_no_post_urn'
+                stats['data_quality']['reactions_incomplete'] += 1
+            elif not reaction_actor:
+                is_importable = False
+                skip_reason = 'reaction_no_actor'
+                stats['data_quality']['reactions_incomplete'] += 1
+            else:
+                stats['data_quality']['reactions_importable'] += 1
         
         # Posts (UGC Posts)
         elif 'ugcPost' in resource_name.lower() or 'ugcPosts' in resource_name:
@@ -107,9 +130,43 @@ def extract_statistics(elements):
             else:
                 stats['posts']['original'] += 1
         
-        # Comments
+        # Comments - validate for Neo4j import
         elif 'comment' in resource_name.lower() or 'comments' in resource_name.lower():
             stats['comments']['total'] += 1
+            
+            # Check if comment has required fields
+            comment_id = activity.get('id', '')
+            post_urn = activity.get('object', '')
+            comment_actor = activity.get('actor', '') or actor
+            
+            if not comment_id:
+                is_importable = False
+                skip_reason = 'comment_no_id'
+                stats['data_quality']['comments_incomplete'] += 1
+            elif not post_urn:
+                is_importable = False
+                skip_reason = 'comment_no_post_urn'
+                stats['data_quality']['comments_incomplete'] += 1
+            elif not comment_actor:
+                is_importable = False
+                skip_reason = 'comment_no_actor'
+                stats['data_quality']['comments_incomplete'] += 1
+            else:
+                stats['data_quality']['comments_importable'] += 1
+        
+        # Track skipped elements
+        if not is_importable:
+            stats['data_quality']['skipped'] += 1
+            stats['data_quality']['skipped_by_reason'][skip_reason] += 1
+            skipped_elements.append({
+                'reason': skip_reason,
+                'resource_name': resource_name,
+                'element': element
+            })
+        else:
+            stats['data_quality']['importable'] += 1
+    
+    stats['skipped_elements'] = skipped_elements
     
     return stats
 
@@ -137,6 +194,8 @@ def print_statistics(stats):
     print(f"\n❤️  REACTIONS:")
     total_reactions = sum(stats['reactions'].values())
     print(f"   Total: {total_reactions}")
+    print(f"   Importable to graph: {stats['data_quality']['reactions_importable']}")
+    print(f"   Incomplete (skipped): {stats['data_quality']['reactions_incomplete']}")
     print(f"   By type:")
     for reaction_type, count in stats['reactions'].most_common():
         print(f"     • {reaction_type}: {count}")
@@ -151,27 +210,27 @@ def print_statistics(stats):
     # Comments
     print(f"\n💬 COMMENTS:")
     print(f"   Total: {stats['comments']['total']}")
+    print(f"   Importable to graph: {stats['data_quality']['comments_importable']}")
+    print(f"   Incomplete (skipped): {stats['data_quality']['comments_incomplete']}")
     
-    # Resource types summary
-    print(f"\n📋 RESOURCE TYPES (Top 10):")
-    for resource, count in stats['resource_types'].most_common(10):
-        print(f"   • {resource}: {count}")
+    # Data Quality Summary
+    dq = stats['data_quality']
+    print(f"\n📦 DATA QUALITY SUMMARY:")
+    print(f"   Total elements: {dq['total_elements']}")
+    print(f"   Importable to graph: {dq['importable']} ({dq['importable']/dq['total_elements']*100:.1f}%)")
+    print(f"   Skipped (incomplete): {dq['skipped']} ({dq['skipped']/dq['total_elements']*100:.1f}%)")
     
-    # All resource names with examples
-    print(f"\n📋 ALL RESOURCE NAMES WITH EXAMPLES:")
-    print(f"   Total unique resource types: {len(stats['resource_examples'])}")
-    for resource_name in sorted(stats['resource_examples'].keys()):
-        count = stats['resource_types'][resource_name]
-        example = stats['resource_examples'][resource_name]
-        print(f"\n   • {resource_name} (count: {count}):")
-        if example:
-            # Pretty print example activity
-            example_str = json.dumps(example, indent=6, default=str)
-            # Indent each line
-            for line in example_str.split('\n'):
-                print(f"     {line}")
-        else:
-            print(f"     (no activity object)")
+    if dq['skipped_by_reason']:
+        print(f"   Skipped by reason:")
+        for reason, count in sorted(dq['skipped_by_reason'].items(), key=lambda x: -x[1]):
+            print(f"     • {reason}: {count}")
+    
+    print_resource_summary(
+        stats['resource_types'],
+        stats['method_types'],
+        stats['resource_examples'],
+        top_n=10,
+    )
     
     print("\n" + "=" * 60)
 
@@ -189,12 +248,29 @@ def save_statistics(stats, filename='linkedin_statistics.json'):
         'resource_types': dict(stats['resource_types']),
         'method_types': dict(stats['method_types']),
         'resource_examples': stats['resource_examples'],
+        'data_quality': {
+            'total_elements': stats['data_quality']['total_elements'],
+            'importable': stats['data_quality']['importable'],
+            'skipped': stats['data_quality']['skipped'],
+            'skipped_by_reason': dict(stats['data_quality']['skipped_by_reason']),
+            'reactions_importable': stats['data_quality']['reactions_importable'],
+            'reactions_incomplete': stats['data_quality']['reactions_incomplete'],
+            'comments_importable': stats['data_quality']['comments_importable'],
+            'comments_incomplete': stats['data_quality']['comments_incomplete'],
+        }
     }
     
     with open(filename, 'w') as f:
         json.dump(stats_json, f, indent=2, default=str)
     
     print(f"💾 Statistics saved to {filename}")
+    
+    # Save skipped elements to separate file for investigation
+    if stats.get('skipped_elements'):
+        skipped_filename = filename.replace('.json', '_skipped.json')
+        with open(skipped_filename, 'w') as f:
+            json.dump(stats['skipped_elements'], f, indent=2, default=str)
+        print(f"💾 Skipped elements saved to {skipped_filename} ({len(stats['skipped_elements'])} elements)")
 
 
 def main():

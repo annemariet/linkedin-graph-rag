@@ -9,6 +9,26 @@ Set env vars before running:
 from __future__ import annotations
 
 import os
+import sys
+
+# Add parent directory to path for DNS utils
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Apply DNS fix before importing Google libraries
+try:
+    from linkedin_api.dns_utils import setup_gcp_dns_fix, test_dns_resolution
+    
+    # Setup DNS fix for VPN issues
+    setup_gcp_dns_fix(use_custom_resolver=True)
+    
+    # Test DNS resolution
+    location = os.environ.get("VERTEX_LOCATION", "europe-west9")
+    test_host = f"{location}-aiplatform.googleapis.com"
+    if not test_dns_resolution(test_host):
+        print(f"⚠️  Warning: DNS resolution for {test_host} may fail")
+        print("   Consider installing dnspython: pip install dnspython")
+except ImportError:
+    print("⚠️  DNS utils not available, proceeding without DNS fix")
 
 import google.auth
 import vertexai
