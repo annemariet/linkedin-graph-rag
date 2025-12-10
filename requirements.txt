@@ -9,6 +9,3 @@ python-dotenv>=1.0
 neo4j==5.28.2
 neo4j-graphrag[google]>=1.10.1
 gradio>=4.0.0
-
-# Optional: DNS utilities
-dnspython>=2.4.0
