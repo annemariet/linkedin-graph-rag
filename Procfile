@@ -1,1 +1,1 @@
-web: uv run python -m linkedin_api.gradio_app
+web: python -m linkedin_api.gradio_app
