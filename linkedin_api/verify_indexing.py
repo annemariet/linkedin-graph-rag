@@ -68,9 +68,9 @@ def verify_chunks(driver):
         print(f"\n📋 Sample chunk properties:")
         sample = session.run(
             """
-            MATCH (c:Chunk) 
+            MATCH (c:Chunk)
             WHERE c.embedding IS NOT NULL AND c.text IS NOT NULL
-            RETURN c.id as id, 
+            RETURN c.id as id,
                    size(c.text) as text_length,
                    size(c.embedding) as embedding_dim,
                    c.chunk_index as chunk_index,
@@ -172,7 +172,7 @@ def test_vector_search(driver, embedder, index_name: str):
                         f"""
                         CALL db.index.vector.queryNodes('{index_name}', $k, $queryVector)
                         YIELD node, score
-                        RETURN node.id as id, 
+                        RETURN node.id as id,
                                node.text as text,
                                score,
                                node.source_urn as source_urn
@@ -253,7 +253,7 @@ def check_source_nodes(driver):
             """
             MATCH (c:Chunk)-[:FROM_CHUNK]->(s)
             WHERE c.embedding IS NOT NULL
-            RETURN labels(s)[0] as label, 
+            RETURN labels(s)[0] as label,
                    s.urn as urn,
                    s.url as url,
                    count(c) as chunk_count

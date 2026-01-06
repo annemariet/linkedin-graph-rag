@@ -1,5 +1,7 @@
 # Architecture Overview
 
+> **Note**: This architecture documentation is also included in [CLAUDE.md](CLAUDE.md) for developer convenience. CLAUDE.md is the comprehensive guide for Claude Code and includes all commands, workflows, and design patterns.
+
 ## Module Structure
 
 ### Core Scripts (CLI + Module)

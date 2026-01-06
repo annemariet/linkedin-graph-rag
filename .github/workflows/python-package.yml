@@ -28,14 +28,14 @@ jobs:
       uses: astral-sh/setup-uv@v4
       with:
         enable-cache: true
-    
+
     #----------------------------------------------
     # Install dependencies
     #----------------------------------------------
     - name: Install dependencies
       run: |
         uv sync --all-groups
-    
+
     #----------------------------------------------
     # Run linters
     #----------------------------------------------

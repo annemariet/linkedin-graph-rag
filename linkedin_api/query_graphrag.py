@@ -152,34 +152,34 @@ def create_vector_cypher_retriever(driver, embedder):
         MATCH (chunk)-[:FROM_CHUNK]->(source)
         OPTIONAL MATCH (source)<-[:REACTS_TO|COMMENTS_ON|CREATES|REPOSTS]-(person:Person)
         OPTIONAL MATCH (source)-[:REPOSTS]->(original:Post)
-        
+
         // Collect all related information
         WITH collect(DISTINCT chunk) AS chunks,
              collect(DISTINCT source) AS sources,
              collect(DISTINCT person) AS people,
              collect(DISTINCT original) AS originals
-        
+
         // Format context (using string concatenation instead of apoc.text.join for compatibility)
         WITH chunks, sources, people, originals,
-             reduce(text = '', c IN chunks | text + 
+             reduce(text = '', c IN chunks | text +
                 CASE WHEN text = '' THEN '' ELSE '\n---\n' END + c.text
              ) AS content_text,
-             reduce(text = '', s IN sources | text + 
+             reduce(text = '', s IN sources | text +
                 CASE WHEN text = '' THEN '' ELSE '\n' END + s.urn + ' (' + labels(s)[0] + ')'
              ) AS source_text,
-             reduce(text = '', p IN people | text + 
+             reduce(text = '', p IN people | text +
                 CASE WHEN text = '' THEN '' ELSE '\n' END + p.urn
              ) AS people_text,
-             reduce(text = '', o IN originals | text + 
+             reduce(text = '', o IN originals | text +
                 CASE WHEN text = '' THEN '' ELSE '\n' END + o.urn
              ) AS original_text
-        
-        RETURN '=== Post/Comment Content ===\n' + content_text + 
+
+        RETURN '=== Post/Comment Content ===\n' + content_text +
                '\n\n=== Source Info ===\n' + source_text +
-               CASE WHEN people_text <> '' THEN 
+               CASE WHEN people_text <> '' THEN
                    '\n\n=== Related People ===\n' + people_text
                ELSE '' END +
-               CASE WHEN original_text <> '' THEN 
+               CASE WHEN original_text <> '' THEN
                    '\n\n=== Reposted From ===\n' + original_text
                ELSE '' END AS info
         """,

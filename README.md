@@ -5,13 +5,15 @@ A Python client for LinkedIn's Portability API to fetch saved posts and feed dat
 ## Features
 
 - ✅ Fetch saved posts
-- ✅ Fetch feed posts  
+- ✅ Fetch feed posts
 - ✅ Get user profile
 - ✅ DMA-compliant data access
 - ✅ Simple error handling
 - ✅ Environment variable support
 
 ## Setup
+
+> **For complete setup and development commands, see [CLAUDE.md](CLAUDE.md).**
 
 ### 1. Install Dependencies
 
@@ -51,7 +53,7 @@ https://www.linkedin.com/developers/apps/224112894/auth
 **Recommended: Store in Keychain (macOS)**
 
 ```bash
-uv run python3 setup_token.py
+uv run python setup_token.py
 ```
 
 This securely stores your token in macOS Keychain. You only need to do this once.
@@ -65,10 +67,12 @@ export LINKEDIN_ACCESS_TOKEN=your_access_token_here
 ## Usage
 Run scripts using `uv run` to ensure the correct Python version:
 ```bash
-uv run python3 explore_changelog_details.py
-uv run python3 get_linkedin_data.py
+uv run python -m linkedin_api.explore_changelog_details
+uv run python -m linkedin_api.get_linkedin_data
 ```
 **Note**: The scripts will automatically retrieve your token from Keychain (if stored) or environment variables.
+
+For detailed commands and options, see [CLAUDE.md](CLAUDE.md).
 
 `python explore_changelog_detail.py`  works OK except it's not correctly parsing the posts yet, not handling reactions on comments properly, and it's still not getting the saved posts, only the reactions.
 
@@ -124,7 +128,7 @@ logging.basicConfig(level=logging.DEBUG)
 This implementation follows:
 - [LinkedIn DMA Portability API Terms](https://www.linkedin.com/legal/l/portability-api-terms)
 - [LinkedIn API Terms of Use](https://www.linkedin.com/legal/l/api-terms-of-use)
-- GDPR and DMA data portability requirements 
+- GDPR and DMA data portability requirements
 
 
 # Resources and follow-up ideas
@@ -189,7 +193,7 @@ Reaction counts: Counter({'LIKE': 11, 'INTEREST': 7, 'APPRECIATION': 2, 'PRAISE'
 
 I'm curious about what invitations and ugcPosts are.
 
-invitations example: 
+invitations example:
 ```
 {
    'invitationV2': {

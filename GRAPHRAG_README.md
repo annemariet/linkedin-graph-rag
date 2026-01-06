@@ -2,6 +2,8 @@
 
 This guide explains how to index LinkedIn post and comment content for GraphRAG queries.
 
+> **Note**: For complete development commands and architecture details, see [CLAUDE.md](CLAUDE.md).
+
 ## Overview
 
 The GraphRAG system indexes the text content of LinkedIn posts and comments, creates embeddings, and enables semantic search over your LinkedIn activity.
@@ -29,10 +31,10 @@ Run the indexing script to extract content from LinkedIn URLs and create embeddi
 
 ```bash
 # Process all posts/comments
-uv run linkedin_api/index_content.py
+uv run python -m linkedin_api.index_content
 
 # Quick test: process only first 5 items
-uv run linkedin_api/index_content.py --limit 5
+uv run python -m linkedin_api.index_content --limit 5
 ```
 
 This script will:
@@ -56,7 +58,7 @@ This script will:
 Before querying, verify that content was indexed correctly:
 
 ```bash
-uv run linkedin_api/verify_indexing.py
+uv run python -m linkedin_api.verify_indexing
 ```
 
 This will check:
@@ -72,7 +74,7 @@ This will check:
 Run the query script without arguments for interactive mode:
 
 ```bash
-uv run linkedin_api/query_graphrag.py
+uv run python -m linkedin_api.query_graphrag
 ```
 
 Commands:
@@ -86,13 +88,13 @@ Commands:
 Query directly from command line:
 
 ```bash
-uv run linkedin_api/query_graphrag.py "What posts did I react to about AI?"
+uv run python -m linkedin_api.query_graphrag "What posts did I react to about AI?"
 ```
 
 Add `--cypher` flag to use graph traversal:
 
 ```bash
-uv run linkedin_api/query_graphrag.py --cypher "What are the main topics in posts I commented on?"
+uv run python -m linkedin_api.query_graphrag --cypher "What are the main topics in posts I commented on?"
 ```
 
 ## Retrievers

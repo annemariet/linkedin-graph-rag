@@ -21,7 +21,7 @@ Visit `http://localhost:7860` in your browser.
 ## Features
 
 - **Natural language queries** - Ask questions about your LinkedIn content
-- **Vector search** - Fast semantic search through indexed posts/comments  
+- **Vector search** - Fast semantic search through indexed posts/comments
 - **Graph traversal** - Optional Cypher mode to include related entities
 - **Database stats** - Real-time view of indexed content
 - **Example queries** - Get started quickly with pre-made queries
@@ -35,6 +35,8 @@ Visit `http://localhost:7860` in your browser.
 - **Example queries** - Click to try sample questions
 
 ## Configuration
+
+> **Note**: For complete environment variable documentation, see [CLAUDE.md](CLAUDE.md#environment-variables).
 
 Edit environment variables:
 
