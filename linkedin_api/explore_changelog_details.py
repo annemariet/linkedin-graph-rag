@@ -16,6 +16,7 @@ Relationships:
 """
 
 import json
+import os
 from collections import defaultdict
 from datetime import datetime
 from linkedin_api.changelog_utils import fetch_changelog_data
@@ -514,7 +515,11 @@ def print_summary(data):
 
 
 def save_neo4j_data(data, filename="neo4j_data.json"):
-    """Save Neo4j-ready data to JSON file."""
+    """Save Neo4j-ready data to JSON file with timestamp to avoid overwriting."""
+    # Add timestamp to filename to avoid overwriting existing data
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name, ext = os.path.splitext(filename)
+    filename = f"{base_name}_{timestamp}{ext}"
 
     # Format for Neo4j import
     neo4j_format = {

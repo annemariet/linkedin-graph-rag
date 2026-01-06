@@ -87,6 +87,24 @@ def load_graph_data(driver, json_file):
     print("Graph built successfully!")
 
 
-db_cleanup(driver)
-load_graph_data(driver, "neo4j_data.json")
-driver.close()
+if __name__ == "__main__":
+    import sys
+    import glob
+
+    # Get JSON filename from command line or find most recent neo4j_data file
+    if len(sys.argv) > 1:
+        json_file = sys.argv[1]
+    else:
+        # Find most recent neo4j_data_*.json file
+        files = glob.glob("neo4j_data_*.json")
+        if files:
+            json_file = max(files)  # Most recent by filename (timestamp in name)
+            print(f"📂 Using most recent file: {json_file}")
+        else:
+            # Fallback to old filename
+            json_file = "neo4j_data.json"
+            print(f"📂 Using default file: {json_file}")
+
+    db_cleanup(driver)
+    load_graph_data(driver, json_file)
+    driver.close()

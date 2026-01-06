@@ -30,6 +30,7 @@ def fetch_changelog_data(
     resource_filter: Optional[List[str]] = None,
     filter_func: Optional[Callable[[dict], bool]] = None,
     batch_size: int = 50,
+    start_time: Optional[int] = 1764716400000,
     verbose: bool = True,
 ) -> List[dict]:
     """
@@ -41,6 +42,9 @@ def fetch_changelog_data(
         filter_func: Optional custom filter function that takes an element dict
                     and returns True to include it.
         batch_size: Number of elements to fetch per request (default: 50)
+        start_time: Optional start time in epoch milliseconds. Returns events
+                   created after this time. LinkedIn keeps data for 28 days.
+                   Default: 1764716400000 (Dec 3, 2025 00:00:00)
         verbose: If True, print progress messages (default: True)
 
     Returns:
@@ -55,8 +59,19 @@ def fetch_changelog_data(
             )
         return []
 
+    # Default to Dec 3, 2025 if no start_time provided
+    if start_time is None:
+        start_time = 1764716400000  # Dec 3, 2025 00:00:00
+
     if verbose:
         print("🔍 Fetching all changelog data...")
+        if start_time:
+            from datetime import datetime
+
+            start_date = datetime.fromtimestamp(start_time / 1000)
+            print(
+                f"   📅 Fetching events from: {start_date.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
 
     all_elements = []
     start = 0
@@ -66,13 +81,19 @@ def fetch_changelog_data(
             if verbose:
                 print(f"   📡 Fetching batch starting at {start}...")
 
+            params = {
+                "q": "memberAndApplication",
+                "start": start,
+                "count": batch_size,
+            }
+
+            # Add startTime parameter to API call
+            if start_time:
+                params["startTime"] = start_time
+
             response = session.get(
                 f"{BASE_URL}/memberChangeLogs",
-                params={
-                    "q": "memberAndApplication",
-                    "start": start,
-                    "count": batch_size,
-                },
+                params=params,
             )
 
             if response.status_code != 200:

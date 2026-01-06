@@ -11,7 +11,9 @@ Extracts statistics for:
 """
 
 import json
+import os
 from collections import Counter
+from datetime import datetime
 from linkedin_api.changelog_utils import fetch_changelog_data
 from linkedin_api.summary_utils import print_resource_summary, summarize_resources
 
@@ -232,7 +234,11 @@ def print_statistics(stats):
 
 
 def save_statistics(stats, filename="linkedin_statistics.json"):
-    """Save statistics to JSON file."""
+    """Save statistics to JSON file with timestamp to avoid overwriting."""
+    # Add timestamp to filename to avoid overwriting existing data
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name, ext = os.path.splitext(filename)
+    filename = f"{base_name}_{timestamp}{ext}"
 
     # Convert Counter objects to dicts for JSON serialization
     stats_json = {

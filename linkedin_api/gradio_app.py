@@ -165,7 +165,7 @@ with gr.Blocks(title="LinkedIn GraphRAG Query", theme=gr.themes.Soft()) as demo:
     gr.Markdown(
         """
     # 🔍 LinkedIn GraphRAG Query Interface
-    
+
     Query your indexed LinkedIn posts and comments using natural language.
     """
     )
