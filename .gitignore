@@ -10,4 +10,5 @@ venv/
 .DS_Store
 .idea
 
-.json
+*.json
+*.csv
