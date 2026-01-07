@@ -10,7 +10,9 @@ Focuses on:
 
 Relationships:
 - Person REACTS_TO Post
-- Person COMMENTS_ON Post
+- Person CREATED Comment
+- Comment COMMENTED_ON Post (top-level comments)
+- Comment COMMENTED_ON Comment (comment replies)
 - Person REPOSTS Post
 - Person CREATES Post
 """
@@ -183,12 +185,12 @@ def extract_entities_and_relationships(elements):
                 )
                 post_type = "repost" if is_repost else "original"
 
-                # Get commentary text if present
+                # Get post content text if present
                 share_content = activity.get("specificContent", {}).get(
                     "com.linkedin.ugc.ShareContent", {}
                 )
-                commentary = share_content.get("shareCommentary", {}).get("text", "")
-                has_commentary = bool(commentary)
+                content = share_content.get("shareCommentary", {}).get("text", "")
+                has_content = bool(content)
 
                 # Get original post URN if repost
                 original_post_urn = None
@@ -204,7 +206,7 @@ def extract_entities_and_relationships(elements):
                         "post_id": post_id,
                         "url": urn_to_post_url(post_urn) or "",
                         "type": post_type,
-                        "has_commentary": has_commentary,
+                        "has_content": has_content,
                         "timestamp": timestamp,
                         "created_at": (
                             datetime.fromtimestamp(timestamp / 1000).isoformat()
@@ -212,10 +214,8 @@ def extract_entities_and_relationships(elements):
                             else None
                         ),
                     }
-                    if commentary:
-                        post_props["commentary"] = commentary[
-                            :200
-                        ]  # Truncate for storage
+                    if content:
+                        post_props["content"] = content[:200]  # Truncate for storage
                     if original_post_urn:
                         post_props["original_post_urn"] = original_post_urn
 
@@ -329,6 +329,19 @@ def extract_entities_and_relationships(elements):
                 # Get comment text
                 comment_text = activity.get("message", {}).get("text", "")
 
+                # Check if this is a reply to another comment
+                # LinkedIn may use responseContext.parent for comment replies
+                parent_comment_urn = None
+                response_context = activity.get("responseContext", {})
+                parent_urn = response_context.get("parent") or response_context.get(
+                    "root"
+                )
+
+                # If parent is a comment URN, this is a reply
+                if parent_urn and parent_urn.startswith("urn:li:comment:"):
+                    parent_comment_urn = parent_urn
+                # If parent is the post, this is a top-level comment (already have post_urn)
+
                 # Track comment
                 if comment_urn not in comments:
                     comments[comment_urn] = {
@@ -376,15 +389,13 @@ def extract_entities_and_relationships(elements):
                             },
                         }
 
-                    # Create COMMENTS_ON relationship
+                    # Create Person CREATED Comment relationship
                     relationships.append(
                         {
-                            "type": "COMMENTS_ON",
+                            "type": "CREATED",
                             "from": actor,
-                            "to": post_urn,
+                            "to": comment_urn,
                             "properties": {
-                                "comment_urn": comment_urn,
-                                "comment_id": comment_id,
                                 "timestamp": timestamp,
                                 "created_at": (
                                     datetime.fromtimestamp(timestamp / 1000).isoformat()
@@ -394,6 +405,41 @@ def extract_entities_and_relationships(elements):
                             },
                         }
                     )
+
+                # Create Comment COMMENTED_ON relationship
+                # If parent_comment_urn exists, comment is replying to another comment
+                # Otherwise, comment is on the post
+                target_urn = parent_comment_urn if parent_comment_urn else post_urn
+
+                # Ensure parent comment exists if this is a reply
+                if parent_comment_urn and parent_comment_urn not in comments:
+                    # Create a minimal parent comment node if we haven't seen it yet
+                    parent_comment_id = extract_urn_id(parent_comment_urn)
+                    comments[parent_comment_urn] = {
+                        "id": parent_comment_urn,
+                        "label": "Comment",
+                        "properties": {
+                            "urn": parent_comment_urn,
+                            "comment_id": parent_comment_id or "",
+                            "text": "",  # Will be filled if we process the parent later
+                        },
+                    }
+
+                relationships.append(
+                    {
+                        "type": "COMMENTED_ON",
+                        "from": comment_urn,
+                        "to": target_urn,
+                        "properties": {
+                            "timestamp": timestamp,
+                            "created_at": (
+                                datetime.fromtimestamp(timestamp / 1000).isoformat()
+                                if timestamp
+                                else None
+                            ),
+                        },
+                    }
+                )
 
         # Instant Reposts
         elif "instantReposts" in resource_name:
