@@ -7,6 +7,7 @@ from linkedin_api.enrich_profiles import (
     extract_author_profile,
     update_post_author,
 )
+from linkedin_api.extract_resources import enrich_posts_with_resources
 
 
 dotenv.load_dotenv()
@@ -189,5 +190,8 @@ if __name__ == "__main__":
 
     # Enrich posts with author information (only for posts without author info)
     enrich_posts_with_authors(driver)
+
+    # Extract and link external resources from posts
+    enrich_posts_with_resources(driver, json_file=json_file)
 
     driver.close()
