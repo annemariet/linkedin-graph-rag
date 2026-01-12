@@ -435,11 +435,37 @@ def create_resource_nodes_and_relationships(
                     continue
 
                 try:
+                    original_url = url
                     # Resolve redirects to get final URL
                     final_url = resolve_redirect(url)
-                    if final_url != url:
-                        # Use final URL instead of original
-                        url = final_url
+
+                    # Always use final URL (even if same as original)
+                    url = final_url
+
+                    # If redirect was resolved and URLs differ, migrate existing Resource from short URL to final URL
+                    if final_url != original_url:
+                        # Migrate: if Resource exists with original URL, update it to final URL and merge references
+                        migrate_query = """
+                        MATCH (oldResource:Resource {url: $original_url})
+                        OPTIONAL MATCH (source)-[ref:REFERENCES]->(oldResource)
+                        WITH oldResource, collect(source) as sources, collect(ref) as refs
+                        MERGE (newResource:Resource {url: $final_url})
+                        ON CREATE SET newResource.domain = oldResource.domain,
+                                      newResource.type = oldResource.type,
+                                      newResource.title = oldResource.title
+                        ON MATCH SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
+                                    newResource.type = COALESCE(newResource.type, oldResource.type),
+                                    newResource.title = COALESCE(newResource.title, oldResource.title)
+                        FOREACH (s IN sources |
+                          MERGE (s)-[:REFERENCES]->(newResource)
+                        )
+                        DELETE oldResource
+                        """
+                        session.run(
+                            migrate_query,
+                            original_url=original_url,
+                            final_url=final_url,
+                        )
 
                     url_info = categorize_url(url)
                     if not url_info["domain"]:
@@ -491,6 +517,78 @@ def create_resource_nodes_and_relationships(
         raise
 
     return created
+
+
+def migrate_short_urls_to_final_urls(driver, database: str = "neo4j"):
+    """
+    Migrate existing Resource nodes with short URLs (like lnkd.in) to their final URLs.
+
+    This function finds Resources that might be short URLs, resolves their redirects,
+    and updates the Resource nodes to use the final URLs.
+
+    Args:
+        driver: Neo4j driver
+        database: Neo4j database name
+    """
+    print("\n🔄 Migrating short URLs to final URLs...")
+
+    # Find Resources that might be short URLs (common short URL domains)
+    short_url_domains = ["lnkd.in", "bit.ly", "tinyurl.com", "short.link", "t.co"]
+
+    with driver.session(database=database) as session:
+        # Find Resources with potential short URLs
+        query = """
+        MATCH (resource:Resource)
+        WHERE any(domain IN $short_domains WHERE resource.url CONTAINS domain)
+        RETURN resource.url as url
+        LIMIT 1000
+        """
+
+        result = session.run(query, short_domains=short_url_domains)
+        resources = [{"url": record["url"]} for record in result]
+
+        if not resources:
+            print("✅ No short URLs found to migrate")
+            return
+
+        print(f"📊 Found {len(resources)} potential short URLs to migrate")
+
+        migrated = 0
+        for i, resource_data in enumerate(resources, 1):
+            if i % 10 == 0:
+                print(f"   Processing {i}/{len(resources)}...")
+
+            original_url = resource_data["url"]
+            final_url = resolve_redirect(original_url)
+
+            if final_url != original_url:
+                # Migrate the Resource
+                migrate_query = """
+                MATCH (oldResource:Resource {url: $original_url})
+                OPTIONAL MATCH (source)-[ref:REFERENCES]->(oldResource)
+                WITH oldResource, collect(source) as sources
+                MERGE (newResource:Resource {url: $final_url})
+                ON CREATE SET newResource.domain = oldResource.domain,
+                              newResource.type = oldResource.type,
+                              newResource.title = oldResource.title
+                ON MATCH SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
+                            newResource.type = COALESCE(newResource.type, oldResource.type),
+                            newResource.title = COALESCE(newResource.title, oldResource.title)
+                FOREACH (s IN sources |
+                  MERGE (s)-[:REFERENCES]->(newResource)
+                )
+                DELETE oldResource
+                RETURN count(newResource) as migrated
+                """
+
+                result = session.run(
+                    migrate_query, original_url=original_url, final_url=final_url
+                )
+                if result.single():
+                    migrated += 1
+
+        print(f"✅ Migrated {migrated} Resources from short URLs to final URLs")
+        print()
 
 
 def enrich_posts_with_resources(
