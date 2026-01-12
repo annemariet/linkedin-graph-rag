@@ -20,7 +20,11 @@ import os
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from linkedin_api.utils.changelog import fetch_changelog_data
+from linkedin_api.utils.changelog import (
+    fetch_changelog_data,
+    get_max_processed_at,
+    save_last_processed_timestamp,
+)
 from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
 
 # Output directory
@@ -301,6 +305,11 @@ def main():
     if not elements:
         print("❌ No data retrieved")
         return
+
+    # Save last processed timestamp
+    max_timestamp = get_max_processed_at(elements)
+    if max_timestamp:
+        save_last_processed_timestamp(max_timestamp)
 
     # Extract statistics
     print("\n🔍 Analyzing data...")

@@ -5,11 +5,72 @@ This module provides shared functions for fetching changelog data from the
 LinkedIn Member Data Portability API, handling pagination, filtering, and errors.
 """
 
+from pathlib import Path
+from time import time
 from typing import List, Optional, Callable
 from linkedin_api.utils.auth import build_linkedin_session, get_access_token
 
 
 BASE_URL = "https://api.linkedin.com/rest"
+DEFAULT_START_TIME = 1764716400000  # Dec 3, 2025 00:00:00
+LAST_RUN_FILE = Path(__file__).parent.parent.parent / ".last_run"
+
+
+def get_last_processed_timestamp() -> Optional[int]:
+    """
+    Read the last processed timestamp from .last_run file.
+
+    Returns:
+        Timestamp in epoch milliseconds, or None if file doesn't exist or is invalid.
+    """
+    if not LAST_RUN_FILE.exists():
+        return None
+
+    try:
+        content = LAST_RUN_FILE.read_text().strip()
+        timestamp = int(content)
+        # Validate timestamp is reasonable (not too old, not in future)
+        # LinkedIn keeps data for 28 days, so allow up to 30 days old
+        min_valid = DEFAULT_START_TIME
+        max_valid = int(time() * 1000) + (30 * 24 * 60 * 60 * 1000)
+
+        if timestamp < min_valid or timestamp > max_valid:
+            return None
+
+        return timestamp
+    except (ValueError, OSError):
+        return None
+
+
+def save_last_processed_timestamp(timestamp: int) -> None:
+    """
+    Save the last processed timestamp to .last_run file.
+
+    Args:
+        timestamp: Timestamp in epoch milliseconds.
+    """
+    try:
+        LAST_RUN_FILE.write_text(str(timestamp))
+    except OSError:
+        pass  # Silently fail if we can't write
+
+
+def get_max_processed_at(elements: List[dict]) -> Optional[int]:
+    """
+    Extract the maximum processedAt timestamp from changelog elements.
+
+    Args:
+        elements: List of changelog element dictionaries.
+
+    Returns:
+        Maximum processedAt timestamp in epoch milliseconds, or None if no valid timestamps found.
+    """
+    timestamps = [
+        elem.get("processedAt")
+        for elem in elements
+        if isinstance(elem.get("processedAt"), int)
+    ]
+    return max(timestamps) if timestamps else None
 
 
 def fetch_changelog_data(
@@ -30,6 +91,7 @@ def fetch_changelog_data(
         batch_size: Number of elements to fetch per request (default: 50)
         start_time: Optional start time in epoch milliseconds. Returns events
                    created after this time. LinkedIn keeps data for 28 days.
+                   If None, automatically loads from .last_run file.
                    Default: 1764716400000 (Dec 3, 2025 00:00:00)
         verbose: If True, print progress messages (default: True)
 
@@ -47,9 +109,9 @@ def fetch_changelog_data(
 
     session = build_linkedin_session(access_token)
 
-    # Default to Dec 3, 2025 if no start_time provided
+    # Auto-load saved timestamp if start_time not explicitly provided
     if start_time is None:
-        start_time = 1764716400000
+        start_time = get_last_processed_timestamp() or DEFAULT_START_TIME
 
     if verbose:
         print("🔍 Fetching all changelog data...")

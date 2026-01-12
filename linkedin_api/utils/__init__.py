@@ -38,6 +38,9 @@ __all__ = [
     # Changelog
     "BASE_URL",
     "fetch_changelog_data",
+    "get_last_processed_timestamp",
+    "save_last_processed_timestamp",
+    "get_max_processed_at",
     # URNs
     "extract_urn_id",
     "urn_to_post_url",

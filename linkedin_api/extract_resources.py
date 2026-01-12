@@ -13,6 +13,8 @@ import re
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+import requests
+from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
 
@@ -109,6 +111,80 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
         }
     except Exception:
         return {"domain": None, "type": "unknown"}
+
+
+def resolve_redirect(url: str, max_redirects: int = 5) -> str:
+    """
+    Resolve redirects to get the final URL.
+
+    Args:
+        url: URL to resolve
+        max_redirects: Maximum number of redirects to follow
+
+    Returns:
+        Final URL after following redirects, or original URL if resolution fails
+    """
+    try:
+        response = requests.head(
+            url, timeout=10, allow_redirects=True, max_redirects=max_redirects
+        )
+        return response.url
+    except Exception:
+        # If HEAD fails, try GET with no content download
+        try:
+            response = requests.get(
+                url,
+                timeout=10,
+                allow_redirects=True,
+                max_redirects=max_redirects,
+                stream=True,
+            )
+            return response.url
+        except Exception:
+            return url
+
+
+def extract_title_from_url(url: str) -> Optional[str]:
+    """
+    Extract title from a URL by fetching the page and parsing HTML.
+
+    Args:
+        url: URL to extract title from
+
+    Returns:
+        Title string or None if extraction fails
+    """
+    try:
+        response = requests.get(url, timeout=10, allow_redirects=True)
+        response.raise_for_status()
+
+        # Check content type
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/html" not in content_type:
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Try <title> tag first
+        title_tag = soup.find("title")
+        if title_tag:
+            title = title_tag.get_text(strip=True)
+            if title:
+                return title
+
+        # Try Open Graph title
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content"):
+            return og_title["content"].strip()
+
+        # Try Twitter Card title
+        twitter_title = soup.find("meta", attrs={"name": "twitter:title"})
+        if twitter_title and twitter_title.get("content"):
+            return twitter_title["content"].strip()
+
+        return None
+    except Exception:
+        return None
 
 
 def should_ignore_url(url: str) -> bool:
@@ -260,16 +336,41 @@ def create_resource_nodes_and_relationships(
         if should_ignore_url(url):
             continue
 
+        # Resolve redirects to get final URL
+        final_url = resolve_redirect(url)
+        if final_url != url:
+            # Use final URL instead of original
+            url = final_url
+
         url_info = categorize_url(url)
         if not url_info["domain"]:
             continue
+
+        # Extract title from URL
+        title = extract_title_from_url(url)
+
+        # Build SET clauses conditionally
+        create_set = "resource.domain = $domain, resource.type = $type"
+        match_set = "resource.domain = $domain, resource.type = $type"
+
+        params = {
+            "source_urn": source_urn,
+            "url": url,
+            "domain": url_info["domain"],
+            "type": url_info["type"],
+        }
+
+        if title:
+            create_set += ", resource.title = $title"
+            match_set += ", resource.title = $title"
+            params["title"] = title
 
         query = f"""
         MATCH (source:{source_type} {{urn: $source_urn}})
 
         MERGE (resource:Resource {{url: $url}})
-        ON CREATE SET resource.domain = $domain,
-                      resource.type = $type
+        ON CREATE SET {create_set}
+        ON MATCH SET {match_set}
 
         MERGE (source)-[:REFERENCES]->(resource)
 
@@ -277,13 +378,7 @@ def create_resource_nodes_and_relationships(
         """
 
         with driver.session() as session:
-            result = session.run(
-                query,
-                source_urn=source_urn,
-                url=url,
-                domain=url_info["domain"],
-                type=url_info["type"],
-            )
+            result = session.run(query, **params)
             if result.single():
                 created += 1
 

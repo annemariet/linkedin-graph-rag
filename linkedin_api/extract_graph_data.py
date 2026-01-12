@@ -488,6 +488,11 @@ def main():
         print("❌ No post-related data found")
         return
 
+    # Save last processed timestamp
+    max_timestamp = get_max_processed_at(elements)
+    if max_timestamp:
+        save_last_processed_timestamp(max_timestamp)
+
     print("\n🔍 Extracting entities and relationships...")
     data = extract_entities_and_relationships(elements)
 
