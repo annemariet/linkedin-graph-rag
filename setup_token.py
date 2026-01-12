@@ -17,7 +17,7 @@ except ImportError:
     sys.exit(1)
 
 
-from linkedin_api.auth import get_access_token
+from linkedin_api.utils.auth import get_access_token
 
 
 def main():

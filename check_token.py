@@ -12,7 +12,7 @@ SECURITY NOTES:
 
 import sys
 
-from linkedin_api.auth import get_access_token
+from linkedin_api.utils.auth import get_access_token
 
 
 def check_token():

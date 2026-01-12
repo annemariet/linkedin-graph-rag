@@ -14,8 +14,8 @@ import json
 import os
 from collections import Counter
 from datetime import datetime
-from linkedin_api.changelog_utils import fetch_changelog_data
-from linkedin_api.summary_utils import print_resource_summary, summarize_resources
+from linkedin_api.utils.changelog import fetch_changelog_data
+from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
 
 
 def get_all_changelog_data():

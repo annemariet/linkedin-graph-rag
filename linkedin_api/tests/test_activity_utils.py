@@ -1,6 +1,6 @@
 """Tests for activity_utils module."""
 
-from linkedin_api.activity_utils import (
+from linkedin_api.utils.activities import (
     extract_element_fields,
     determine_post_type,
     extract_reaction_type,

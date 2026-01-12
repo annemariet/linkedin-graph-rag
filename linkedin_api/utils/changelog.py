@@ -6,7 +6,7 @@ LinkedIn Member Data Portability API, handling pagination, filtering, and errors
 """
 
 from typing import List, Optional, Callable
-from linkedin_api.auth import build_linkedin_session, get_access_token
+from linkedin_api.utils.auth import build_linkedin_session, get_access_token
 
 
 BASE_URL = "https://api.linkedin.com/rest"

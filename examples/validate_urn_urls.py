@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from linkedin_api.urn_utils import (
+from linkedin_api.utils.urns import (
     urn_to_post_url,
     urn_to_profile_url,
     extract_urn_id,

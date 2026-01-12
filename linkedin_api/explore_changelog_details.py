@@ -21,9 +21,9 @@ import json
 import os
 from collections import defaultdict
 from datetime import datetime
-from linkedin_api.changelog_utils import fetch_changelog_data
-from linkedin_api.summary_utils import print_resource_summary, summarize_resources
-from linkedin_api.urn_utils import extract_urn_id, urn_to_post_url
+from linkedin_api.utils.changelog import fetch_changelog_data
+from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
+from linkedin_api.utils.urns import extract_urn_id, urn_to_post_url
 
 
 def get_all_post_activities():
