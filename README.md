@@ -1,52 +1,36 @@
-# LinkedIn Portability API Client
+# LinkedIn Graph Data Extraction
 
-A Python client for LinkedIn's Portability API to fetch saved posts and feed data, compliant with DMA (Digital Markets Act) requirements.
+A Python client for extracting LinkedIn activity data from the Member Data Portability API and building a Neo4j knowledge graph.
 
 ## Features
 
-- ✅ Fetch saved posts
-- ✅ Fetch feed posts
-- ✅ Get user profile
-- ✅ DMA-compliant data access
-- ✅ Simple error handling
-- ✅ Environment variable support
+- ✅ Fetch post-related activities (posts, comments, reactions)
+- ✅ Extract entities and relationships for Neo4j
+- ✅ Enrich posts with author profiles
+- ✅ Extract and link external resources (articles, videos, repos)
+- ✅ Build Neo4j knowledge graph
+- ✅ Query graph with GraphRAG
 
 ## Setup
 
-> **For complete setup and development commands, see [CLAUDE.md](CLAUDE.md).**
-
 ### 1. Install Dependencies
 
-This project uses `uv` for dependency management. Install dependencies with:
+This project uses `uv` for dependency management:
 
 ```bash
 uv sync
 ```
 
-This will:
-- Install Python 3.12 (if needed)
-- Install all dependencies including `keyring` and `requests`
-- Set up the virtual environment
+This installs Python 3.12 (if needed) and all dependencies.
 
 ### 2. Get LinkedIn Access Token
 
-**Option A: LinkedIn Developer App**
 1. Go to [LinkedIn Developers](https://www.linkedin.com/developers/)
 2. Create a new app
-3. Get OAuth 2.0 access token. The Portability API uses `r_dma_portability_self_serve` scope
+3. Get OAuth 2.0 access token with `r_dma_portability_self_serve` scope
+4. Get token from: https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t
 
-
-**Troubleshooting**
-
-Token expires: `{"status":401,"serviceErrorCode":65602,"code":"EXPIRED_ACCESS_TOKEN","message":"The token used in the request has expired"}`
-
-This happens every 2 months. A token can be recreated on https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t. Update the right secret used by the app (most lately, `LINKEDIN_ACCESS_TOKEN`)
-
-
-https://learn.microsoft.com/en-us/linkedin/dma/member-data-portability/shared/member-changelog-api?view=li-dma-data-portability-2025-11&tabs=http
-
-https://www.linkedin.com/developers/apps/224112894/auth
-
+**Note:** Tokens expire every ~60 days. You'll need to regenerate them.
 
 ### 3. Configure Access Token
 
@@ -56,7 +40,7 @@ https://www.linkedin.com/developers/apps/224112894/auth
 uv run python setup_token.py
 ```
 
-This securely stores your token in macOS Keychain. You only need to do this once.
+This securely stores your token in macOS Keychain.
 
 **Alternative: Environment Variable**
 
@@ -64,147 +48,201 @@ This securely stores your token in macOS Keychain. You only need to do this once
 export LINKEDIN_ACCESS_TOKEN=your_access_token_here
 ```
 
-## Usage
-Run scripts using `uv run` to ensure the correct Python version:
+### 4. Configure Neo4j
+
+Set environment variables (or use defaults):
+
 ```bash
-uv run python -m linkedin_api.explore_changelog_details
-uv run python -m linkedin_api.get_linkedin_data
+export NEO4J_URI=neo4j://localhost:7687
+export NEO4J_USERNAME=neo4j
+export NEO4J_PASSWORD=your_password
+export NEO4J_DATABASE=neo4j
 ```
-**Note**: The scripts will automatically retrieve your token from Keychain (if stored) or environment variables.
 
-For detailed commands and options, see [CLAUDE.md](CLAUDE.md).
+Or create a `.env` file:
 
-`python explore_changelog_detail.py`  works OK except it's not correctly parsing the posts yet, not handling reactions on comments properly, and it's still not getting the saved posts, only the reactions.
+```bash
+NEO4J_URI=neo4j://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your_password
+NEO4J_DATABASE=neo4j
+```
 
-I thought I'd use Instapaper to save posts but I've kept saving with LinkedIn...
+## Building the Graph
 
-`python get_linkedin_data.py` is lower level and can be used for dev.
+### Step-by-Step Workflow
 
-Next steps:
-- Properly handle post content for analysis
-- cleanup all the extra files
+#### Step 1: Extract Graph Data
 
+Fetch LinkedIn changelog data and extract entities/relationships:
 
-## Important Notes
+```bash
+uv run python -m linkedin_api.extract_graph_data
+```
 
-⚠️ **API Limitations:**
-- LinkedIn Portability API is subject to rate limits
-- Access tokens expire (typically 60 days)
-- Some endpoints may require additional permissions
+**What it does:**
+- Fetches post-related activities from LinkedIn API (posts, comments, reactions)
+- Extracts entities: Posts, People, Comments, Reactions
+- Extracts relationships: CREATES, REPOSTS, REACTS_TO, COMMENTED_ON, etc.
+- Saves to `neo4j_data_YYYYMMDD_HHMMSS.json`
 
-⚠️ **DMA Compliance:**
-- This implementation follows LinkedIn's DMA requirements
-- Data access is limited to user's own content
-- Respects LinkedIn's data portability guidelines
+**Output:** `neo4j_data_*.json` file with nodes and relationships ready for Neo4j import.
+
+#### Step 2: Build Graph in Neo4j
+
+Load the extracted data into Neo4j and enrich with additional information:
+
+```bash
+uv run python -m linkedin_api.build_graph neo4j_data_YYYYMMDD_HHMMSS.json
+```
+
+Or use the most recent file automatically:
+
+```bash
+uv run python -m linkedin_api.build_graph
+```
+
+**What it does:**
+1. Loads nodes and relationships from JSON into Neo4j
+2. Enriches Post nodes with author information (name, profile URL) by scraping LinkedIn
+3. Extracts external resources (articles, videos, GitHub repos) from post/comment content
+4. Creates Resource nodes and REFERENCES relationships
+
+**Options:**
+- `--skip-cleanup`: Merge new data with existing graph (preserves author info, resources)
+- Without flag: Cleans database and creates fresh graph
+
+**Example with incremental update:**
+
+```bash
+uv run python -m linkedin_api.build_graph --skip-cleanup
+```
+
+#### Step 3: Query the Graph
+
+Query the graph using GraphRAG:
+
+```bash
+uv run python -m linkedin_api.query_graphrag
+```
+
+## Scripts Overview
+
+### Main Scripts
+
+- **`extract_graph_data.py`** - Step 1: Fetch and extract graph data to JSON
+- **`build_graph.py`** - Step 2: Load JSON into Neo4j and enrich
+- **`query_graphrag.py`** - Query the graph with GraphRAG
+- **`analyze_activity.py`** - Analyze all LinkedIn activity (exploration tool)
+
+### Utility Modules
+
+- **`enrich_profiles.py`** - Extract author profiles from LinkedIn URLs
+- **`extract_resources.py`** - Extract external resources from content
+- **`utils/`** - Shared utilities (auth, changelog fetching, URN conversion, etc.)
+
+## Usage Examples
+
+### Complete Workflow (First Time)
+
+```bash
+# 1. Extract data
+uv run python -m linkedin_api.extract_graph_data
+
+# 2. Build graph (fresh)
+uv run python -m linkedin_api.build_graph
+
+# 3. Query graph
+uv run python -m linkedin_api.query_graphrag
+```
+
+### Incremental Update
+
+```bash
+# 1. Extract new data
+uv run python -m linkedin_api.extract_graph_data
+
+# 2. Merge with existing graph (preserves author info, resources)
+uv run python -m linkedin_api.build_graph --skip-cleanup
+```
+
+### Explore Activity Data
+
+```bash
+# Analyze all LinkedIn activity (not just posts)
+uv run python -m linkedin_api.analyze_activity
+```
+
+## Graph Schema
+
+### Nodes
+
+- **Post**: LinkedIn posts (original, reposts)
+  - Properties: `urn`, `post_id`, `url`, `content`, `type`, `timestamp`
+- **Person**: People (authors, actors)
+  - Properties: `urn`, `person_id`, `name`, `profile_url`
+- **Comment**: Comments on posts
+  - Properties: `urn`, `text`, `timestamp`
+- **Reaction**: Reactions/likes
+  - Properties: `urn`, `reaction_type`, `timestamp`
+- **Resource**: External resources (articles, videos, repos)
+  - Properties: `url`, `type`, `title`
+
+### Relationships
+
+- `Person CREATES Post`
+- `Person REPOSTS Post`
+- `Person REACTS_TO Post`
+- `Person CREATED Comment`
+- `Comment COMMENTED_ON Post` (top-level)
+- `Comment COMMENTED_ON Comment` (replies)
+- `Post REFERENCES Resource`
+- `Comment REFERENCES Resource`
 
 ## Troubleshooting
 
-### Common Issues
+### Token Expired
 
-1. **403 Forbidden**
-   - Check access token validity
-   - Verify required scopes are granted
-   - Ensure token hasn't expired
+If you see `401 Unauthorized` or `EXPIRED_ACCESS_TOKEN`:
 
-2. **401 Unauthorized**
-   - Invalid access token
-   - Token format issues
+1. Get a new token from: https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t
+2. Update it: `uv run python setup_token.py`
 
-3. **Rate Limiting**
-   - Implement exponential backoff
-   - Reduce request frequency
+### Neo4j Connection Issues
 
-### Debug Mode
+```bash
+# Check connection
+uv run python check_token.py
 
-Enable verbose logging:
-
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
+# Verify Neo4j is running
+# Check NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD environment variables
 ```
 
-## Legal Compliance
+### Rate Limiting
 
-This implementation follows:
+LinkedIn API has rate limits. If you hit them:
+- Wait a few minutes and retry
+- The scripts handle pagination automatically
+
+## API References
+
+- [LinkedIn Member Data Portability API](https://learn.microsoft.com/en-us/linkedin/dma/member-data-portability/shared/member-changelog-api?view=li-dma-data-portability-2025-11&tabs=http)
 - [LinkedIn DMA Portability API Terms](https://www.linkedin.com/legal/l/portability-api-terms)
-- [LinkedIn API Terms of Use](https://www.linkedin.com/legal/l/api-terms-of-use)
-- GDPR and DMA data portability requirements
 
+## Development Notes
 
-# Resources and follow-up ideas
+### Changelog Data Structure
 
-- [srchd](https://github.com/dust-tt/srchd) with a link to a talk from dotAI, how to coordinate agents through a publication/review reasoning, including references.
-- [auth0](https://auth0.com/ai/docs/intro/overview) secure authentication for agent use
+Each element from the API contains:
+- `resourceName`: Type of resource (e.g., "ugcPosts", "socialActions/likes")
+- `methodName`: Action (e.g., "CREATE")
+- `activity`: Detailed activity data
+- `actor`: Person who performed the action
 
-# TODO next
+### Resource Types
 
-- [ ] Cleanup token/keyring setup, check and retrieval, avoid duplication
-- [ ] Review get_linkedin_data.py to extract relevant info from posts
-- [ ] Extract posts and articles from links -- understand linkedin urn/uri thing
-
-## Dev notes
-
-Changelog data:
-list of elements with following schema:
-{
-   'owner',
-   'resourceId',
-   'method',
-   'activity',
-   'configVersion',
-   'parentSiblingActivities',
-   'resourceName',
-   'resourceUri',
-   'actor',
-   'activityId',
-   'processedAt',
-   'activityStatus',
-   'capturedAt',
-   'siblingActivities',
-   'id'
-}
-
-'resourceName': 'messages' -> this is for DMs. I want to skip these, I only want to count how many DMs I sent (and received if that's possible)
-
-Other types of resources:
-{'messages': 25, 'socialActions/likes': 22, 'invitations': 2, 'ugcPosts': 1}
-
-Example:
-```
-'owner': 'urn:li:person:k_ho7OlN0r',
-'resourceId': '2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==',
-'method': 'CREATE',
-'activity': {'owner': 'urn:li:person:k_ho7OlN0r', 'attachments': [], 'clientExperience': {'clientGeneratedToken': 'c248e9b2-3439-43ee-8095-3b3f356f1023'},
-'author': 'urn:li:person:k_ho7OlN0r',
-'thread': 'urn:li:messagingThread:2-OWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==',
-'contentClassification': {'classification': 'SAFE'},
-'content': {'format': 'TEXT', 'fallback': 'Je ne sais pas exactement où est le RV 😂.\nTu peux me contacter au 06 04 42 91 31 si jamais.', 'formatVersion': 1}, 'deliveredAt': 1764099135050, 'actor': 'urn:li:messagingActor:urn:li:person:k_ho7OlN0r',
-'createdAt': 1764099135050, 'mailbox': 'urn:li:messagingMailbox:urn:li:person:k_ho7OlN0r', 'messageContexts': [], 'id': '2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==', '$URN': 'urn:li:messagingMessage:2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA=='}, 'configVersion': 19, 'parentSiblingActivities': [],
-'resourceName': 'messages', 'resourceUri': '/messages/2-MTc2NDA5OTEzNTA1MGI2Nzg4My0xMDAmOWY1YTU5M2EtOWJmNS00NjZhLWE5ZGMtNTlkNGUzMTJiM2VhXzEwMA==', 'actor': 'urn:li:person:k_ho7OlN0r', 'activityId': 'e53339f6-7abb-4146-b9cb-fc4fbfa692d7', 'processedAt': 1764099135440, 'activityStatus': 'SUCCESS', 'capturedAt': 1764099135260, 'siblingActivities': [], 'id': 5893231114}
-```
-
-Activity object: not all fields are always present. I have an example with just "reactionType". Some don't have the $URN field.
-{
-   'actor', 'reactionType', 'created', 'root', 'lastModified', '$URN', 'object'
-}
-
-Let's examine reactionType.
-Reaction counts: Counter({'LIKE': 11, 'INTEREST': 7, 'APPRECIATION': 2, 'PRAISE': 2, 'n/a': 1})
-
-I'm curious about what invitations and ugcPosts are.
-
-invitations example:
-```
-{
-   'invitationV2': {
-      'inviter': 'urn:li:person:t0Lo9bjtc-',
-      'trackingId': 'º±2Ì\x0eÕMÕ¨+ø\x80Õ\x100\x1d',
-      'invitee': 'urn:li:person:k_ho7OlN0r'
-   }
-}
-```
-
-UGCPost seems to be simply posts and is quite rich.
-It's not clear whether it's for all posts or basic shares.
-
-Even though I'd like to focus on likes, it might be useful to have the proper initial post structure right.
+- `ugcPosts` / `ugcPost`: Posts
+- `socialActions/likes`: Reactions
+- `socialActions/comments`: Comments
+- `messages`: DMs (not imported to graph)
+- `invitations`: Connection invites (not imported to graph)

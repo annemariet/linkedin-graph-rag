@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 """
-Extract entities and relationships from LinkedIn public post activities for Neo4j.
+Extract graph data from LinkedIn changelog API.
 
-Focuses on:
-- Posts (original, reposts)
-- People (actors, authors)
-- Comments
-- Reactions
+Fetches post-related activities from LinkedIn Member Data Portability API
+and extracts entities (Posts, People, Comments, Reactions) and relationships
+for import into Neo4j.
 
-Relationships:
-- Person REACTS_TO Post
-- Person CREATED Comment
-- Comment COMMENTED_ON Post (top-level comments)
-- Comment COMMENTED_ON Comment (comment replies)
-- Person REPOSTS Post
-- Person CREATES Post
+Output: Saves neo4j_data_*.json file with nodes and relationships.
+
+This is Step 1 of the graph building workflow:
+1. extract_graph_data.py → Fetch and extract data to JSON
+2. build_graph.py → Load JSON into Neo4j and enrich
 """
 
 import json

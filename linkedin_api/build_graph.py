@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+"""
+Build Neo4j graph from extracted LinkedIn data.
+
+This is Step 2 of the graph building workflow:
+1. extract_graph_data.py → Fetch and extract data to JSON
+2. build_graph.py → Load JSON into Neo4j and enrich
+
+Loads nodes and relationships from JSON file, then enriches:
+- Post nodes with author information (name, profile URL)
+- Post/Comment nodes with external resources (articles, videos, repos)
+"""
+
 import dotenv
 from os import getenv
 from neo4j import GraphDatabase

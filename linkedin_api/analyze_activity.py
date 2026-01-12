@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Extract and analyze all LinkedIn activity history from Member Data Portability API.
+Analyze all LinkedIn activity history from Member Data Portability API.
 
-Extracts statistics for:
+This is an exploration/analysis tool that provides statistics on:
 - DMs (messages sent/received)
 - Invites (sent/received)
 - Reactions (by type)
 - Posts (original, repost, repost with comment)
 - Comments
+
+Output: Saves statistics to JSON file.
+
+Note: This is separate from the graph extraction workflow.
+Use extract_graph_data.py to extract data for Neo4j import.
 """
 
 import json
