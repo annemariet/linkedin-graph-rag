@@ -18,7 +18,11 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from linkedin_api.utils.changelog import fetch_changelog_data
+from linkedin_api.utils.changelog import (
+    fetch_changelog_data,
+    get_max_processed_at,
+    save_last_processed_timestamp,
+)
 from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
 from linkedin_api.utils.urns import extract_urn_id, urn_to_post_url
 
