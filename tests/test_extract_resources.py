@@ -76,6 +76,46 @@ class TestCategorizeUrl:
         result = categorize_url("https://www.example.com")
         assert result["domain"] == "example.com"
 
+    def test_categorize_pdf_document(self):
+        """Test categorizing PDF documents."""
+        result = categorize_url("https://example.com/document.pdf")
+        assert result["type"] == "document"
+
+    def test_categorize_video_file(self):
+        """Test categorizing video files."""
+        result = categorize_url("https://example.com/video.mp4")
+        assert result["type"] == "video"
+
+    def test_categorize_image_file(self):
+        """Test categorizing image files."""
+        result = categorize_url("https://example.com/image.png")
+        assert result["type"] == "image"
+
+    def test_categorize_medium_article(self):
+        """Test categorizing Medium articles."""
+        result = categorize_url("https://medium.com/@user/article-title")
+        assert result["type"] == "article"
+
+    def test_categorize_stackoverflow_tool(self):
+        """Test categorizing Stack Overflow as tool."""
+        result = categorize_url("https://stackoverflow.com/questions/123")
+        assert result["type"] == "tool"
+
+    def test_categorize_arxiv_research(self):
+        """Test categorizing arXiv as research."""
+        result = categorize_url("https://arxiv.org/abs/1234.5678")
+        assert result["type"] == "research"
+
+    def test_categorize_blog_path(self):
+        """Test categorizing URLs with /blog/ path as article."""
+        result = categorize_url("https://example.com/blog/post-title")
+        assert result["type"] == "article"
+
+    def test_categorize_gitlab_repository(self):
+        """Test categorizing GitLab as repository."""
+        result = categorize_url("https://gitlab.com/user/repo")
+        assert result["type"] == "repository"
+
 
 class TestShouldIgnoreUrl:
     """Test URL filtering logic."""

@@ -121,45 +121,157 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
     try:
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
+        path = parsed.path.lower()
 
         # Remove 'www.' prefix for cleaner domain names
         if domain.startswith("www."):
             domain = domain[4:]
 
-        # Determine resource type based on domain
-        resource_type = "article"  # default
+        # First, check file extensions in URL path
+        url_lower = url.lower()
+        file_extensions = {
+            # Documents
+            ".pdf": "document",
+            ".doc": "document",
+            ".docx": "document",
+            ".ppt": "presentation",
+            ".pptx": "presentation",
+            ".xls": "spreadsheet",
+            ".xlsx": "spreadsheet",
+            # Images
+            ".jpg": "image",
+            ".jpeg": "image",
+            ".png": "image",
+            ".gif": "image",
+            ".svg": "image",
+            ".webp": "image",
+            # Videos
+            ".mp4": "video",
+            ".avi": "video",
+            ".mov": "video",
+            ".webm": "video",
+            ".mkv": "video",
+            # Audio
+            ".mp3": "audio",
+            ".wav": "audio",
+            ".ogg": "audio",
+            # Archives
+            ".zip": "archive",
+            ".tar": "archive",
+            ".gz": "archive",
+        }
+
+        for ext, resource_type in file_extensions.items():
+            if ext in url_lower:
+                return {"domain": domain, "type": resource_type}
+
+        # Determine resource type based on domain and path patterns
+        resource_type = None
 
         # Video platforms
         if any(
             video_domain in domain
-            for video_domain in ["youtube.com", "youtu.be", "vimeo.com"]
+            for video_domain in [
+                "youtube.com",
+                "youtu.be",
+                "vimeo.com",
+                "dailymotion.com",
+                "twitch.tv",
+            ]
         ):
             resource_type = "video"
-        # GitHub
-        elif "github.com" in domain:
+        # Code repositories
+        elif any(
+            repo_domain in domain
+            for repo_domain in [
+                "github.com",
+                "gitlab.com",
+                "bitbucket.org",
+                "sourceforge.net",
+            ]
+        ):
             resource_type = "repository"
         # Documentation sites
         elif any(
             doc_domain in domain
-            for doc_domain in ["docs.", "documentation", "readthedocs.io"]
+            for doc_domain in ["docs.", "documentation", "readthedocs.io", "gitbook.io"]
         ):
             resource_type = "documentation"
+        # Social media (treat as external content)
+        elif any(
+            social_domain in domain
+            for social_domain in [
+                "twitter.com",
+                "x.com",
+                "facebook.com",
+                "instagram.com",
+                "tiktok.com",
+            ]
+        ):
+            resource_type = "social"
+        # News and articles
+        elif (
+            any(
+                article_domain in domain
+                for article_domain in [
+                    "medium.com",
+                    "substack.com",
+                    "dev.to",
+                    "hashnode.com",
+                    "blog.",
+                    "news.",
+                    "article",
+                ]
+            )
+            or "/blog/" in path
+            or "/article/" in path
+            or "/post/" in path
+        ):
+            resource_type = "article"
+        # Academic/research
+        elif any(
+            academic_domain in domain
+            for academic_domain in [
+                "arxiv.org",
+                "scholar.google.com",
+                "researchgate.net",
+                "academia.edu",
+                "doi.org",
+            ]
+        ):
+            resource_type = "research"
+        # E-commerce
+        elif any(
+            shop_domain in domain
+            for shop_domain in ["amazon.com", "shopify.com", "etsy.com", "ebay.com"]
+        ):
+            resource_type = "product"
+        # Tools/platforms
+        elif any(
+            tool_domain in domain
+            for tool_domain in [
+                "stackoverflow.com",
+                "reddit.com",
+                "discord.com",
+                "slack.com",
+                "notion.so",
+                "figma.com",
+            ]
+        ):
+            resource_type = "tool"
+        # Podcasts
+        elif any(
+            podcast_domain in domain
+            for podcast_domain in ["spotify.com", "podcast", "anchor.fm", "podbean.com"]
+        ):
+            resource_type = "podcast"
         # LinkedIn articles (treat as external)
         elif "linkedin.com" in domain and "/pulse/" in url:
             resource_type = "article"
-        # Other article/blog platforms
-        elif any(
-            article_domain in domain
-            for article_domain in [
-                "medium.com",
-                "substack.com",
-                "dev.to",
-                "hashnode.com",
-                "blog.",
-                "news.",
-                "article",
-            ]
-        ):
+
+        # Default to "article" if no specific type found
+        # This is reasonable since most web URLs are articles/blog posts
+        if resource_type is None:
             resource_type = "article"
 
         return {
@@ -634,78 +746,6 @@ def create_resource_nodes_and_relationships(
         raise
 
     return created
-
-
-def migrate_short_urls_to_final_urls(driver, database: str = "neo4j"):
-    """
-    Migrate existing Resource nodes with short URLs (like lnkd.in) to their final URLs.
-
-    This function finds Resources that might be short URLs, resolves their redirects,
-    and updates the Resource nodes to use the final URLs.
-
-    Args:
-        driver: Neo4j driver
-        database: Neo4j database name
-    """
-    print("\n🔄 Migrating short URLs to final URLs...")
-
-    # Find Resources that might be short URLs (common short URL domains)
-    short_url_domains = ["lnkd.in", "bit.ly", "tinyurl.com", "short.link", "t.co"]
-
-    with driver.session(database=database) as session:
-        # Find Resources with potential short URLs
-        query = """
-        MATCH (resource:Resource)
-        WHERE any(domain IN $short_domains WHERE resource.url CONTAINS domain)
-        RETURN resource.url as url
-        LIMIT 1000
-        """
-
-        result = session.run(query, short_domains=short_url_domains)
-        resources = [{"url": record["url"]} for record in result]
-
-        if not resources:
-            print("✅ No short URLs found to migrate")
-            return
-
-        print(f"📊 Found {len(resources)} potential short URLs to migrate")
-
-        migrated = 0
-        for i, resource_data in enumerate(resources, 1):
-            if i % 10 == 0:
-                print(f"   Processing {i}/{len(resources)}...")
-
-            original_url = resource_data["url"]
-            final_url = resolve_redirect(original_url)
-
-            if final_url != original_url:
-                # Migrate the Resource
-                migrate_query = """
-                MATCH (oldResource:Resource {url: $original_url})
-                OPTIONAL MATCH (source)-[ref:REFERENCES]->(oldResource)
-                WITH oldResource, collect(source) as sources
-                MERGE (newResource:Resource {url: $final_url})
-                ON CREATE SET newResource.domain = oldResource.domain,
-                              newResource.type = oldResource.type,
-                              newResource.title = oldResource.title
-                ON MATCH SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
-                            newResource.type = COALESCE(newResource.type, oldResource.type),
-                            newResource.title = COALESCE(newResource.title, oldResource.title)
-                FOREACH (s IN sources |
-                  MERGE (s)-[:REFERENCES]->(newResource)
-                )
-                DELETE oldResource
-                RETURN count(newResource) as migrated
-                """
-
-                result = session.run(
-                    migrate_query, original_url=original_url, final_url=final_url
-                )
-                if result.single():
-                    migrated += 1
-
-        print(f"✅ Migrated {migrated} Resources from short URLs to final URLs")
-        print()
 
 
 def enrich_posts_with_resources(
