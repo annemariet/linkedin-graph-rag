@@ -466,19 +466,22 @@ def create_resource_nodes_and_relationships(
 
                     query = f"""
                     MATCH (source:{source_type} {{urn: $source_urn}})
-
                     MERGE (resource:Resource {{url: $url}})
                     ON CREATE SET {create_set}
                     ON MATCH SET {match_set}
-
                     MERGE (source)-[:REFERENCES]->(resource)
-
-                    RETURN resource.url as url
+                    RETURN resource.url as url, source.urn as source_urn
                     """
 
                     result = session.run(query, **params)
-                    if result.single():
+                    record = result.single()
+                    if record:
                         created += 1
+                    else:
+                        # Source node not found - this shouldn't happen but log it
+                        print(
+                            f"   ⚠️  Source {source_type} node not found: {source_urn}"
+                        )
                 except Exception as e:
                     # Log error but continue with next URL
                     print(f"   ⚠️  Error processing URL {url}: {str(e)}")
