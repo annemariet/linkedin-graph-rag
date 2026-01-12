@@ -1,21 +1,35 @@
 #!/usr/bin/env python3
 """
-Extract and analyze all LinkedIn activity history from Member Data Portability API.
+Analyze all LinkedIn activity history from Member Data Portability API.
 
-Extracts statistics for:
+This is an exploration/analysis tool that provides statistics on:
 - DMs (messages sent/received)
 - Invites (sent/received)
 - Reactions (by type)
 - Posts (original, repost, repost with comment)
 - Comments
+
+Output: Saves statistics to JSON file.
+
+Note: This is separate from the graph extraction workflow.
+Use extract_graph_data.py to extract data for Neo4j import.
 """
 
 import json
 import os
 from collections import Counter
 from datetime import datetime
-from linkedin_api.changelog_utils import fetch_changelog_data
-from linkedin_api.summary_utils import print_resource_summary, summarize_resources
+from pathlib import Path
+from linkedin_api.utils.changelog import (
+    fetch_changelog_data,
+    get_max_processed_at,
+    save_last_processed_timestamp,
+)
+from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
+
+# Output directory
+OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def get_all_changelog_data():
@@ -210,7 +224,8 @@ def print_statistics(stats):
     print(f"\n📦 DATA QUALITY SUMMARY:")
     print(f"   Total elements: {dq['total_elements']}")
     print(
-        f"   Importable to graph: {dq['importable']} ({dq['importable']/dq['total_elements']*100:.1f}%)"
+        f"   Importable to graph: {dq['importable']} "
+        f"({dq['importable']/dq['total_elements']*100:.1f}%)"
     )
     print(
         f"   Skipped (incomplete): {dq['skipped']} ({dq['skipped']/dq['total_elements']*100:.1f}%)"
@@ -239,6 +254,7 @@ def save_statistics(stats, filename="linkedin_statistics.json"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name, ext = os.path.splitext(filename)
     filename = f"{base_name}_{timestamp}{ext}"
+    filepath = OUTPUT_DIR / filename
 
     # Convert Counter objects to dicts for JSON serialization
     stats_json = {
@@ -262,18 +278,19 @@ def save_statistics(stats, filename="linkedin_statistics.json"):
         },
     }
 
-    with open(filename, "w") as f:
+    with open(filepath, "w") as f:
         json.dump(stats_json, f, indent=2, default=str)
 
-    print(f"💾 Statistics saved to {filename}")
+    print(f"💾 Statistics saved to {filepath}")
 
     # Save skipped elements to separate file for investigation
     if stats.get("skipped_elements"):
-        skipped_filename = filename.replace(".json", "_skipped.json")
-        with open(skipped_filename, "w") as f:
+        skipped_filepath = OUTPUT_DIR / filename.replace(".json", "_skipped.json")
+        with open(skipped_filepath, "w") as f:
             json.dump(stats["skipped_elements"], f, indent=2, default=str)
         print(
-            f"💾 Skipped elements saved to {skipped_filename} ({len(stats['skipped_elements'])} elements)"
+            f"💾 Skipped elements saved to {skipped_filepath} "
+            f"({len(stats['skipped_elements'])} elements)"
         )
 
 
@@ -288,6 +305,11 @@ def main():
     if not elements:
         print("❌ No data retrieved")
         return
+
+    # Save last processed timestamp
+    max_timestamp = get_max_processed_at(elements)
+    if max_timestamp:
+        save_last_processed_timestamp(max_timestamp)
 
     # Extract statistics
     print("\n🔍 Analyzing data...")

@@ -113,9 +113,9 @@ def get_posts_without_author(driver, limit: Optional[int] = None) -> list:
 
 def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
     """
-    Update a Post node with author information and create Person node with CREATED relationship.
+    Update a Post node with author information and create Person node with CREATES relationship.
 
-    Creates or merges a Person node based on profile_url, then creates a CREATED
+    Creates or merges a Person node based on profile_url, then creates a CREATES
     relationship from the Person to the Post.
 
     Args:
@@ -133,8 +133,8 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
     ON CREATE SET person.name = $name
     ON MATCH SET person.name = $name
 
-    // Create CREATED relationship
-    MERGE (person)-[:CREATED]->(post)
+    // Create CREATES relationship
+    MERGE (person)-[:CREATES]->(post)
 
     RETURN post.urn as urn, person.profile_url as person_url
     """
@@ -225,16 +225,16 @@ def main():
 
     if success_count > 0:
         print("✅ Posts now have author_name and author_profile_url properties!")
-        print("✅ Person nodes created with CREATED relationships to posts!")
+        print("✅ Person nodes created with CREATES relationships to posts!")
         print()
         print("💡 Query examples:")
         print("   # View all authors")
-        print("   MATCH (person:Person)-[:CREATED]->(post:Post)")
+        print("   MATCH (person:Person)-[:CREATES]->(post:Post)")
         print("   RETURN person.name, count(post) as post_count")
         print("   ORDER BY post_count DESC")
         print()
         print("   # View posts by author")
-        print("   MATCH (person:Person {name: 'Author Name'})-[:CREATED]->(post:Post)")
+        print("   MATCH (person:Person {name: 'Author Name'})-[:CREATES]->(post:Post)")
         print("   RETURN post.urn, post.url")
 
     driver.close()

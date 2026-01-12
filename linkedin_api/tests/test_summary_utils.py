@@ -2,7 +2,7 @@
 
 from collections import Counter
 
-from linkedin_api.summary_utils import print_resource_summary, summarize_resources
+from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
 
 
 def test_summarize_resources_counts_and_examples():
