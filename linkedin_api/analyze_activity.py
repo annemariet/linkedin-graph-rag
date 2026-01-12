@@ -19,8 +19,13 @@ import json
 import os
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 from linkedin_api.utils.changelog import fetch_changelog_data
 from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
+
+# Output directory
+OUTPUT_DIR = Path("outputs")
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def get_all_changelog_data():
@@ -244,6 +249,7 @@ def save_statistics(stats, filename="linkedin_statistics.json"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name, ext = os.path.splitext(filename)
     filename = f"{base_name}_{timestamp}{ext}"
+    filepath = OUTPUT_DIR / filename
 
     # Convert Counter objects to dicts for JSON serialization
     stats_json = {
@@ -267,18 +273,18 @@ def save_statistics(stats, filename="linkedin_statistics.json"):
         },
     }
 
-    with open(filename, "w") as f:
+    with open(filepath, "w") as f:
         json.dump(stats_json, f, indent=2, default=str)
 
-    print(f"💾 Statistics saved to {filename}")
+    print(f"💾 Statistics saved to {filepath}")
 
     # Save skipped elements to separate file for investigation
     if stats.get("skipped_elements"):
-        skipped_filename = filename.replace(".json", "_skipped.json")
-        with open(skipped_filename, "w") as f:
+        skipped_filepath = OUTPUT_DIR / filename.replace(".json", "_skipped.json")
+        with open(skipped_filepath, "w") as f:
             json.dump(stats["skipped_elements"], f, indent=2, default=str)
         print(
-            f"💾 Skipped elements saved to {skipped_filename} ({len(stats['skipped_elements'])} elements)"
+            f"💾 Skipped elements saved to {skipped_filepath} ({len(stats['skipped_elements'])} elements)"
         )
 
 
