@@ -106,13 +106,18 @@ class TestResolveRedirect:
 
     @patch("linkedin_api.extract_resources.requests.head")
     def test_resolve_redirect_success(self, mock_head):
-        """Test successful redirect resolution."""
+        """Test successful redirect resolution with HEAD."""
         mock_response = MagicMock()
         mock_response.url = "https://final-url.com"
         mock_head.return_value = mock_response
 
         result = resolve_redirect("https://short.ly/abc")
         assert result == "https://final-url.com"
+        # Verify headers are passed
+        mock_head.assert_called_once()
+        call_kwargs = mock_head.call_args[1]
+        assert "headers" in call_kwargs
+        assert "User-Agent" in call_kwargs["headers"]
 
     @patch("linkedin_api.extract_resources.requests.head")
     @patch("linkedin_api.extract_resources.requests.get")
@@ -125,11 +130,36 @@ class TestResolveRedirect:
 
         result = resolve_redirect("https://short.ly/abc")
         assert result == "https://final-url.com"
+        # Verify GET was called with headers
+        mock_get.assert_called_once()
+        call_kwargs = mock_get.call_args[1]
+        assert "headers" in call_kwargs
+        assert "User-Agent" in call_kwargs["headers"]
+
+    @patch("linkedin_api.extract_resources.requests.head")
+    @patch("linkedin_api.extract_resources.requests.get")
+    def test_resolve_redirect_head_same_url_fallback_to_get(self, mock_get, mock_head):
+        """Test that GET is tried when HEAD returns same URL."""
+        # HEAD returns same URL (no redirect detected)
+        mock_head_response = MagicMock()
+        mock_head_response.url = "https://short.ly/abc"
+        mock_head.return_value = mock_head_response
+
+        # GET resolves the redirect
+        mock_get_response = MagicMock()
+        mock_get_response.url = "https://final-url.com"
+        mock_get.return_value = mock_get_response
+
+        result = resolve_redirect("https://short.ly/abc")
+        assert result == "https://final-url.com"
+        # Both should be called
+        assert mock_head.called
+        assert mock_get.called
 
     @patch("linkedin_api.extract_resources.requests.head")
     @patch("linkedin_api.extract_resources.requests.get")
     def test_resolve_redirect_returns_original_on_failure(self, mock_get, mock_head):
-        """Test that original URL is returned on failure."""
+        """Test that original URL is returned when both HEAD and GET fail."""
         mock_head.side_effect = Exception("HEAD failed")
         mock_get.side_effect = Exception("GET failed")
 
@@ -137,15 +167,36 @@ class TestResolveRedirect:
         result = resolve_redirect(original_url)
         assert result == original_url
 
-    def test_resolve_no_redirect(self):
+    @patch("linkedin_api.extract_resources.requests.head")
+    @patch("linkedin_api.extract_resources.requests.get")
+    def test_resolve_no_redirect(self, mock_get, mock_head):
         """Test that non-redirecting URLs return unchanged."""
-        with patch("linkedin_api.extract_resources.requests.head") as mock_head:
-            mock_response = MagicMock()
-            mock_response.url = "https://example.com"
-            mock_head.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.url = "https://example.com/"
+        mock_head.return_value = mock_response
+        mock_get.return_value = mock_response
 
-            result = resolve_redirect("https://example.com")
-            assert result == "https://example.com"
+        result = resolve_redirect("https://example.com")
+        # requests normalizes URLs, so trailing slash is acceptable
+        assert result in ("https://example.com", "https://example.com/")
+
+    @patch("linkedin_api.extract_resources.requests.head")
+    def test_resolve_redirect_uses_headers(self, mock_head):
+        """Test that redirect resolution includes proper headers."""
+        mock_response = MagicMock()
+        mock_response.url = "https://final-url.com"
+        mock_head.return_value = mock_response
+
+        resolve_redirect("https://short.ly/abc")
+
+        # Verify headers are included
+        call_kwargs = mock_head.call_args[1]
+        assert "headers" in call_kwargs
+        headers = call_kwargs["headers"]
+        assert "User-Agent" in headers
+        assert "Accept" in headers
+        assert "Accept-Language" in headers
+        assert "Mozilla" in headers["User-Agent"]
 
 
 class TestExtractTitleFromUrl:
@@ -211,15 +262,55 @@ class TestExtractTitleFromUrl:
 class TestLnkdInRedirect:
     """Test lnkd.in redirect handling (example from ticket LUC-11)."""
 
+    @patch("linkedin_api.extract_resources.requests.get")
     @patch("linkedin_api.extract_resources.requests.head")
-    def test_resolve_lnkd_in_redirect(self, mock_head):
-        """Test that lnkd.in URLs are resolved to final URLs."""
+    def test_resolve_lnkd_in_redirect_via_get_skips_head(self, mock_head, mock_get):
+        """Test that lnkd.in URLs skip HEAD and use GET with HTML parsing."""
+        # Mock GET response with HTML containing the final URL (and LinkedIn static assets)
         mock_response = MagicMock()
-        mock_response.url = "https://dicioccio.fr/postgrest-over-cloudrun.html"
-        mock_head.return_value = mock_response
+        mock_response.url = (
+            "https://lnkd.in/ep4kistt"  # LinkedIn doesn't redirect via HTTP
+        )
+        # Simulate LinkedIn page with static assets and the final URL
+        mock_response.text = (
+            "<html>"
+            '<link href="https://static.licdn.com/aero-v1/sc/h/al2o9zrvru7aqj8e1x2rzsrca">'
+            "Some content with https://dicioccio.fr/postgrest-over-cloudrun.html in it"
+            "</html>"
+        )
+        mock_get.return_value = mock_response
 
         result = resolve_redirect("https://lnkd.in/ep4kistt")
         assert result == "https://dicioccio.fr/postgrest-over-cloudrun.html"
+        # GET should be called for lnkd.in URLs (we skip HEAD)
+        mock_get.assert_called_once()
+        # HEAD should NOT be called for lnkd.in URLs
+        mock_head.assert_not_called()
+        # Verify headers are passed
+        call_kwargs = mock_get.call_args[1]
+        assert "headers" in call_kwargs
+        assert "User-Agent" in call_kwargs["headers"]
+
+    @patch("linkedin_api.extract_resources.requests.get")
+    def test_resolve_lnkd_in_filters_static_assets(self, mock_get):
+        """Test that lnkd.in URL parsing filters out LinkedIn static assets."""
+        mock_response = MagicMock()
+        mock_response.url = "https://lnkd.in/ep4kistt"
+        # HTML with static assets that should be filtered out
+        mock_response.text = (
+            "<html>"
+            "https://static.licdn.com/aero-v1/sc/h/al2o9zrvru7aqj8e1x2rzsrca.css "
+            "https://dicioccio.fr/postgrest-over-cloudrun.html "
+            "https://static.licdn.com/scds/common/u/images/logos/favicons/v1/favicon.ico"
+            "</html>"
+        )
+        mock_get.return_value = mock_response
+
+        result = resolve_redirect("https://lnkd.in/ep4kistt")
+        # Should extract the final URL, not static assets
+        assert result == "https://dicioccio.fr/postgrest-over-cloudrun.html"
+        assert "static.licdn.com" not in result
+        assert "favicon.ico" not in result
 
     def test_extract_url_from_linkedin_post_content(self):
         """Test extracting external URLs from LinkedIn post content."""
@@ -240,3 +331,16 @@ class TestLnkdInRedirect:
             is True
         )
         assert should_ignore_url("https://www.linkedin.com/feed/") is True
+
+    @pytest.mark.integration
+    def test_resolve_lnkd_in_redirect_real(self):
+        """Integration test: Test that lnkd.in URLs actually resolve to final URLs."""
+        # Test with a real lnkd.in URL that redirects to edgeimpulse.com
+        short_url = "https://lnkd.in/gGGuuQq9"
+        final_url = resolve_redirect(short_url)
+
+        # Should resolve to the final URL, not the short URL
+        assert final_url != short_url
+        assert "lnkd.in" not in final_url
+        # Should resolve to edgeimpulse.com domain
+        assert "edgeimpulse.com" in final_url

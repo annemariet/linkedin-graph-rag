@@ -174,6 +174,9 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
     """
     Resolve redirects to get the final URL.
 
+    Handles LinkedIn short URLs (lnkd.in) which use an intermediate page.
+    For LinkedIn URLs, parses the HTML to extract the final destination.
+
     Args:
         url: URL to resolve
         max_redirects: Maximum number of redirects to follow
@@ -181,24 +184,138 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
     Returns:
         Final URL after following redirects, or original URL if resolution fails
     """
-    try:
-        response = requests.head(
-            url, timeout=10, allow_redirects=True, max_redirects=max_redirects
-        )
-        return response.url
-    except Exception:
-        # If HEAD fails, try GET with no content download
+    # Use User-Agent to avoid being blocked
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+
+    # Special handling for LinkedIn short URLs
+    if "lnkd.in" in url:
         try:
+            # LinkedIn short URLs require GET request and HTML parsing
             response = requests.get(
                 url,
-                timeout=10,
+                timeout=15,
                 allow_redirects=True,
-                max_redirects=max_redirects,
-                stream=True,
+                headers=headers,
             )
-            return response.url
-        except Exception:
-            return url
+
+            # Check if we got redirected via HTTP (some lnkd.in URLs redirect directly)
+            if response.url != url and "lnkd.in" not in response.url:
+                return response.url
+
+            # LinkedIn shows intermediate page - parse HTML for final URL
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Pattern 1: Look for meta tags with the final URL
+            meta_refresh = soup.find("meta", attrs={"http-equiv": "refresh"})
+            if meta_refresh and meta_refresh.get("content"):
+                content = meta_refresh["content"]
+                # Extract URL from refresh meta tag: "0;url=https://..."
+                url_match = re.search(r"url=(https?://[^\s]+)", content, re.IGNORECASE)
+                if url_match:
+                    return url_match.group(1)
+
+            # Pattern 2: Look for the final URL in the page text
+            # LinkedIn shows it in the page content, often in a specific format
+            page_text = response.text
+
+            # Look for URLs that are not LinkedIn domains
+            # Simple pattern that matches any http/https URL
+            simple_pattern = (
+                r"https?://[^\s<>\"'{}|\\^`\[\]]+[^\s<>\"'{}|\\^`\[\].,;:!?]"
+            )
+            all_urls = re.findall(simple_pattern, page_text)
+
+            # Filter out LinkedIn URLs and static assets, prioritize content URLs
+            external_urls = []
+            for found_url in all_urls:
+                found_url = found_url.rstrip(".,;:!?)")
+                url_lower = found_url.lower()
+
+                # Skip LinkedIn domains
+                if "linkedin.com" in url_lower or "lnkd.in" in url_lower:
+                    continue
+
+                # Skip static asset patterns (CDN, static files)
+                if any(
+                    pattern in url_lower
+                    for pattern in [
+                        "/static/",
+                        "/aero-v1/",
+                        ".ico",
+                        ".png",
+                        ".jpg",
+                        ".css",
+                        ".js",
+                    ]
+                ):
+                    continue
+
+                # Must be a valid-looking URL
+                if found_url.startswith("http") and len(found_url) > 15:
+                    external_urls.append(found_url)
+
+            # Return the first external URL found (should be the final destination)
+            if external_urls:
+                return external_urls[0]
+
+            # Pattern 3: Look for links in the page
+            links = soup.find_all("a", href=True)
+            for link in links:
+                href = link.get("href", "")
+                if (
+                    href.startswith("http")
+                    and "linkedin.com" not in href
+                    and "lnkd.in" not in href
+                ):
+                    return href
+
+            # If HTTP redirect worked, use that
+            if response.url != url:
+                return response.url
+
+        except Exception as e:
+            # Log error for debugging but continue
+            pass
+
+        # If LinkedIn-specific handling failed, return original
+        return url
+
+    # For non-LinkedIn URLs, try standard redirect resolution
+    # Try HEAD first (faster)
+    try:
+        response = requests.head(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            headers=headers,
+        )
+        final_url = response.url
+        if final_url != url:
+            return final_url
+    except Exception:
+        pass
+
+    # If HEAD fails or returns same URL, try GET (some servers don't support HEAD)
+    try:
+        response = requests.get(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            stream=True,
+            headers=headers,
+        )
+        final_url = response.url
+        if final_url != url:
+            return final_url
+    except Exception:
+        pass
+
+    # If both fail, return original URL
+    return url
 
 
 def extract_title_from_url(url: str) -> Optional[str]:

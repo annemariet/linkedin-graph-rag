@@ -85,43 +85,53 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
                 final_url = resolve_redirect(original_url)
 
                 if final_url == original_url:
-                    # No redirect or resolution failed, skip
+                    # No redirect resolved - might be a valid final URL or resolution failed
                     skipped += 1
+                    if i <= 5:  # Show first few for debugging
+                        print(f"   ⚠️  No redirect for: {original_url[:60]}")
                     continue
 
-                # Migrate the Resource - single query approach
-                migrate_query = """
-                MATCH (oldResource:Resource {url: $original_url})
-                OPTIONAL MATCH (source)-[ref:REFERENCES]->(oldResource)
-                WITH oldResource, collect(DISTINCT source) as sources
+                # Migrate the Resource - update URL property directly
+                # First check if Resource with final URL already exists
+                check_result = session.run(
+                    "MATCH (r:Resource {url: $final_url}) RETURN r LIMIT 1",
+                    final_url=final_url,
+                ).single()
 
-                // Create or merge Resource with final URL
-                MERGE (newResource:Resource {url: $final_url})
-                ON CREATE SET newResource.domain = oldResource.domain,
-                              newResource.type = oldResource.type,
-                              newResource.title = oldResource.title
-                ON MATCH SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
-                            newResource.type = COALESCE(newResource.type, oldResource.type),
-                            newResource.title = COALESCE(newResource.title, oldResource.title)
+                if check_result:
+                    # Final URL Resource exists - migrate relationships to it, then delete old
+                    migrate_query = """
+                    MATCH (oldResource:Resource {url: $original_url})
+                    OPTIONAL MATCH (source)-[:REFERENCES]->(oldResource)
+                    WITH oldResource, [s IN collect(DISTINCT source) WHERE s IS NOT NULL] as sources
 
-                // Migrate all REFERENCES relationships
-                WITH newResource, sources, oldResource
-                UNWIND CASE WHEN sources IS NOT NULL THEN sources ELSE [] END as source
-                WHERE source IS NOT NULL
-                MERGE (source)-[:REFERENCES]->(newResource)
+                    MATCH (newResource:Resource {url: $final_url})
+                    SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
+                        newResource.type = COALESCE(newResource.type, oldResource.type),
+                        newResource.title = COALESCE(newResource.title, oldResource.title)
 
-                // Delete old Resource and return count
-                WITH DISTINCT oldResource
-                DELETE oldResource
-                RETURN 1 as migrated
-                """
+                    WITH newResource, sources, oldResource
+                    UNWIND sources as source
+                    MERGE (source)-[:REFERENCES]->(newResource)
+
+                    WITH DISTINCT oldResource
+                    DETACH DELETE oldResource
+                    RETURN 1 as migrated
+                    """
+                else:
+                    # Final URL Resource doesn't exist - just update the URL property
+                    migrate_query = """
+                    MATCH (resource:Resource {url: $original_url})
+                    SET resource.url = $final_url
+                    RETURN 1 as migrated
+                    """
 
                 result = session.run(
                     migrate_query, original_url=original_url, final_url=final_url
                 )
                 record = result.single()
 
-                if record and record["migrated"] > 0:
+                if record and record.get("migrated", 0) > 0:
                     migrated += 1
                     if (i - 1) % 10 != 0:  # Don't print if we just printed progress
                         print(f"   ✅ {original_url[:60]} → {final_url[:60]}")
@@ -131,7 +141,13 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
 
             except Exception as e:
                 failed += 1
-                print(f"   ❌ Error processing {original_url[:60]}: {str(e)}")
+                error_msg = str(e)
+                # Extract more details if it's a Neo4j error
+                if hasattr(e, "message"):
+                    error_msg = e.message
+                elif hasattr(e, "__class__"):
+                    error_msg = f"{e.__class__.__name__}: {str(e)}"
+                print(f"   ❌ Error processing {original_url[:60]}: {error_msg}")
                 continue
 
         print("\n" + "=" * 60)
