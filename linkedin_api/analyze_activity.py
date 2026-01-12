@@ -220,7 +220,8 @@ def print_statistics(stats):
     print(f"\n📦 DATA QUALITY SUMMARY:")
     print(f"   Total elements: {dq['total_elements']}")
     print(
-        f"   Importable to graph: {dq['importable']} ({dq['importable']/dq['total_elements']*100:.1f}%)"
+        f"   Importable to graph: {dq['importable']} "
+        f"({dq['importable']/dq['total_elements']*100:.1f}%)"
     )
     print(
         f"   Skipped (incomplete): {dq['skipped']} ({dq['skipped']/dq['total_elements']*100:.1f}%)"
@@ -284,7 +285,8 @@ def save_statistics(stats, filename="linkedin_statistics.json"):
         with open(skipped_filepath, "w") as f:
             json.dump(stats["skipped_elements"], f, indent=2, default=str)
         print(
-            f"💾 Skipped elements saved to {skipped_filepath} ({len(stats['skipped_elements'])} elements)"
+            f"💾 Skipped elements saved to {skipped_filepath} "
+            f"({len(stats['skipped_elements'])} elements)"
         )
 
 

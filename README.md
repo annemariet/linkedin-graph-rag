@@ -109,13 +109,19 @@ uv run python -m linkedin_api.build_graph
 4. Creates Resource nodes and REFERENCES relationships
 
 **Options:**
-- `--skip-cleanup`: Merge new data with existing graph (preserves author info, resources)
-- Without flag: Cleans database and creates fresh graph
+- Default: Incremental loading (merges new data with existing graph, preserves author info, resources)
+- `--full-rebuild`: Deletes all data and recreates graph from scratch
 
-**Example with incremental update:**
+**Example with incremental update (default):**
 
 ```bash
-uv run python -m linkedin_api.build_graph --skip-cleanup
+uv run python -m linkedin_api.build_graph
+```
+
+**Example with full rebuild:**
+
+```bash
+uv run python -m linkedin_api.build_graph --full-rebuild
 ```
 
 #### Step 3: Query the Graph
@@ -162,8 +168,8 @@ uv run python -m linkedin_api.query_graphrag
 # 1. Extract new data
 uv run python -m linkedin_api.extract_graph_data
 
-# 2. Merge with existing graph (preserves author info, resources)
-uv run python -m linkedin_api.build_graph --skip-cleanup
+# 2. Merge with existing graph (default behavior, preserves author info, resources)
+uv run python -m linkedin_api.build_graph
 ```
 
 ### Explore Activity Data
