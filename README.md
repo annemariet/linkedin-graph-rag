@@ -83,7 +83,7 @@ uv run python -m linkedin_api.extract_graph_data
 **What it does:**
 - Fetches post-related activities from LinkedIn API (posts, comments, reactions)
 - Extracts entities: Posts, People, Comments, Reactions
-- Extracts relationships: CREATES, REPOSTS, REACTS_TO, COMMENTED_ON, etc.
+- Extracts relationships: CREATES, REPOSTS, REACTS_TO, COMMENTS_ON, etc.
 - Saves to `neo4j_data_YYYYMMDD_HHMMSS.json`
 
 **Output:** `neo4j_data_*.json` file with nodes and relationships ready for Neo4j import.
@@ -193,9 +193,9 @@ uv run python -m linkedin_api.analyze_activity
 - `Person CREATES Post`
 - `Person REPOSTS Post`
 - `Person REACTS_TO Post`
-- `Person CREATED Comment`
-- `Comment COMMENTED_ON Post` (top-level)
-- `Comment COMMENTED_ON Comment` (replies)
+- `Person CREATES Comment`
+- `Comment COMMENTS_ON Post` (top-level)
+- `Comment COMMENTS_ON Comment` (replies)
 - `Post REFERENCES Resource`
 - `Comment REFERENCES Resource`
 

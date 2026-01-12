@@ -149,14 +149,22 @@ def split_text_into_chunks(
 
 def get_posts_and_comments(driver) -> List[Dict]:
     """
-    Fetch all Post and Comment nodes with URLs from Neo4j.
+    Fetch Post and Comment nodes with URLs from Neo4j that haven't been indexed yet.
+
+    Filters out posts/comments that already have Chunk nodes linked via FROM_CHUNK
+    to enable incremental loading without duplicates.
 
     Returns:
-        List of nodes with their URLs
+        List of nodes with their URLs that need indexing
     """
     query = """
     MATCH (n)
-    WHERE (n:Post OR n:Comment) AND n.url IS NOT NULL AND n.url <> ''
+    WHERE (n:Post OR n:Comment)
+      AND n.url IS NOT NULL
+      AND n.url <> ''
+      AND NOT EXISTS {
+        MATCH (n)<-[:FROM_CHUNK]-(:Chunk)
+      }
     RETURN n.urn as urn, n.url as url, labels(n) as labels, n.post_id as post_id, n.comment_id as comment_id
     """
 
@@ -180,8 +188,10 @@ def create_chunk_node(
     tx, chunk_id: str, text: str, source_urn: str, chunk_index: int, total_chunks: int
 ):
     """
-    Create a Chunk node and link it to the source Post/Comment.
-    Returns the internal Neo4j node ID (id(node)) for use with upsert_vectors.
+    Create or update a Chunk node and link it to the source Post/Comment.
+
+    Uses MERGE to avoid duplicates if the chunk already exists, updating
+    its properties if needed. Returns the internal Neo4j node ID for use with upsert_vectors.
     """
     query = """
     MATCH (source {urn: $source_urn})
@@ -213,19 +223,26 @@ def index_content_for_graphrag(
     """
     Main function to index post and comment content for GraphRAG.
 
+    Supports incremental loading: only processes posts/comments that don't already
+    have Chunk nodes linked via FROM_CHUNK relationships, preventing duplicates.
+
     Args:
         driver: Neo4j driver
         embedder: Embedding model
         embedding_dimensions: Number of dimensions for embeddings
         limit: Optional limit on number of posts/comments to process
     """
-    print("🔍 Fetching posts and comments from Neo4j...")
+    print("🔍 Fetching unindexed posts and comments from Neo4j...")
     nodes = get_posts_and_comments(driver)
 
     if limit:
         nodes = nodes[:limit]
 
-    print(f"✅ Found {len(nodes)} posts/comments to index")
+    if len(nodes) == 0:
+        print("✅ No new posts/comments to index (all already indexed)")
+        return
+
+    print(f"✅ Found {len(nodes)} unindexed posts/comments to index")
 
     # Create vector index per Neo4j GraphRAG docs
     # Reference: https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html#create-a-vector-index

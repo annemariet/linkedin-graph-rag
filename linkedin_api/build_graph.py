@@ -174,6 +174,7 @@ def load_graph_data(driver, json_file, use_merge=False):
 if __name__ == "__main__":
     import sys
     import glob
+    from pathlib import Path
 
     # Parse arguments
     skip_cleanup = "--skip-cleanup" in sys.argv
@@ -184,15 +185,21 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         json_file = sys.argv[1]
     else:
-        # Find most recent neo4j_data_*.json file
-        files = glob.glob("neo4j_data_*.json")
+        # Find most recent neo4j_data_*.json file in outputs/ directory
+        output_dir = Path("outputs")
+        files = list(output_dir.glob("neo4j_data_*.json"))
         if files:
-            json_file = max(files)  # Most recent by filename (timestamp in name)
+            json_file = str(max(files, key=lambda p: p.stat().st_mtime))
             print(f"📂 Using most recent file: {json_file}")
         else:
-            # Fallback to old filename
-            json_file = "neo4j_data.json"
-            print(f"📂 Using default file: {json_file}")
+            # Fallback to old location or default
+            old_files = glob.glob("neo4j_data_*.json")
+            if old_files:
+                json_file = max(old_files)
+                print(f"📂 Using most recent file (old location): {json_file}")
+            else:
+                json_file = "outputs/neo4j_data.json"
+                print(f"📂 Using default file: {json_file}")
 
     if skip_cleanup:
         print("⚠️  Skipping database cleanup - will merge new data with existing\n")
