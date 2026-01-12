@@ -14,7 +14,11 @@ import sys
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
-from linkedin_api.extract_resources import resolve_redirect
+from linkedin_api.extract_resources import (
+    resolve_redirect,
+    categorize_url,
+    extract_title_from_url,
+)
 
 load_dotenv()
 
@@ -36,7 +40,7 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
     print("\n🔄 Migrating short URLs to final URLs...")
     print("=" * 60)
 
-    # Common short URL domains
+    # Common short URL domains (exact domain matches only, not substring matches)
     short_url_domains = [
         "lnkd.in",
         "bit.ly",
@@ -51,9 +55,19 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
 
     with driver.session(database=database) as session:
         # Find Resources with potential short URLs
+        # Match exact domain (not substring) to avoid false positives like "ft.com" matching "t.co"
+        # Extract domain from URL and compare exactly
         query = """
         MATCH (resource:Resource)
-        WHERE any(domain IN $short_domains WHERE resource.url CONTAINS domain)
+        WITH resource,
+             CASE
+               WHEN resource.url CONTAINS '://www.'
+               THEN split(split(resource.url, '://www.')[1], '/')[0]
+               WHEN resource.url CONTAINS '://'
+               THEN split(split(resource.url, '://')[1], '/')[0]
+               ELSE ''
+             END as domain
+        WHERE domain IN $short_domains
         RETURN resource.url as url
         ORDER BY resource.url
         """
@@ -98,6 +112,12 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
                     final_url=final_url,
                 ).single()
 
+                # Re-categorize based on final URL
+                url_info = categorize_url(final_url)
+                final_domain = url_info.get("domain")
+                final_type = url_info.get("type", "article")
+                final_title = extract_title_from_url(final_url)
+
                 if check_result:
                     # Final URL Resource exists - migrate relationships to it, then delete old
                     migrate_query = """
@@ -106,9 +126,9 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
                     WITH oldResource, [s IN collect(DISTINCT source) WHERE s IS NOT NULL] as sources
 
                     MATCH (newResource:Resource {url: $final_url})
-                    SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
-                        newResource.type = COALESCE(newResource.type, oldResource.type),
-                        newResource.title = COALESCE(newResource.title, oldResource.title)
+                    SET newResource.domain = $final_domain,
+                        newResource.type = $final_type,
+                        newResource.title = COALESCE($final_title, newResource.title, oldResource.title)
 
                     WITH newResource, sources, oldResource
                     UNWIND sources as source
@@ -119,15 +139,23 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
                     RETURN 1 as migrated
                     """
                 else:
-                    # Final URL Resource doesn't exist - just update the URL property
+                    # Final URL Resource doesn't exist - update URL, domain, type, and title
                     migrate_query = """
                     MATCH (resource:Resource {url: $original_url})
-                    SET resource.url = $final_url
+                    SET resource.url = $final_url,
+                        resource.domain = $final_domain,
+                        resource.type = $final_type,
+                        resource.title = COALESCE($final_title, resource.title)
                     RETURN 1 as migrated
                     """
 
                 result = session.run(
-                    migrate_query, original_url=original_url, final_url=final_url
+                    migrate_query,
+                    original_url=original_url,
+                    final_url=final_url,
+                    final_domain=final_domain,
+                    final_type=final_type,
+                    final_title=final_title,
                 )
                 record = result.single()
 
