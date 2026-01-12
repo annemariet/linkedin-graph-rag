@@ -321,6 +321,6 @@ if __name__ == "__main__":
     enrich_posts_with_authors(driver)
 
     # Extract and link external resources from posts
-    enrich_posts_with_resources(driver, json_file=json_file)
+    enrich_posts_with_resources(driver, json_file=json_file, database=NEO4J_DATABASE)
 
     driver.close()

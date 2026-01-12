@@ -273,7 +273,9 @@ def should_ignore_url(url: str) -> bool:
     return False
 
 
-def get_posts_with_content(driver, limit: Optional[int] = None) -> List[Dict[str, str]]:
+def get_posts_with_content(
+    driver, limit: Optional[int] = None, database: str = "neo4j"
+) -> List[Dict[str, str]]:
     """
     Fetch Post nodes that have content text or URL.
 
@@ -294,7 +296,7 @@ def get_posts_with_content(driver, limit: Optional[int] = None) -> List[Dict[str
     if limit:
         query += f" LIMIT {limit}"
 
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         result = session.run(query)
         return [
             {
@@ -306,7 +308,9 @@ def get_posts_with_content(driver, limit: Optional[int] = None) -> List[Dict[str
         ]
 
 
-def get_comments_with_text(driver, limit: Optional[int] = None) -> List[Dict[str, str]]:
+def get_comments_with_text(
+    driver, limit: Optional[int] = None, database: str = "neo4j"
+) -> List[Dict[str, str]]:
     """
     Fetch Comment nodes that have text content.
 
@@ -327,7 +331,7 @@ def get_comments_with_text(driver, limit: Optional[int] = None) -> List[Dict[str
     if limit:
         query += f" LIMIT {limit}"
 
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         result = session.run(query)
         return [{"urn": record["urn"], "text": record["text"]} for record in result]
 
@@ -403,7 +407,11 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
 
 
 def create_resource_nodes_and_relationships(
-    driver, source_urn: str, urls: List[str], source_type: str = "Post"
+    driver,
+    source_urn: str,
+    urls: List[str],
+    source_type: str = "Post",
+    database: str = "neo4j",
 ) -> int:
     """
     Create Resource nodes and REFERENCES relationships.
@@ -419,66 +427,79 @@ def create_resource_nodes_and_relationships(
     """
     created = 0
 
-    for url in urls:
-        if should_ignore_url(url):
-            continue
+    # Use a single session for all operations to avoid connection issues
+    try:
+        with driver.session(database=database) as session:
+            for url in urls:
+                if should_ignore_url(url):
+                    continue
 
-        # Resolve redirects to get final URL
-        final_url = resolve_redirect(url)
-        if final_url != url:
-            # Use final URL instead of original
-            url = final_url
+                try:
+                    # Resolve redirects to get final URL
+                    final_url = resolve_redirect(url)
+                    if final_url != url:
+                        # Use final URL instead of original
+                        url = final_url
 
-        url_info = categorize_url(url)
-        if not url_info["domain"]:
-            continue
+                    url_info = categorize_url(url)
+                    if not url_info["domain"]:
+                        continue
 
-        # Extract title from URL
-        title = extract_title_from_url(url)
+                    # Extract title from URL
+                    title = extract_title_from_url(url)
 
-        # Build SET clauses conditionally
-        create_set = "resource.domain = $domain, resource.type = $type"
-        match_set = "resource.domain = $domain, resource.type = $type"
+                    # Build SET clauses conditionally
+                    create_set = "resource.domain = $domain, resource.type = $type"
+                    match_set = "resource.domain = $domain, resource.type = $type"
 
-        params = {
-            "source_urn": source_urn,
-            "url": url,
-            "domain": url_info["domain"],
-            "type": url_info["type"],
-        }
+                    params = {
+                        "source_urn": source_urn,
+                        "url": url,
+                        "domain": url_info["domain"],
+                        "type": url_info["type"],
+                    }
 
-        if title:
-            create_set += ", resource.title = $title"
-            match_set += ", resource.title = $title"
-            params["title"] = title
+                    if title:
+                        create_set += ", resource.title = $title"
+                        match_set += ", resource.title = $title"
+                        params["title"] = title
 
-        query = f"""
-        MATCH (source:{source_type} {{urn: $source_urn}})
+                    query = f"""
+                    MATCH (source:{source_type} {{urn: $source_urn}})
 
-        MERGE (resource:Resource {{url: $url}})
-        ON CREATE SET {create_set}
-        ON MATCH SET {match_set}
+                    MERGE (resource:Resource {{url: $url}})
+                    ON CREATE SET {create_set}
+                    ON MATCH SET {match_set}
 
-        MERGE (source)-[:REFERENCES]->(resource)
+                    MERGE (source)-[:REFERENCES]->(resource)
 
-        RETURN resource.url as url
-        """
+                    RETURN resource.url as url
+                    """
 
-        with driver.session() as session:
-            result = session.run(query, **params)
-            if result.single():
-                created += 1
+                    result = session.run(query, **params)
+                    if result.single():
+                        created += 1
+                except Exception as e:
+                    # Log error but continue with next URL
+                    print(f"   ⚠️  Error processing URL {url}: {str(e)}")
+                    continue
+    except Exception as e:
+        print(f"   ❌ Error creating session for {source_urn}: {str(e)}")
+        raise
 
     return created
 
 
-def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
+def enrich_posts_with_resources(
+    driver, json_file: Optional[str] = None, database: str = "neo4j"
+):
     """
     Extract resources from posts and comments, create Resource nodes.
 
     Args:
         driver: Neo4j driver
         json_file: Optional path to JSON file for full text extraction
+        database: Neo4j database name
     """
     print("\n🔍 Extracting external resources from posts and comments...")
 
@@ -493,8 +514,8 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
         )
     else:
         # Extract from Neo4j (may be truncated)
-        posts = get_posts_with_content(driver)
-        comments = get_comments_with_text(driver)
+        posts = get_posts_with_content(driver, database=database)
+        comments = get_comments_with_text(driver, database=database)
 
         post_resources = {}
         for post in posts:
@@ -542,7 +563,7 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
         print(f"📊 Processing resources from {len(post_resources)} posts...")
         for post_urn, urls in post_resources.items():
             count = create_resource_nodes_and_relationships(
-                driver, post_urn, urls, source_type="Post"
+                driver, post_urn, urls, source_type="Post", database=database
             )
             if count > 0:
                 total_resources += count
@@ -553,7 +574,7 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
         print(f"📊 Processing resources from {len(comment_resources)} comments...")
         for comment_urn, urls in comment_resources.items():
             count = create_resource_nodes_and_relationships(
-                driver, comment_urn, urls, source_type="Comment"
+                driver, comment_urn, urls, source_type="Comment", database=database
             )
             if count > 0:
                 total_resources += count
