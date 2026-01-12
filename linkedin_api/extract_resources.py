@@ -18,6 +18,63 @@ from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
 
+def fetch_post_content_from_url(url: str) -> Optional[str]:
+    """
+    Fetch full post content from a LinkedIn post URL.
+
+    Args:
+        url: LinkedIn post URL
+
+    Returns:
+        Extracted text content or None if extraction fails
+    """
+    try:
+        response = requests.get(url, timeout=10, allow_redirects=True)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Try to find post content - LinkedIn uses various selectors
+        content_selectors = [
+            "article[data-id]",
+            ".feed-shared-update-v2__description",
+            ".feed-shared-text",
+            '[data-test-id="main-feed-activity-card"]',
+        ]
+
+        content_text = []
+
+        # Try each selector
+        for selector in content_selectors:
+            elements = soup.select(selector)
+            if elements:
+                for elem in elements:
+                    text = elem.get_text(strip=True)
+                    if text and len(text) > 20:  # Filter out very short text
+                        content_text.append(text)
+
+        # Fallback: extract from meta tags
+        if not content_text:
+            og_description = soup.find("meta", property="og:description")
+            if og_description:
+                content_text.append(og_description.get("content", ""))
+
+            # Try title as fallback
+            title = soup.find("title")
+            if title:
+                title_text = title.get_text(strip=True)
+                # LinkedIn titles often contain post content before " | "
+                if " | " in title_text:
+                    content_text.append(title_text.split(" | ")[0])
+
+        if content_text:
+            return "\n".join(content_text)
+
+        return None
+    except Exception:
+        return None
+
+
 def extract_urls_from_text(text: str) -> List[str]:
     """
     Extract all URLs from text using regex.
@@ -218,20 +275,20 @@ def should_ignore_url(url: str) -> bool:
 
 def get_posts_with_content(driver, limit: Optional[int] = None) -> List[Dict[str, str]]:
     """
-    Fetch Post nodes that have content text.
+    Fetch Post nodes that have content text or URL.
 
     Args:
         driver: Neo4j driver
         limit: Optional limit on number of posts to fetch
 
     Returns:
-        List of dicts with post URN and content text
+        List of dicts with post URN, content text, and URL
     """
     query = """
     MATCH (post:Post)
-    WHERE post.content IS NOT NULL
-      AND post.content <> ''
-    RETURN post.urn as urn, post.content as text
+    WHERE (post.content IS NOT NULL AND post.content <> '')
+       OR (post.url IS NOT NULL AND post.url <> '')
+    RETURN post.urn as urn, post.content as text, post.url as url
     """
 
     if limit:
@@ -239,7 +296,14 @@ def get_posts_with_content(driver, limit: Optional[int] = None) -> List[Dict[str
 
     with driver.session() as session:
         result = session.run(query)
-        return [{"urn": record["urn"], "text": record["text"]} for record in result]
+        return [
+            {
+                "urn": record["urn"],
+                "text": record["text"],
+                "url": record["url"],
+            }
+            for record in result
+        ]
 
 
 def get_comments_with_text(driver, limit: Optional[int] = None) -> List[Dict[str, str]]:
@@ -301,10 +365,24 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
             # Prefer extracted_urls (from full content) if available
             urls = props.get("extracted_urls", [])
             if not urls:
-                # Fallback: extract from truncated content
+                # Fallback 1: extract from truncated content
                 content = props.get("content", "")
+                is_truncated = False
                 if content:
                     urls = extract_urls_from_text(content)
+                    # Check if content seems truncated
+                    is_truncated = len(content) == 200 or (
+                        len(content) > 190
+                        and not content.endswith((".", "!", "?", "…"))
+                    )
+                # Fallback 2: fetch from post URL if no URLs found or content seems truncated
+                if not urls or is_truncated:
+                    post_url = props.get("url", "")
+                    if post_url:
+                        print(f"   🔄 Fetching content from post URL: {post_url}")
+                        full_content = fetch_post_content_from_url(post_url)
+                        if full_content:
+                            urls = extract_urls_from_text(full_content)
             if urls:
                 resources["posts"][urn] = urls
 
@@ -314,6 +392,7 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
             urls = props.get("extracted_urls", [])
             if not urls:
                 # Fallback: extract from truncated text
+                # Note: Comments don't have URLs, so we can't fetch them
                 text = props.get("text", "")
                 if text:
                     urls = extract_urls_from_text(text)
@@ -419,7 +498,24 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
 
         post_resources = {}
         for post in posts:
-            urls = extract_urls_from_text(post["text"])
+            # Try extracting from stored content first
+            urls = []
+            content = post.get("text", "")
+            if content:
+                urls = extract_urls_from_text(content)
+                # Check if content seems truncated (exactly 200 chars or ends abruptly)
+                is_truncated = len(content) == 200 or (
+                    len(content) > 190 and not content.endswith((".", "!", "?", "…"))
+                )
+            else:
+                is_truncated = True
+
+            # Fallback: fetch from post URL if no URLs found or content seems truncated
+            if (not urls or is_truncated) and post.get("url"):
+                print(f"   🔄 Fetching content from post URL: {post['url']}")
+                full_content = fetch_post_content_from_url(post["url"])
+                if full_content:
+                    urls = extract_urls_from_text(full_content)
             if urls:
                 post_resources[post["urn"]] = urls
 
