@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from linkedin_api.utils.urns import (
     urn_to_post_url,
-    urn_to_profile_url,
     extract_urn_id,
 )
 
@@ -115,17 +114,12 @@ def main():
     print("🔗 LinkedIn URN URL Validation")
     print("=" * 60)
 
-    # Test data from your sample
+    # Test data - only post URLs since profile URLs don't work
     test_cases = [
         {
             "urn": "urn:li:ugcPost:7398404729531285504",
             "type": "post",
             "url_func": urn_to_post_url,
-        },
-        {
-            "urn": "urn:li:person:k_ho7OlN0r",
-            "type": "profile",
-            "url_func": urn_to_profile_url,
         },
     ]
 
@@ -188,7 +182,7 @@ def main():
 
     print(f"\n💡 Notes:")
     print(f"   • Post URLs use full URN in path")
-    print(f"   • Profile URLs may redirect or require authentication")
+    print(f"   • Profile URLs require API lookup (not implemented)")
     print(f"   • Some URLs may be private or deleted")
     print(f"   • LinkedIn may show login page for private content")
 

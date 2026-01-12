@@ -13,14 +13,10 @@ from linkedin_api.utils.auth import get_access_token, build_linkedin_session
 from linkedin_api.utils.changelog import (
     BASE_URL,
     fetch_changelog_data,
-    get_changelog_session,
 )
 from linkedin_api.utils.urns import (
     extract_urn_id,
     urn_to_post_url,
-    urn_to_profile_url,
-    urn_to_url,
-    get_profile_vanity_url_from_api,
 )
 from linkedin_api.utils.summaries import summarize_resources, print_resource_summary
 from linkedin_api.utils.activities import (
@@ -42,13 +38,9 @@ __all__ = [
     # Changelog
     "BASE_URL",
     "fetch_changelog_data",
-    "get_changelog_session",
     # URNs
     "extract_urn_id",
     "urn_to_post_url",
-    "urn_to_profile_url",
-    "urn_to_url",
-    "get_profile_vanity_url_from_api",
     # Summaries
     "summarize_resources",
     "print_resource_summary",

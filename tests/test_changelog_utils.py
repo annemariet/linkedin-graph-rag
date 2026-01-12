@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 from linkedin_api.utils.changelog import (
     BASE_URL,
     fetch_changelog_data,
-    get_changelog_session,
 )
 from linkedin_api.utils.auth import get_access_token, build_linkedin_session
 
@@ -111,32 +110,6 @@ class TestFetchChangelogData:
         result = fetch_changelog_data()
 
         assert result == []
-
-
-class TestGetChangelogSession:
-    """Test get_changelog_session function."""
-
-    @patch("linkedin_api.utils.changelog.get_access_token")
-    @patch("linkedin_api.utils.changelog.build_linkedin_session")
-    def test_get_session_success(self, mock_build_session, mock_get_token):
-        """Test successful session creation."""
-        mock_get_token.return_value = "test_token"
-        mock_session = MagicMock()
-        mock_build_session.return_value = mock_session
-
-        result = get_changelog_session()
-
-        assert result == mock_session
-        mock_build_session.assert_called_once_with("test_token")
-
-    @patch("linkedin_api.utils.changelog.get_access_token")
-    def test_get_session_no_token(self, mock_get_token):
-        """Test that missing token returns None."""
-        mock_get_token.return_value = None
-
-        result = get_changelog_session()
-
-        assert result is None
 
 
 class TestBaseUrl:

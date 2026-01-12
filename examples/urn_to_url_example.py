@@ -15,9 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from linkedin_api.utils.urns import (
-    urn_to_url,
     urn_to_post_url,
-    urn_to_profile_url,
     extract_urn_id,
 )
 
@@ -44,46 +42,33 @@ def main():
     print(f"   ✅ Post URL: {post_url}")
     print(f"   💡 You can open this URL in a browser to view the post HTML")
 
-    # Extract profile URL (actor)
-    profile_urn = sample_reaction["actor"]
-    print(f"\n👤 Profile URN: {profile_urn}")
-    profile_url = urn_to_profile_url(profile_urn)
-    print(f"   ⚠️  Profile URL (legacy): {profile_url}")
-    print(f"   💡 Note: This legacy format may not work.")
-    print(f"   💡 For actual profile URL, use LinkedIn API to get 'publicIdentifier'")
-
     # Extract just the ID
+    profile_urn = sample_reaction["actor"]
     person_id = extract_urn_id(profile_urn)
     print(f"\n🆔 Extracted Person ID: {person_id}")
 
     post_id = extract_urn_id(post_urn)
     print(f"🆔 Extracted Post ID: {post_id}")
 
-    # Using the generic converter
-    print(f"\n🔧 Using generic urn_to_url() converter:")
-    print(f"   Post: {urn_to_url(post_urn)}")
-    print(f"   Person: {urn_to_url(profile_urn)}")
-
     # Additional examples
     print(f"\n📚 Additional Examples:")
 
     examples = [
-        ("urn:li:ugcPost:1234567890", "post"),
-        ("urn:li:person:ABC123", "person"),
-        ("urn:li:organization:456789", "organization"),
+        "urn:li:ugcPost:1234567890",
+        "urn:li:share:9876543210",
+        "urn:li:activity:5555555555",
     ]
 
-    for urn, expected_type in examples:
-        url = urn_to_url(urn)
+    for urn in examples:
+        url = urn_to_post_url(urn)
         print(f"   {urn}")
         print(f"   → {url}")
 
     print(f"\n" + "=" * 60)
     print("💡 Key Points:")
-    print("   • Post URLs: Use full URN in path")
-    print("   • Profile URLs: Require API lookup for vanity URL")
-    print("   • Organization URLs: Use numeric ID in path")
-    print("   • All URLs can be opened in browser to view HTML")
+    print("   • Post URLs use full URN in path")
+    print("   • Profile URLs require API lookup for vanity URL (not implemented)")
+    print("   • All post URLs can be opened in browser to view HTML")
 
 
 if __name__ == "__main__":

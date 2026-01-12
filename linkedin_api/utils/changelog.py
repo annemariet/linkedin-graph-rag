@@ -12,20 +12,6 @@ from linkedin_api.utils.auth import build_linkedin_session, get_access_token
 BASE_URL = "https://api.linkedin.com/rest"
 
 
-def get_changelog_session():
-    """
-    Get an authenticated session for LinkedIn API requests.
-
-    Returns:
-        A requests.Session with LinkedIn API headers, or None if token is missing
-    """
-    access_token = get_access_token()
-    if not access_token:
-        return None
-
-    return build_linkedin_session(access_token)
-
-
 def fetch_changelog_data(
     resource_filter: Optional[List[str]] = None,
     filter_func: Optional[Callable[[dict], bool]] = None,
@@ -50,8 +36,8 @@ def fetch_changelog_data(
     Returns:
         List of changelog elements. Empty list if token is missing or on error.
     """
-    session = get_changelog_session()
-    if not session:
+    access_token = get_access_token()
+    if not access_token:
         if verbose:
             print("❌ LINKEDIN_ACCESS_TOKEN not found")
             print(
@@ -59,9 +45,11 @@ def fetch_changelog_data(
             )
         return []
 
+    session = build_linkedin_session(access_token)
+
     # Default to Dec 3, 2025 if no start_time provided
     if start_time is None:
-        start_time = 1764716400000  # Dec 3, 2025 00:00:00
+        start_time = 1764716400000
 
     if verbose:
         print("🔍 Fetching all changelog data...")
@@ -87,7 +75,6 @@ def fetch_changelog_data(
                 "count": batch_size,
             }
 
-            # Add startTime parameter to API call
             if start_time:
                 params["startTime"] = start_time
 
