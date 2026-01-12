@@ -298,19 +298,27 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
 
         # Extract from Post content
         if "Post" in labels:
-            content = props.get("content", "")
-            if content:
-                urls = extract_urls_from_text(content)
-                if urls:
-                    resources["posts"][urn] = urls
+            # Prefer extracted_urls (from full content) if available
+            urls = props.get("extracted_urls", [])
+            if not urls:
+                # Fallback: extract from truncated content
+                content = props.get("content", "")
+                if content:
+                    urls = extract_urls_from_text(content)
+            if urls:
+                resources["posts"][urn] = urls
 
         # Extract from Comment text
         elif "Comment" in labels:
-            text = props.get("text", "")
-            if text:
-                urls = extract_urls_from_text(text)
-                if urls:
-                    resources["comments"][urn] = urls
+            # Prefer extracted_urls (from full content) if available
+            urls = props.get("extracted_urls", [])
+            if not urls:
+                # Fallback: extract from truncated text
+                text = props.get("text", "")
+                if text:
+                    urls = extract_urls_from_text(text)
+            if urls:
+                resources["comments"][urn] = urls
 
     return resources
 
