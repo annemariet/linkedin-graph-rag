@@ -209,8 +209,8 @@ def should_ignore_url(url: str) -> bool:
     if "linkedin.com/company/" in url:
         return True
 
-    # Internal LinkedIn navigation links
-    if url.startswith("https://www.linkedin.com/feed/") and "update" not in url:
+    # Internal LinkedIn navigation links (including feed update URLs)
+    if url.startswith("https://www.linkedin.com/feed/"):
         return True
 
     return False
