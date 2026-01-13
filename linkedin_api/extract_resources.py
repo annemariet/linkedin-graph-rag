@@ -18,6 +18,63 @@ from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
 
+def fetch_post_content_from_url(url: str) -> Optional[str]:
+    """
+    Fetch full post content from a LinkedIn post URL.
+
+    Args:
+        url: LinkedIn post URL
+
+    Returns:
+        Extracted text content or None if extraction fails
+    """
+    try:
+        response = requests.get(url, timeout=10, allow_redirects=True)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Try to find post content - LinkedIn uses various selectors
+        content_selectors = [
+            "article[data-id]",
+            ".feed-shared-update-v2__description",
+            ".feed-shared-text",
+            '[data-test-id="main-feed-activity-card"]',
+        ]
+
+        content_text = []
+
+        # Try each selector
+        for selector in content_selectors:
+            elements = soup.select(selector)
+            if elements:
+                for elem in elements:
+                    text = elem.get_text(strip=True)
+                    if text and len(text) > 20:  # Filter out very short text
+                        content_text.append(text)
+
+        # Fallback: extract from meta tags
+        if not content_text:
+            og_description = soup.find("meta", property="og:description")
+            if og_description:
+                content_text.append(og_description.get("content", ""))
+
+            # Try title as fallback
+            title = soup.find("title")
+            if title:
+                title_text = title.get_text(strip=True)
+                # LinkedIn titles often contain post content before " | "
+                if " | " in title_text:
+                    content_text.append(title_text.split(" | ")[0])
+
+        if content_text:
+            return "\n".join(content_text)
+
+        return None
+    except Exception:
+        return None
+
+
 def extract_urls_from_text(text: str) -> List[str]:
     """
     Extract all URLs from text using regex.
@@ -64,45 +121,157 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
     try:
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
+        path = parsed.path.lower()
 
         # Remove 'www.' prefix for cleaner domain names
         if domain.startswith("www."):
             domain = domain[4:]
 
-        # Determine resource type based on domain
-        resource_type = "article"  # default
+        # First, check file extensions in URL path
+        url_lower = url.lower()
+        file_extensions = {
+            # Documents
+            ".pdf": "document",
+            ".doc": "document",
+            ".docx": "document",
+            ".ppt": "presentation",
+            ".pptx": "presentation",
+            ".xls": "spreadsheet",
+            ".xlsx": "spreadsheet",
+            # Images
+            ".jpg": "image",
+            ".jpeg": "image",
+            ".png": "image",
+            ".gif": "image",
+            ".svg": "image",
+            ".webp": "image",
+            # Videos
+            ".mp4": "video",
+            ".avi": "video",
+            ".mov": "video",
+            ".webm": "video",
+            ".mkv": "video",
+            # Audio
+            ".mp3": "audio",
+            ".wav": "audio",
+            ".ogg": "audio",
+            # Archives
+            ".zip": "archive",
+            ".tar": "archive",
+            ".gz": "archive",
+        }
+
+        for ext, resource_type in file_extensions.items():
+            if ext in url_lower:
+                return {"domain": domain, "type": resource_type}
+
+        # Determine resource type based on domain and path patterns
+        resource_type = None
 
         # Video platforms
         if any(
             video_domain in domain
-            for video_domain in ["youtube.com", "youtu.be", "vimeo.com"]
+            for video_domain in [
+                "youtube.com",
+                "youtu.be",
+                "vimeo.com",
+                "dailymotion.com",
+                "twitch.tv",
+            ]
         ):
             resource_type = "video"
-        # GitHub
-        elif "github.com" in domain:
+        # Code repositories
+        elif any(
+            repo_domain in domain
+            for repo_domain in [
+                "github.com",
+                "gitlab.com",
+                "bitbucket.org",
+                "sourceforge.net",
+            ]
+        ):
             resource_type = "repository"
         # Documentation sites
         elif any(
             doc_domain in domain
-            for doc_domain in ["docs.", "documentation", "readthedocs.io"]
+            for doc_domain in ["docs.", "documentation", "readthedocs.io", "gitbook.io"]
         ):
             resource_type = "documentation"
+        # Social media (treat as external content)
+        elif any(
+            social_domain in domain
+            for social_domain in [
+                "twitter.com",
+                "x.com",
+                "facebook.com",
+                "instagram.com",
+                "tiktok.com",
+            ]
+        ):
+            resource_type = "social"
+        # News and articles
+        elif (
+            any(
+                article_domain in domain
+                for article_domain in [
+                    "medium.com",
+                    "substack.com",
+                    "dev.to",
+                    "hashnode.com",
+                    "blog.",
+                    "news.",
+                    "article",
+                ]
+            )
+            or "/blog/" in path
+            or "/article/" in path
+            or "/post/" in path
+        ):
+            resource_type = "article"
+        # Academic/research
+        elif any(
+            academic_domain in domain
+            for academic_domain in [
+                "arxiv.org",
+                "scholar.google.com",
+                "researchgate.net",
+                "academia.edu",
+                "doi.org",
+            ]
+        ):
+            resource_type = "research"
+        # E-commerce
+        elif any(
+            shop_domain in domain
+            for shop_domain in ["amazon.com", "shopify.com", "etsy.com", "ebay.com"]
+        ):
+            resource_type = "product"
+        # Tools/platforms
+        elif any(
+            tool_domain in domain
+            for tool_domain in [
+                "stackoverflow.com",
+                "reddit.com",
+                "discord.com",
+                "slack.com",
+                "notion.so",
+                "figma.com",
+            ]
+        ):
+            resource_type = "tool"
+        # Podcasts
+        elif any(
+            podcast_domain in domain
+            for podcast_domain in ["spotify.com", "podcast", "anchor.fm", "podbean.com"]
+        ):
+            resource_type = "podcast"
         # LinkedIn articles (treat as external)
         elif "linkedin.com" in domain and "/pulse/" in url:
             resource_type = "article"
-        # Other article/blog platforms
-        elif any(
-            article_domain in domain
-            for article_domain in [
-                "medium.com",
-                "substack.com",
-                "dev.to",
-                "hashnode.com",
-                "blog.",
-                "news.",
-                "article",
-            ]
-        ):
+
+        # Default to "article" if no specific type found
+        # This is reasonable since most web URLs are articles/blog posts
+        if resource_type is None:
             resource_type = "article"
 
         return {
@@ -117,6 +286,9 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
     """
     Resolve redirects to get the final URL.
 
+    Handles LinkedIn short URLs (lnkd.in) which use an intermediate page.
+    For LinkedIn URLs, parses the HTML to extract the final destination.
+
     Args:
         url: URL to resolve
         max_redirects: Maximum number of redirects to follow
@@ -124,24 +296,142 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
     Returns:
         Final URL after following redirects, or original URL if resolution fails
     """
-    try:
-        response = requests.head(
-            url, timeout=10, allow_redirects=True, max_redirects=max_redirects
-        )
-        return response.url
-    except Exception:
-        # If HEAD fails, try GET with no content download
+    # Use User-Agent to avoid being blocked
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+
+    # Special handling for LinkedIn short URLs
+    if "lnkd.in" in url:
         try:
+            # LinkedIn short URLs require GET request and HTML parsing
             response = requests.get(
                 url,
-                timeout=10,
+                timeout=15,
                 allow_redirects=True,
-                max_redirects=max_redirects,
-                stream=True,
+                headers=headers,
             )
-            return response.url
+
+            # Check if we got redirected via HTTP (some lnkd.in URLs redirect directly)
+            if response.url != url and "lnkd.in" not in response.url:
+                return response.url
+
+            # LinkedIn shows intermediate page - parse HTML for final URL
+            soup = BeautifulSoup(response.text, "html.parser")
+
+            # Pattern 1: Look for meta tags with the final URL
+            meta_refresh = soup.find("meta", attrs={"http-equiv": "refresh"})
+            if meta_refresh and meta_refresh.get("content"):
+                content = meta_refresh["content"]
+                # Extract URL from refresh meta tag: "0;url=https://..."
+                url_match = re.search(r"url=(https?://[^\s]+)", content, re.IGNORECASE)
+                if url_match:
+                    return url_match.group(1)
+
+            # Pattern 2: Look for the final URL in the page text
+            # LinkedIn shows it in the page content, often in a specific format
+            page_text = response.text
+
+            # Look for URLs that are not LinkedIn domains
+            # Simple pattern that matches any http/https URL
+            simple_pattern = (
+                r"https?://[^\s<>\"'{}|\\^`\[\]]+[^\s<>\"'{}|\\^`\[\].,;:!?]"
+            )
+            all_urls = re.findall(simple_pattern, page_text)
+
+            # Filter out LinkedIn URLs and static assets, prioritize content URLs
+            external_urls = []
+            for found_url in all_urls:
+                found_url = found_url.rstrip(".,;:!?)")
+                url_lower = found_url.lower()
+
+                # Skip LinkedIn domains
+                if "linkedin.com" in url_lower or "lnkd.in" in url_lower:
+                    continue
+
+                # Skip static asset patterns (CDN, static files)
+                if any(
+                    pattern in url_lower
+                    for pattern in [
+                        "/static/",
+                        "/aero-v1/",
+                        ".ico",
+                        ".png",
+                        ".jpg",
+                        ".css",
+                        ".js",
+                    ]
+                ):
+                    continue
+
+                # Must be a valid-looking URL
+                if found_url.startswith("http") and len(found_url) > 15:
+                    external_urls.append(found_url)
+
+            # Return the first external URL found (should be the final destination)
+            if external_urls:
+                return external_urls[0]
+
+            # Pattern 3: Look for links in the page
+            links = soup.find_all("a", href=True)
+            for link in links:
+                href = link.get("href", "")
+                if (
+                    href.startswith("http")
+                    and "linkedin.com" not in href
+                    and "lnkd.in" not in href
+                ):
+                    return href
+
+            # If HTTP redirect worked, use that
+            if response.url != url:
+                return response.url
+
         except Exception:
-            return url
+            # Log error for debugging but continue
+            pass
+
+        # If LinkedIn-specific handling failed, return original
+        return url
+
+    # For non-LinkedIn URLs, try standard redirect resolution
+    # Try HEAD first (faster)
+    try:
+        response = requests.head(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            headers=headers,
+        )
+        final_url = response.url
+        if final_url != url:
+            return final_url
+    except Exception:
+        pass
+
+    # If HEAD fails or returns same URL, try GET (some servers don't support HEAD)
+    try:
+        response = requests.get(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            stream=True,
+            headers=headers,
+        )
+        final_url = response.url
+        if final_url != url:
+            return final_url
+    except Exception:
+        pass
+
+    # If both fail, return original URL
+    return url
 
 
 def extract_title_from_url(url: str) -> Optional[str]:
@@ -209,40 +499,51 @@ def should_ignore_url(url: str) -> bool:
     if "linkedin.com/company/" in url:
         return True
 
-    # Internal LinkedIn navigation links
-    if url.startswith("https://www.linkedin.com/feed/") and "update" not in url:
+    # Internal LinkedIn navigation links (including feed update URLs)
+    if url.startswith("https://www.linkedin.com/feed/"):
         return True
 
     return False
 
 
-def get_posts_with_content(driver, limit: Optional[int] = None) -> List[Dict[str, str]]:
+def get_posts_with_content(
+    driver, limit: Optional[int] = None, database: str = "neo4j"
+) -> List[Dict[str, str]]:
     """
-    Fetch Post nodes that have content text.
+    Fetch Post nodes that have content text or URL.
 
     Args:
         driver: Neo4j driver
         limit: Optional limit on number of posts to fetch
 
     Returns:
-        List of dicts with post URN and content text
+        List of dicts with post URN, content text, and URL
     """
     query = """
     MATCH (post:Post)
-    WHERE post.content IS NOT NULL
-      AND post.content <> ''
-    RETURN post.urn as urn, post.content as text
+    WHERE (post.content IS NOT NULL AND post.content <> '')
+       OR (post.url IS NOT NULL AND post.url <> '')
+    RETURN post.urn as urn, post.content as text, post.url as url
     """
 
     if limit:
         query += f" LIMIT {limit}"
 
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         result = session.run(query)
-        return [{"urn": record["urn"], "text": record["text"]} for record in result]
+        return [
+            {
+                "urn": record["urn"],
+                "text": record["text"],
+                "url": record["url"],
+            }
+            for record in result
+        ]
 
 
-def get_comments_with_text(driver, limit: Optional[int] = None) -> List[Dict[str, str]]:
+def get_comments_with_text(
+    driver, limit: Optional[int] = None, database: str = "neo4j"
+) -> List[Dict[str, str]]:
     """
     Fetch Comment nodes that have text content.
 
@@ -263,7 +564,7 @@ def get_comments_with_text(driver, limit: Optional[int] = None) -> List[Dict[str
     if limit:
         query += f" LIMIT {limit}"
 
-    with driver.session() as session:
+    with driver.session(database=database) as session:
         result = session.run(query)
         return [{"urn": record["urn"], "text": record["text"]} for record in result]
 
@@ -298,25 +599,52 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
 
         # Extract from Post content
         if "Post" in labels:
-            content = props.get("content", "")
-            if content:
-                urls = extract_urls_from_text(content)
-                if urls:
-                    resources["posts"][urn] = urls
+            # Prefer extracted_urls (from full content) if available
+            urls = props.get("extracted_urls", [])
+            if not urls:
+                # Fallback 1: extract from truncated content
+                content = props.get("content", "")
+                is_truncated = False
+                if content:
+                    urls = extract_urls_from_text(content)
+                    # Check if content seems truncated
+                    is_truncated = len(content) == 200 or (
+                        len(content) > 190
+                        and not content.endswith((".", "!", "?", "…"))
+                    )
+                # Fallback 2: fetch from post URL if no URLs found or content seems truncated
+                if not urls or is_truncated:
+                    post_url = props.get("url", "")
+                    if post_url:
+                        print(f"   🔄 Fetching content from post URL: {post_url}")
+                        full_content = fetch_post_content_from_url(post_url)
+                        if full_content:
+                            urls = extract_urls_from_text(full_content)
+            if urls:
+                resources["posts"][urn] = urls
 
         # Extract from Comment text
         elif "Comment" in labels:
-            text = props.get("text", "")
-            if text:
-                urls = extract_urls_from_text(text)
-                if urls:
-                    resources["comments"][urn] = urls
+            # Prefer extracted_urls (from full content) if available
+            urls = props.get("extracted_urls", [])
+            if not urls:
+                # Fallback: extract from truncated text
+                # Note: Comments don't have URLs, so we can't fetch them
+                text = props.get("text", "")
+                if text:
+                    urls = extract_urls_from_text(text)
+            if urls:
+                resources["comments"][urn] = urls
 
     return resources
 
 
 def create_resource_nodes_and_relationships(
-    driver, source_urn: str, urls: List[str], source_type: str = "Post"
+    driver,
+    source_urn: str,
+    urls: List[str],
+    source_type: str = "Post",
+    database: str = "neo4j",
 ) -> int:
     """
     Create Resource nodes and REFERENCES relationships.
@@ -332,66 +660,79 @@ def create_resource_nodes_and_relationships(
     """
     created = 0
 
-    for url in urls:
-        if should_ignore_url(url):
-            continue
+    # Use a single session for all operations to avoid connection issues
+    try:
+        with driver.session(database=database) as session:
+            for url in urls:
+                if should_ignore_url(url):
+                    continue
 
-        # Resolve redirects to get final URL
-        final_url = resolve_redirect(url)
-        if final_url != url:
-            # Use final URL instead of original
-            url = final_url
+                try:
+                    # Resolve redirects to get final URL
+                    url = resolve_redirect(url)
 
-        url_info = categorize_url(url)
-        if not url_info["domain"]:
-            continue
+                    url_info = categorize_url(url)
+                    if not url_info["domain"]:
+                        continue
 
-        # Extract title from URL
-        title = extract_title_from_url(url)
+                    # Extract title from URL
+                    title = extract_title_from_url(url)
 
-        # Build SET clauses conditionally
-        create_set = "resource.domain = $domain, resource.type = $type"
-        match_set = "resource.domain = $domain, resource.type = $type"
+                    # Build SET clauses conditionally
+                    create_set = "resource.domain = $domain, resource.type = $type"
+                    match_set = "resource.domain = $domain, resource.type = $type"
 
-        params = {
-            "source_urn": source_urn,
-            "url": url,
-            "domain": url_info["domain"],
-            "type": url_info["type"],
-        }
+                    params = {
+                        "source_urn": source_urn,
+                        "url": url,
+                        "domain": url_info["domain"],
+                        "type": url_info["type"],
+                    }
 
-        if title:
-            create_set += ", resource.title = $title"
-            match_set += ", resource.title = $title"
-            params["title"] = title
+                    if title:
+                        create_set += ", resource.title = $title"
+                        match_set += ", resource.title = $title"
+                        params["title"] = title
 
-        query = f"""
-        MATCH (source:{source_type} {{urn: $source_urn}})
+                    query = f"""
+                    MATCH (source:{source_type} {{urn: $source_urn}})
+                    MERGE (resource:Resource {{url: $url}})
+                    ON CREATE SET {create_set}
+                    ON MATCH SET {match_set}
+                    MERGE (source)-[:REFERENCES]->(resource)
+                    RETURN resource.url as url, source.urn as source_urn
+                    """
 
-        MERGE (resource:Resource {{url: $url}})
-        ON CREATE SET {create_set}
-        ON MATCH SET {match_set}
-
-        MERGE (source)-[:REFERENCES]->(resource)
-
-        RETURN resource.url as url
-        """
-
-        with driver.session() as session:
-            result = session.run(query, **params)
-            if result.single():
-                created += 1
+                    result = session.run(query, **params)
+                    record = result.single()
+                    if record:
+                        created += 1
+                    else:
+                        # Source node not found - this shouldn't happen but log it
+                        print(
+                            f"   ⚠️  Source {source_type} node not found: {source_urn}"
+                        )
+                except Exception as e:
+                    # Log error but continue with next URL
+                    print(f"   ⚠️  Error processing URL {url}: {str(e)}")
+                    continue
+    except Exception as e:
+        print(f"   ❌ Error creating session for {source_urn}: {str(e)}")
+        raise
 
     return created
 
 
-def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
+def enrich_posts_with_resources(
+    driver, json_file: Optional[str] = None, database: str = "neo4j"
+):
     """
     Extract resources from posts and comments, create Resource nodes.
 
     Args:
         driver: Neo4j driver
         json_file: Optional path to JSON file for full text extraction
+        database: Neo4j database name
     """
     print("\n🔍 Extracting external resources from posts and comments...")
 
@@ -406,12 +747,29 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
         )
     else:
         # Extract from Neo4j (may be truncated)
-        posts = get_posts_with_content(driver)
-        comments = get_comments_with_text(driver)
+        posts = get_posts_with_content(driver, database=database)
+        comments = get_comments_with_text(driver, database=database)
 
         post_resources = {}
         for post in posts:
-            urls = extract_urls_from_text(post["text"])
+            # Try extracting from stored content first
+            urls = []
+            content = post.get("text", "")
+            if content:
+                urls = extract_urls_from_text(content)
+                # Check if content seems truncated (exactly 200 chars or ends abruptly)
+                is_truncated = len(content) == 200 or (
+                    len(content) > 190 and not content.endswith((".", "!", "?", "…"))
+                )
+            else:
+                is_truncated = True
+
+            # Fallback: fetch from post URL if no URLs found or content seems truncated
+            if (not urls or is_truncated) and post.get("url"):
+                print(f"   🔄 Fetching content from post URL: {post['url']}")
+                full_content = fetch_post_content_from_url(post["url"])
+                if full_content:
+                    urls = extract_urls_from_text(full_content)
             if urls:
                 post_resources[post["urn"]] = urls
 
@@ -438,7 +796,7 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
         print(f"📊 Processing resources from {len(post_resources)} posts...")
         for post_urn, urls in post_resources.items():
             count = create_resource_nodes_and_relationships(
-                driver, post_urn, urls, source_type="Post"
+                driver, post_urn, urls, source_type="Post", database=database
             )
             if count > 0:
                 total_resources += count
@@ -449,7 +807,7 @@ def enrich_posts_with_resources(driver, json_file: Optional[str] = None):
         print(f"📊 Processing resources from {len(comment_resources)} comments...")
         for comment_urn, urls in comment_resources.items():
             count = create_resource_nodes_and_relationships(
-                driver, comment_urn, urls, source_type="Comment"
+                driver, comment_urn, urls, source_type="Comment", database=database
             )
             if count > 0:
                 total_resources += count

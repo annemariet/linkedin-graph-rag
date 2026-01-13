@@ -205,6 +205,79 @@ uv run python -m linkedin_api.analyze_activity
 - `Post REFERENCES Resource`
 - `Comment REFERENCES Resource`
 
+## Validating the Graph
+
+Use these Cypher queries in the AuraDB UI (or Neo4j Browser) to visualize and validate the graph structure. These queries return nodes and relationships that can be visualized in the graph view.
+
+### Complete Subgraph: Posts with Authors, Resources, and Comments
+
+```cypher
+// Visualize a connected subgraph showing posts, authors, resources, and comments
+MATCH (person:Person)-[creates:CREATES]->(post:Post)
+OPTIONAL MATCH (post)-[ref:REFERENCES]->(resource:Resource)
+OPTIONAL MATCH (comment:Comment)-[comments:COMMENTS_ON]->(post)
+OPTIONAL MATCH (comment)-[commentRef:REFERENCES]->(resource)
+WITH person, post, resource, comment, creates, ref, comments, commentRef
+LIMIT 30
+RETURN person, post, resource, comment, creates, ref, comments, commentRef
+```
+
+### Rich Post Subgraph: Author → Post → Resources → Comments
+
+```cypher
+// Show posts with all their connections: authors, resources, and comments
+MATCH (person:Person)-[creates:CREATES]->(post:Post)-[ref:REFERENCES]->(resource:Resource)
+OPTIONAL MATCH (comment:Comment)-[comments:COMMENTS_ON]->(post)
+OPTIONAL MATCH (comment)-[commentRef:REFERENCES]->(resource)
+WITH person, post, resource, comment, creates, ref, comments, commentRef
+LIMIT 20
+RETURN person, post, resource, comment, creates, ref, comments, commentRef
+```
+
+### Multi-Relationship Subgraph: All Connection Types
+
+```cypher
+// Visualize a subgraph with multiple relationship types
+MATCH (person:Person)-[r1:CREATES|REPOSTS]->(post:Post)
+OPTIONAL MATCH (post)-[r2:REFERENCES]->(resource:Resource)
+OPTIONAL MATCH (comment:Comment)-[r3:COMMENTS_ON]->(post)
+OPTIONAL MATCH (person2:Person)-[r4:CREATES]->(comment)
+OPTIONAL MATCH (comment)-[r5:REFERENCES]->(resource)
+WITH person, post, resource, comment, person2, r1, r2, r3, r4, r5
+LIMIT 15
+RETURN person, post, resource, comment, person2, r1, r2, r3, r4, r5
+```
+
+### Posts with Resources and Comment Threads
+
+```cypher
+// Show posts that have both resources and comment threads
+MATCH (post:Post)-[ref:REFERENCES]->(resource:Resource)
+OPTIONAL MATCH (comment:Comment)-[comments:COMMENTS_ON]->(post)
+OPTIONAL MATCH (reply:Comment)-[replies:COMMENTS_ON]->(comment)
+OPTIONAL MATCH (person:Person)-[creates:CREATES]->(post)
+OPTIONAL MATCH (person2:Person)-[createsComment:CREATES]->(comment)
+WITH post, resource, comment, reply, person, person2, ref, comments, replies, creates, createsComment
+LIMIT 15
+RETURN post, resource, comment, reply, person, person2, ref, comments, replies, creates, createsComment
+```
+
+### Most Connected Subgraph: Posts with Multiple Resources
+
+```cypher
+// Find posts that reference multiple resources and show their full context
+MATCH (post:Post)-[ref:REFERENCES]->(resource:Resource)
+WITH post, collect({resource: resource, ref: ref}) as resourceData
+WHERE size(resourceData) > 1
+WITH post, resourceData[0..3] as topResources
+UNWIND topResources as rd
+OPTIONAL MATCH (person:Person)-[creates:CREATES]->(post)
+OPTIONAL MATCH (comment:Comment)-[comments:COMMENTS_ON]->(post)
+WITH post, rd.resource as resource, rd.ref as ref, person, comment, creates, comments
+LIMIT 12
+RETURN post, resource, person, comment, ref, creates, comments
+```
+
 ## Troubleshooting
 
 ### Token Expired
