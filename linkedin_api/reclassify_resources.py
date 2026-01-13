@@ -63,7 +63,8 @@ def reclassify_resources(driver, database: str = "neo4j", limit: int = None):
         for i, url in enumerate(resources, 1):
             if i % 10 == 0:
                 print(
-                    f"   Processing {i}/{len(resources)}... (updated: {updated}, failed: {failed}, unchanged: {unchanged})"
+                    f"   Processing {i}/{len(resources)}... "
+                    f"(updated: {updated}, failed: {failed}, unchanged: {unchanged})"
                 )
 
             try:

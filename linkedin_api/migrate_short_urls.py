@@ -55,7 +55,8 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
 
     with driver.session(database=database) as session:
         # Find Resources with potential short URLs
-        # Match exact domain (not substring) to avoid false positives like "ft.com" matching "t.co"
+        # Match exact domain (not substring) to avoid false positives
+        # like "ft.com" matching "t.co"
         # Extract domain from URL and compare exactly
         query = """
         MATCH (resource:Resource)
@@ -91,7 +92,8 @@ def migrate_short_urls(driver, database: str = "neo4j", limit: int = None):
         for i, original_url in enumerate(resources, 1):
             if i % 10 == 0:
                 print(
-                    f"   Processing {i}/{len(resources)}... (migrated: {migrated}, failed: {failed}, skipped: {skipped})"
+                    f"   Processing {i}/{len(resources)}... "
+                    f"(migrated: {migrated}, failed: {failed}, skipped: {skipped})"
                 )
 
             try:
