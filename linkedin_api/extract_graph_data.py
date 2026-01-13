@@ -24,7 +24,13 @@ from linkedin_api.utils.changelog import (
     save_last_processed_timestamp,
 )
 from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
-from linkedin_api.utils.urns import extract_urn_id, urn_to_post_url
+from linkedin_api.utils.urns import (
+    extract_urn_id,
+    urn_to_post_url,
+    build_comment_urn,
+    comment_urn_to_post_url,
+    parse_comment_urn,
+)
 
 # Resource type constants
 RESOURCE_REACTIONS = "socialActions/likes"
@@ -233,8 +239,13 @@ def process_comment(
         return
 
     timestamp = activity.get("created", {}).get("time")
-    comment_urn = f"urn:li:comment:{comment_id}"
     comment_text = activity.get("message", {}).get("text", "")
+
+    # Build correct comment URN format: urn:li:comment:(parent_type:parent_id,comment_id)
+    comment_urn = build_comment_urn(post_urn, comment_id)
+    if not comment_urn:
+        skipped_by_reason[f"comment_invalid_urn_{resource_name}"] += 1
+        return
 
     response_context = activity.get("responseContext", {})
     parent_urn = response_context.get("parent") or response_context.get("root")
@@ -242,6 +253,9 @@ def process_comment(
 
     if parent_urn and parent_urn.startswith("urn:li:comment:"):
         parent_comment_urn = parent_urn
+
+    # Generate URL from parent post URN
+    comment_url = comment_urn_to_post_url(comment_urn) or ""
 
     if comment_urn not in comments:
         comments[comment_urn] = {
@@ -253,6 +267,7 @@ def process_comment(
                 "text": comment_text[:200] if comment_text else "",
                 "timestamp": timestamp,
                 "created_at": format_timestamp(timestamp),
+                "url": comment_url,
             },
         }
 
@@ -260,7 +275,9 @@ def process_comment(
     create_person_node(actor, people)
 
     if parent_comment_urn and parent_comment_urn not in comments:
-        parent_comment_id = extract_urn_id(parent_comment_urn)
+        parsed = parse_comment_urn(parent_comment_urn)
+        parent_comment_id = parsed.get("comment_id") if parsed else None
+        parent_comment_url = comment_urn_to_post_url(parent_comment_urn) or ""
         comments[parent_comment_urn] = {
             "id": parent_comment_urn,
             "label": "Comment",
@@ -268,6 +285,7 @@ def process_comment(
                 "urn": parent_comment_urn,
                 "comment_id": parent_comment_id or "",
                 "text": "",
+                "url": parent_comment_url,
             },
         }
 
