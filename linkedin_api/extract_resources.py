@@ -668,37 +668,8 @@ def create_resource_nodes_and_relationships(
                     continue
 
                 try:
-                    original_url = url
                     # Resolve redirects to get final URL
-                    final_url = resolve_redirect(url)
-
-                    # Always use final URL (even if same as original)
-                    url = final_url
-
-                    # If redirect was resolved and URLs differ, migrate existing Resource from short URL to final URL
-                    if final_url != original_url:
-                        # Migrate: if Resource exists with original URL, update it to final URL and merge references
-                        migrate_query = """
-                        MATCH (oldResource:Resource {url: $original_url})
-                        OPTIONAL MATCH (source)-[ref:REFERENCES]->(oldResource)
-                        WITH oldResource, collect(source) as sources, collect(ref) as refs
-                        MERGE (newResource:Resource {url: $final_url})
-                        ON CREATE SET newResource.domain = oldResource.domain,
-                                      newResource.type = oldResource.type,
-                                      newResource.title = oldResource.title
-                        ON MATCH SET newResource.domain = COALESCE(newResource.domain, oldResource.domain),
-                                    newResource.type = COALESCE(newResource.type, oldResource.type),
-                                    newResource.title = COALESCE(newResource.title, oldResource.title)
-                        FOREACH (s IN sources |
-                          MERGE (s)-[:REFERENCES]->(newResource)
-                        )
-                        DELETE oldResource
-                        """
-                        session.run(
-                            migrate_query,
-                            original_url=original_url,
-                            final_url=final_url,
-                        )
+                    url = resolve_redirect(url)
 
                     url_info = categorize_url(url)
                     if not url_info["domain"]:
