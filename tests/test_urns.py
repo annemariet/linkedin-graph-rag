@@ -26,8 +26,9 @@ def test_parse_comment_urn_resolves_to_linkedin_post_html(comment_urn):
         pytest.skip("Set LINKEDIN_TEST_ONLINE=1 to run online LinkedIn checks.")
 
     response = requests.get(post_url, timeout=15)
-    if response.status_code != 200:
-        pytest.skip(f"LinkedIn returned {response.status_code} for {post_url}")
+    assert response.status_code == 200, (
+        f"LinkedIn returned {response.status_code} for {post_url}"
+    )
 
     content = response.text.lower()
     assert "linkedin" in content
