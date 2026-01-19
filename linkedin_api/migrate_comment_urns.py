@@ -186,7 +186,27 @@ def migrate_all_comments(driver, dry_run: bool = False):
         driver: Neo4j driver
         dry_run: If True, only report what would be migrated without making changes
     """
-    print("🔍 Finding Comment nodes with incorrect URN format...")
+    print("🔍 Checking reaction coverage for migration context...")
+    reaction_counts_query = """
+    MATCH ()-[r:REACTS_TO]->(target)
+    RETURN
+        count(r) AS total_reactions,
+        count(CASE WHEN target:Post THEN 1 END) AS reactions_to_posts,
+        count(CASE WHEN target:Comment THEN 1 END) AS reactions_to_comments,
+        count(CASE WHEN NOT target:Post AND NOT target:Comment THEN 1 END) AS reactions_to_other
+    """
+    with driver.session(database=NEO4J_DATABASE) as session:
+        counts = session.run(reaction_counts_query).single()
+        if counts:
+            print(
+                "   ✅ Reactions in graph: "
+                f"{counts['total_reactions']} total "
+                f"({counts['reactions_to_posts']} posts, "
+                f"{counts['reactions_to_comments']} comments, "
+                f"{counts['reactions_to_other']} other)"
+            )
+
+    print("\n🔍 Finding Comment nodes with incorrect URN format...")
     comments = find_comments_with_incorrect_urns(driver)
     print(f"✅ Found {len(comments)} comments to migrate\n")
 
