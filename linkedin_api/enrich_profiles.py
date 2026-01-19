@@ -13,6 +13,7 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
+from linkedin_api.utils.urns import comment_urn_to_post_url
 
 load_dotenv()
 
@@ -20,6 +21,24 @@ NEO4J_URI = os.getenv("NEO4J_URI") or "neo4j://localhost:7687"
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME") or "neo4j"
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD") or "password"
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE") or "neo4j"
+
+
+def _normalize_post_url(url: str) -> Optional[str]:
+    """Normalize post URLs before fetching HTML."""
+    if not url:
+        return None
+
+    if "urn:li:comment:" in url:
+        comment_url = comment_urn_to_post_url(url.replace("https://www.linkedin.com/feed/update/", ""))
+        if comment_url:
+            return comment_url
+
+    return url
+
+
+def _is_private_post_url(url: str) -> bool:
+    """Skip URLs that are not publicly accessible."""
+    return "urn:li:groupPost:" in url or "urn:li:activity:" in url
 
 
 def extract_author_profile(url: str) -> Optional[Dict[str, str]]:
@@ -35,8 +54,15 @@ def extract_author_profile(url: str) -> Optional[Dict[str, str]]:
     Returns:
         Dict with 'name' and 'profile_url' or None if extraction failed
     """
+    normalized_url = _normalize_post_url(url)
+    if not normalized_url:
+        return None
+
+    if _is_private_post_url(normalized_url):
+        return None
+
     try:
-        response = requests.get(url, timeout=10, allow_redirects=True)
+        response = requests.get(normalized_url, timeout=10, allow_redirects=True)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
