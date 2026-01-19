@@ -155,6 +155,38 @@ def _remove_reaction_relationship(relationships, actor, post_urn):
     return before_count - len(relationships)
 
 
+def _maybe_build_parent_comment_urn(post_urn, value):
+    """Return a parent comment URN from a raw value when possible."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        if value.startswith("urn:li:comment:"):
+            return value
+        if value.isdigit():
+            return build_comment_urn(post_urn, value)
+    return None
+
+
+def _extract_parent_comment_urn(activity, response_context, post_urn):
+    """Extract parent comment URN from activity/response context."""
+    for container in (response_context, activity):
+        if not isinstance(container, dict):
+            continue
+        for key in (
+            "parent",
+            "parentComment",
+            "parentCommentUrn",
+            "parentCommentURN",
+            "parentCommentId",
+            "parentCommentID",
+        ):
+            if key in container:
+                parent_urn = _maybe_build_parent_comment_urn(post_urn, container[key])
+                if parent_urn:
+                    return parent_urn
+    return None
+
+
 def process_reaction(
     element, activity, people, posts, relationships, skipped_by_reason
 ):
@@ -306,11 +338,9 @@ def process_comment(
         return
 
     response_context = activity.get("responseContext", {})
-    parent_urn = response_context.get("parent") or response_context.get("root")
-    parent_comment_urn = None
-
-    if parent_urn and parent_urn.startswith("urn:li:comment:"):
-        parent_comment_urn = parent_urn
+    parent_comment_urn = _extract_parent_comment_urn(
+        activity, response_context, post_urn
+    )
 
     # Generate URL from parent post URN
     comment_url = comment_urn_to_post_url(comment_urn) or ""
