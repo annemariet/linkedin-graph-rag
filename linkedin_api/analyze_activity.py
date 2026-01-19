@@ -15,16 +15,14 @@ Note: This is separate from the graph extraction workflow.
 Use extract_graph_data.py to extract data for Neo4j import.
 """
 
+import argparse
 import json
 import os
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from linkedin_api.utils.changelog import (
-    fetch_changelog_data,
-    get_max_processed_at,
-    save_last_processed_timestamp,
-)
+from typing import Optional
+from linkedin_api.utils.changelog import fetch_changelog_data
 from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
 
 # Output directory
@@ -32,9 +30,32 @@ OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-def get_all_changelog_data():
+def parse_start_time(value: Optional[str]) -> Optional[int]:
+    """Parse a start time string into epoch milliseconds."""
+    if not value:
+        return None
+
+    try:
+        return int(value)
+    except ValueError:
+        pass
+
+    try:
+        parsed = datetime.fromisoformat(value)
+        return int(parsed.timestamp() * 1000)
+    except ValueError:
+        pass
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+        return int(parsed.timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def get_all_changelog_data(start_time: Optional[int] = None):
     """Fetch all changelog data by paginating through all results."""
-    return fetch_changelog_data()
+    return fetch_changelog_data(start_time=start_time)
 
 
 def extract_statistics(elements):
@@ -284,32 +305,42 @@ def save_statistics(stats, filename="linkedin_statistics.json"):
     print(f"💾 Statistics saved to {filepath}")
 
     # Save skipped elements to separate file for investigation
-    if stats.get("skipped_elements"):
-        skipped_filepath = OUTPUT_DIR / filename.replace(".json", "_skipped.json")
-        with open(skipped_filepath, "w") as f:
-            json.dump(stats["skipped_elements"], f, indent=2, default=str)
-        print(
-            f"💾 Skipped elements saved to {skipped_filepath} "
-            f"({len(stats['skipped_elements'])} elements)"
-        )
+    skipped_elements = stats.get("skipped_elements", [])
+    skipped_filepath = OUTPUT_DIR / filename.replace(".json", "_skipped.json")
+    with open(skipped_filepath, "w") as f:
+        json.dump(skipped_elements, f, indent=2, default=str)
+    print(
+        f"💾 Skipped elements saved to {skipped_filepath} "
+        f"({len(skipped_elements)} elements)"
+    )
 
 
 def main():
     """Main function to extract and analyze LinkedIn data."""
+    parser = argparse.ArgumentParser(
+        description="Analyze LinkedIn activity and export statistics."
+    )
+    parser.add_argument(
+        "--start-date",
+        dest="start_date",
+        help="Start date/time (ISO 8601 or epoch ms) for statistics.",
+    )
+    args = parser.parse_args()
+
+    start_time = parse_start_time(args.start_date)
+    if args.start_date and start_time is None:
+        print("❌ Invalid --start-date format. Use ISO 8601 or epoch milliseconds.")
+        return
+
     print("🚀 LinkedIn Data Extraction & Statistics")
     print("=" * 60)
 
     # Get all changelog data
-    elements = get_all_changelog_data()
+    elements = get_all_changelog_data(start_time=start_time)
 
     if not elements:
         print("❌ No data retrieved")
         return
-
-    # Save last processed timestamp
-    max_timestamp = get_max_processed_at(elements)
-    if max_timestamp:
-        save_last_processed_timestamp(max_timestamp)
 
     # Extract statistics
     print("\n🔍 Analyzing data...")
