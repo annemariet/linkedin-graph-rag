@@ -13,6 +13,7 @@ This is Step 1 of the graph building workflow:
 2. build_graph.py → Load JSON into Neo4j and enrich
 """
 
+import argparse
 import json
 import os
 from collections import defaultdict
@@ -31,6 +32,7 @@ from linkedin_api.utils.urns import (
     comment_urn_to_post_url,
     parse_comment_urn,
 )
+from linkedin_api.analyze_activity import extract_statistics, print_statistics, save_statistics
 
 # Resource type constants
 RESOURCE_REACTIONS = "socialActions/likes"
@@ -104,20 +106,76 @@ def extract_actor(element, activity):
     return element.get("actor", "") or activity.get("actor", "")
 
 
+def _extract_post_urn_for_reaction(element, activity):
+    """Extract the post/comment URN for a reaction from available fields."""
+    post_urn = activity.get("root") or activity.get("object", "")
+    if post_urn:
+        return post_urn
+
+    resource_id = element.get("resourceId", "")
+    if isinstance(resource_id, str) and resource_id.startswith("urn:li:"):
+        return resource_id
+
+    resource_uri = element.get("resourceUri", "")
+    if isinstance(resource_uri, str) and resource_uri:
+        # Example: /socialActions/urn:li:activity:123/likes/urn:li:person:abc
+        for part in resource_uri.split("/"):
+            if part.startswith("urn:li:"):
+                return part
+
+    reaction_urn = activity.get("$URN") or activity.get("urn") or ""
+    if isinstance(reaction_urn, str) and reaction_urn.startswith("urn:li:reaction:("):
+        inner = reaction_urn[len("urn:li:reaction:(") :].rstrip(")")
+        parts = [p.strip() for p in inner.split(",")]
+        if len(parts) == 2 and parts[1].startswith("urn:li:"):
+            return parts[1]
+
+    return ""
+
+def _is_delete_action(element):
+    """Check whether the changelog element represents a delete action."""
+    method = element.get("method") or element.get("methodName")
+    return str(method).upper() == "DELETE"
+
+
+def _remove_reaction_relationship(relationships, actor, post_urn):
+    """Remove existing reaction relationships for an actor/post pair."""
+    if not actor or not post_urn:
+        return 0
+    before_count = len(relationships)
+    relationships[:] = [
+        rel
+        for rel in relationships
+        if not (
+            rel.get("type") == "REACTS_TO"
+            and rel.get("from") == actor
+            and rel.get("to") == post_urn
+        )
+    ]
+    return before_count - len(relationships)
+
+
 def process_reaction(
     element, activity, people, posts, relationships, skipped_by_reason
 ):
     """Process a reaction element and update entities/relationships."""
     resource_name = element.get("resourceName", "")
-    post_urn = activity.get("root") or activity.get("object", "")
+    post_urn = _extract_post_urn_for_reaction(element, activity)
     reaction_type = activity.get("reactionType", "UNKNOWN")
     actor = extract_actor(element, activity)
+    is_delete = _is_delete_action(element)
 
     if not post_urn:
         skipped_by_reason[f"reaction_no_post_urn_{resource_name}"] += 1
         return
     if not actor:
         skipped_by_reason[f"reaction_no_actor_{resource_name}"] += 1
+        return
+
+    if is_delete:
+        removed = _remove_reaction_relationship(relationships, actor, post_urn)
+        if removed:
+            print(f"   🗑️  Removed {removed} reaction(s) for {actor} → {post_urn}")
         return
 
     timestamp = activity.get("created", {}).get("time")
@@ -483,7 +541,30 @@ def save_neo4j_data(data, filename="neo4j_data.json"):
     print(f"💾 Neo4j data saved to {filepath}")
 
 
-def get_all_post_activities():
+def parse_start_time(value):
+    """Parse a start time string into epoch milliseconds."""
+    if not value:
+        return None
+
+    try:
+        return int(value)
+    except ValueError:
+        pass
+
+    try:
+        parsed = datetime.fromisoformat(value)
+        return int(parsed.timestamp() * 1000)
+    except ValueError:
+        pass
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+        return int(parsed.timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def get_all_post_activities(start_time=None):
     """Fetch all changelog data related to public posts."""
     post_related_resources = [
         RESOURCE_REACTIONS,
@@ -494,17 +575,34 @@ def get_all_post_activities():
     ]
 
     print("🔍 Fetching all post-related activities...")
-    elements = fetch_changelog_data(resource_filter=post_related_resources)
+    elements = fetch_changelog_data(
+        resource_filter=post_related_resources, start_time=start_time
+    )
     print(f"✅ Total post-related elements: {len(elements)}")
     return elements
 
 
 def main():
     """Main function to extract entities and relationships."""
+    parser = argparse.ArgumentParser(
+        description="Extract graph data and activity statistics."
+    )
+    parser.add_argument(
+        "--start-date",
+        dest="start_date",
+        help="Start date/time (ISO 8601 or epoch ms) for extraction.",
+    )
+    args = parser.parse_args()
+
+    start_time = parse_start_time(args.start_date)
+    if args.start_date and start_time is None:
+        print("❌ Invalid --start-date format. Use ISO 8601 or epoch milliseconds.")
+        return
+
     print("🚀 LinkedIn Neo4j Data Extraction")
     print("=" * 60)
 
-    elements = get_all_post_activities()
+    elements = get_all_post_activities(start_time=start_time)
 
     if not elements:
         print("❌ No post-related data found")
@@ -520,6 +618,11 @@ def main():
 
     print_summary(data)
     save_neo4j_data(data)
+
+    print("\n🔍 Analyzing activity statistics...")
+    stats = extract_statistics(elements)
+    print_statistics(stats)
+    save_statistics(stats)
 
     print("\n✅ Extraction complete!")
     print("💡 Use the JSON file to import into Neo4j")
