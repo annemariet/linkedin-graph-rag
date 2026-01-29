@@ -8,9 +8,13 @@ This script:
 3. Creates Chunk nodes with embeddings
 4. Links chunks to posts/comments
 5. Creates vector index for GraphRAG retrieval
+
+Supports incremental indexing: only processes posts/comments without existing Chunk nodes.
 """
 
 import os
+import sys
+import logging
 import dotenv
 from typing import Optional, List, Dict
 from bs4 import BeautifulSoup
@@ -30,6 +34,9 @@ from neo4j_graphrag.indexes import create_vector_index
 
 dotenv.load_dotenv()
 
+# Module-level logger (configured in main() when run as script)
+logger = logging.getLogger(__name__)
+
 NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neoneoneo")
@@ -43,6 +50,7 @@ VECTOR_INDEX_NAME = "linkedin_content_index"
 CHUNK_SIZE = 500  # Characters per chunk
 CHUNK_OVERLAP = 100  # Overlap between chunks
 EMBEDDING_DIMENSIONS = 768  # Standard for gecko models
+BATCH_SIZE = 50  # Number of chunks to process per batch
 
 
 def extract_post_content(url: str) -> Optional[str]:
@@ -184,41 +192,59 @@ def get_posts_and_comments(driver) -> List[Dict]:
         return nodes
 
 
-def create_chunk_node(
-    tx, chunk_id: str, text: str, source_urn: str, chunk_index: int, total_chunks: int
-):
+def create_chunks_batch(tx, chunks_data: List[Dict]) -> List[str]:
     """
-    Create or update a Chunk node and link it to the source Post/Comment.
+    Create or update multiple Chunk nodes in a single transaction.
 
-    Uses MERGE to avoid duplicates if the chunk already exists, updating
-    its properties if needed. Returns the internal Neo4j node ID for use with upsert_vectors.
+    Uses MERGE to avoid duplicates if chunks already exist.
+    Returns the chunk IDs for reference.
+
+    Args:
+        tx: Neo4j transaction
+        chunks_data: List of dicts with chunk_id, text, source_urn, chunk_index, total_chunks
     """
     query = """
-    MATCH (source {urn: $source_urn})
-    MERGE (chunk:Chunk {id: $chunk_id})
-    SET chunk.text = $text,
-        chunk.chunk_index = $chunk_index,
-        chunk.total_chunks = $total_chunks,
-        chunk.source_urn = $source_urn
+    UNWIND $chunks AS chunk_data
+    MATCH (source {urn: chunk_data.source_urn})
+    MERGE (chunk:Chunk {id: chunk_data.chunk_id})
+    SET chunk.text = chunk_data.text,
+        chunk.chunk_index = chunk_data.chunk_index,
+        chunk.total_chunks = chunk_data.total_chunks,
+        chunk.source_urn = chunk_data.source_urn
     MERGE (chunk)-[:FROM_CHUNK]->(source)
-    RETURN id(chunk) as node_id, chunk.id as chunk_id
+    RETURN chunk.id as chunk_id
     """
-    result = tx.run(
-        query,
-        chunk_id=chunk_id,
-        text=text,
-        source_urn=source_urn,
-        chunk_index=chunk_index,
-        total_chunks=total_chunks,
-    )
-    record = result.single()
-    if record:
-        return record["node_id"]  # Return internal Neo4j node ID
-    raise RuntimeError(f"Failed to create chunk node {chunk_id}")
+    result = tx.run(query, chunks=chunks_data)
+    return [record["chunk_id"] for record in result]
+
+
+def store_embeddings_batch(tx, embeddings_data: List[Dict]) -> int:
+    """
+    Store embeddings for multiple chunks in a single transaction.
+
+    Args:
+        tx: Neo4j transaction
+        embeddings_data: List of dicts with chunk_id and embedding
+
+    Returns:
+        Number of chunks updated
+    """
+    query = """
+    UNWIND $data AS item
+    MATCH (c:Chunk {id: item.chunk_id})
+    SET c.embedding = item.embedding
+    RETURN count(c) as updated
+    """
+    result = tx.run(query, data=embeddings_data)
+    return result.single()["updated"]
 
 
 def index_content_for_graphrag(
-    driver, embedder, embedding_dimensions: int, limit: Optional[int] = None
+    driver,
+    embedder,
+    embedding_dimensions: int,
+    limit: Optional[int] = None,
+    verbose: bool = False,
 ):
     """
     Main function to index post and comment content for GraphRAG.
@@ -231,22 +257,22 @@ def index_content_for_graphrag(
         embedder: Embedding model
         embedding_dimensions: Number of dimensions for embeddings
         limit: Optional limit on number of posts/comments to process
+        verbose: If True, print detailed progress for each item
     """
-    print("🔍 Fetching unindexed posts and comments from Neo4j...")
+    logger.info("🔍 Fetching unindexed posts and comments from Neo4j...")
     nodes = get_posts_and_comments(driver)
 
     if limit:
         nodes = nodes[:limit]
 
     if len(nodes) == 0:
-        print("✅ No new posts/comments to index (all already indexed)")
+        logger.info("✅ No new posts/comments to index (all already indexed)")
         return
 
-    print(f"✅ Found {len(nodes)} unindexed posts/comments to index")
+    logger.info(f"✅ Found {len(nodes)} unindexed posts/comments to index")
 
     # Create vector index per Neo4j GraphRAG docs
-    # Reference: https://neo4j.com/docs/neo4j-graphrag-python/current/user_guide_rag.html#create-a-vector-index
-    print(f"\n📊 Creating vector index '{VECTOR_INDEX_NAME}'...")
+    logger.info(f"\n📊 Creating vector index '{VECTOR_INDEX_NAME}'...")
     create_vector_index(
         driver,
         VECTOR_INDEX_NAME,
@@ -255,127 +281,118 @@ def index_content_for_graphrag(
         dimensions=embedding_dimensions,
         similarity_fn="cosine",
     )
-    print(f"   ✅ Vector index created")
+    logger.info("   ✅ Vector index created/verified")
 
-    # Process each node
+    # Process nodes and collect all chunks
     processed = 0
     failed = 0
-    total_chunks_created = 0
+    pending_chunks: List[Dict] = []  # Chunks waiting to be written
+    pending_embeddings: List[Dict] = []  # Embeddings waiting to be stored
 
     for i, node in enumerate(nodes, 1):
         urn = node["urn"]
         url = node["url"]
         labels = node["labels"]
 
-        print(f"\n[{i}/{len(nodes)}] Processing {labels[0]}: {urn[:50]}...")
-        print(f"   URL: {url}")
+        # Progress indicator (compact)
+        if verbose:
+            logger.info(f"\n[{i}/{len(nodes)}] {labels[0]}: {urn[:50]}...")
+        elif i == 1 or i % 10 == 0 or i == len(nodes):
+            logger.info(f"   Processing {i}/{len(nodes)}...")
 
         # Extract content
         content = extract_post_content(url)
 
         if not content:
-            print(f"   ⚠️  No content extracted")
+            if verbose:
+                logger.warning(f"   ⚠️  No content extracted from {url}")
             failed += 1
             continue
 
-        print(f"   ✅ Extracted {len(content)} characters")
-
         # Split into chunks
         chunks = split_text_into_chunks(content, CHUNK_SIZE, CHUNK_OVERLAP)
-        print(f"   📝 Split into {len(chunks)} chunks")
 
-        # Create chunk nodes and embeddings
-        chunk_embeddings = []
-        chunk_ids = []  # Custom id property for reference
-        node_ids = []  # Internal Neo4j node IDs for upsert_vectors
+        if verbose:
+            logger.info(f"   ✅ {len(content)} chars → {len(chunks)} chunks")
 
+        # Prepare chunk data and generate embeddings
         for chunk_idx, chunk_text in enumerate(chunks):
             chunk_id = f"{urn}_chunk_{chunk_idx}"
-            chunk_ids.append(chunk_id)
 
-            # Create chunk node and get internal Neo4j node ID
-            with driver.session(database=NEO4J_DATABASE) as session:
-                node_id = session.execute_write(
-                    create_chunk_node, chunk_id, chunk_text, urn, chunk_idx, len(chunks)
-                )
-                node_ids.append(node_id)
+            # Add to pending chunks
+            pending_chunks.append(
+                {
+                    "chunk_id": chunk_id,
+                    "text": chunk_text,
+                    "source_urn": urn,
+                    "chunk_index": chunk_idx,
+                    "total_chunks": len(chunks),
+                }
+            )
 
-            # Generate embedding - fail immediately on error
+            # Generate embedding
             try:
                 embedding = embedder.embed_query(chunk_text)
                 if not embedding or len(embedding) == 0:
                     raise ValueError("Empty embedding returned")
-                chunk_embeddings.append(embedding)
+                pending_embeddings.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "embedding": embedding,
+                    }
+                )
             except Exception as e:
-                print(
-                    f"\n❌ FATAL ERROR: Failed to generate embedding for chunk {chunk_idx}"
-                )
-                print(f"   Error: {str(e)}")
-                print(f"   Model: {EMBEDDING_MODEL}")
-                print(f"   Chunk text (first 100 chars): {chunk_text[:100]}...")
-                print(f"\n💡 Troubleshooting:")
-                print(
-                    f"   1. Verify the model '{EMBEDDING_MODEL}' is available in your project"
-                )
-                print(f"   2. Check Google Cloud credentials are properly configured")
-                print(
-                    f"   3. Try a different model: textembedding-gecko@002 or textembedding-gecko"
-                )
+                logger.error(f"\n❌ FATAL: Embedding failed for {chunk_id}")
+                logger.error(f"   Error: {str(e)}")
+                logger.error(f"   Model: {EMBEDDING_MODEL}")
                 raise RuntimeError(f"Embedding generation failed: {str(e)}") from e
 
-        # Store embeddings using direct Cypher SET
-        # Note: upsert_vectors may not support database parameter, so we use Cypher directly
-        # Neo4j automatically updates vector indexes when indexed properties are SET
-        if chunk_embeddings:
-            print(f"   💾 Storing {len(chunk_embeddings)} embeddings...")
-            with driver.session(database=NEO4J_DATABASE) as session:
-                # Verify nodes exist before updating
-                verify_result = session.run(
-                    "MATCH (c:Chunk) WHERE id(c) IN $node_ids RETURN count(c) as count",
-                    node_ids=node_ids,
-                ).single()
-                if verify_result["count"] != len(node_ids):
-                    print(
-                        f"   ⚠️  Warning: Only {verify_result['count']}/{len(node_ids)} nodes found"
-                    )
-
-                # Update embeddings using internal node IDs
-                result = session.run(
-                    """
-                    UNWIND $data AS item
-                    MATCH (c:Chunk)
-                    WHERE id(c) = item.node_id
-                    SET c.embedding = item.embedding
-                    RETURN count(c) as updated
-                    """,
-                    data=[
-                        {"node_id": node_id, "embedding": embedding}
-                        for node_id, embedding in zip(node_ids, chunk_embeddings)
-                    ],
-                )
-                updated_count = result.single()["updated"]
-                if updated_count != len(chunk_ids):
-                    raise RuntimeError(
-                        f"Only {updated_count}/{len(chunk_ids)} chunks updated"
-                    )
-
-                # Verify embeddings were stored
-                verify_embeddings = session.run(
-                    "MATCH (c:Chunk) WHERE id(c) IN $node_ids AND c.embedding IS NOT NULL RETURN count(c) as count",
-                    node_ids=node_ids,
-                ).single()["count"]
-                if verify_embeddings != len(node_ids):
-                    raise RuntimeError(
-                        f"Verification failed: Only {verify_embeddings}/{len(node_ids)} embeddings stored"
-                    )
-
-            print(f"   ✅ Stored and verified {len(chunk_embeddings)} embeddings")
-            total_chunks_created += len(chunk_ids)
+        # Flush batch if it's large enough
+        if len(pending_chunks) >= BATCH_SIZE:
+            _flush_batch(driver, pending_chunks, pending_embeddings, verbose)
+            pending_chunks.clear()
+            pending_embeddings.clear()
 
         processed += 1
 
-    # Verify embeddings were stored
-    print(f"\n🔍 Verifying embeddings were stored...")
+    # Flush remaining chunks
+    if pending_chunks:
+        _flush_batch(driver, pending_chunks, pending_embeddings, verbose)
+
+    # Final verification
+    _print_summary(driver, processed, failed, len(nodes))
+
+
+def _flush_batch(
+    driver, chunks_data: List[Dict], embeddings_data: List[Dict], verbose: bool
+):
+    """Write a batch of chunks and their embeddings to Neo4j."""
+    if not chunks_data:
+        return
+
+    with driver.session(database=NEO4J_DATABASE) as session:
+        # Create chunk nodes
+        created_ids = session.execute_write(create_chunks_batch, chunks_data)
+
+        if len(created_ids) != len(chunks_data):
+            logger.warning(
+                f"   ⚠️  Created {len(created_ids)}/{len(chunks_data)} chunks"
+            )
+
+        # Store embeddings
+        updated = session.execute_write(store_embeddings_batch, embeddings_data)
+
+        if updated != len(embeddings_data):
+            raise RuntimeError(
+                f"Only {updated}/{len(embeddings_data)} embeddings stored"
+            )
+
+    if verbose:
+        logger.info(f"   💾 Batch: {len(chunks_data)} chunks written")
+
+
+def _print_summary(driver, processed: int, failed: int, total: int):
+    """Print final indexing summary with verification."""
     with driver.session(database=NEO4J_DATABASE) as session:
         total_chunks = session.run("MATCH (c:Chunk) RETURN count(c) as count").single()[
             "count"
@@ -383,126 +400,116 @@ def index_content_for_graphrag(
         chunks_with_embedding = session.run(
             "MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) as count"
         ).single()["count"]
-        sample_chunk = session.run(
-            "MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN c.id as id, size(c.embedding) as dims LIMIT 1"
+        sample = session.run(
+            "MATCH (c:Chunk) WHERE c.embedding IS NOT NULL "
+            "RETURN c.id as id, size(c.embedding) as dims LIMIT 1"
         ).single()
 
-        print(f"   Total Chunk nodes: {total_chunks}")
-        print(f"   Chunks with embeddings: {chunks_with_embedding}")
-        if sample_chunk:
-            print(f"   Sample chunk embedding dimensions: {sample_chunk['dims']}")
+    logger.info(f"\n{'='*60}")
+    logger.info("📊 INDEXING SUMMARY")
+    logger.info(f"{'='*60}")
+    logger.info(f"   Processed: {processed}/{total}")
+    logger.info(f"   Failed (no content): {failed}/{total}")
+    logger.info(f"   Total chunks in DB: {total_chunks}")
+    logger.info(f"   Chunks with embeddings: {chunks_with_embedding}")
+    if sample:
+        logger.info(f"   Embedding dimensions: {sample['dims']}")
 
-        if chunks_with_embedding == 0:
-            print(f"\n   ⚠️  WARNING: No embeddings found in chunks!")
-            print(f"   This means vector search won't work.")
-        elif chunks_with_embedding < total_chunks:
-            print(
-                f"\n   ⚠️  WARNING: {total_chunks - chunks_with_embedding} chunks are missing embeddings"
-            )
+    if chunks_with_embedding == 0:
+        logger.warning(
+            "\n   ⚠️  WARNING: No embeddings found! Vector search won't work."
+        )
+    elif chunks_with_embedding < total_chunks:
+        logger.warning(
+            f"\n   ⚠️  WARNING: {total_chunks - chunks_with_embedding} chunks missing embeddings"
+        )
 
-    print(f"\n{'='*60}")
-    print(f"📊 INDEXING SUMMARY")
-    print(f"{'='*60}")
-    print(f"   Processed: {processed}/{len(nodes)}")
-    print(f"   Failed: {failed}/{len(nodes)}")
-    print(f"   Total chunks created: {total_chunks_created}")
-    print(f"   Chunks with embeddings: {chunks_with_embedding}")
-    print(f"\n✅ Content indexing complete!")
-    print(f"💡 You can now use GraphRAG to query this content")
+    logger.info("\n✅ Content indexing complete!")
+    logger.info("💡 Run query_graphrag to search this content")
+
+
+def _configure_logging():
+    """Configure logging for CLI usage (only if not already configured)."""
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
 
 
 def main():
     """Main entry point."""
-    import sys
+    import argparse
 
-    # Parse command line arguments
-    limit = None
-    if len(sys.argv) > 1:
-        if sys.argv[1] in ["-h", "--help"]:
-            print("Usage: index_content.py [--limit N]")
-            print("\nOptions:")
-            print(
-                "  --limit N    Process only the first N posts/comments (for testing)"
-            )
-            print("  -h, --help  Show this help message")
-            print("\nExamples:")
-            print("  uv run linkedin_api/index_content.py           # Process all")
-            print("  uv run linkedin_api/index_content.py --limit 5  # Process first 5")
-            return
-        elif sys.argv[1] == "--limit" and len(sys.argv) > 2:
-            try:
-                limit = int(sys.argv[2])
-                print(f"⚠️  LIMIT MODE: Processing only first {limit} items")
-            except ValueError:
-                print(f"❌ Invalid limit value: {sys.argv[2]}")
-                print("Usage: index_content.py [--limit N]")
-                return
+    _configure_logging()
 
-    print("🚀 LinkedIn Content Indexing for GraphRAG")
-    print("=" * 60)
-    if limit:
-        print(f"🧪 TEST MODE: Limited to {limit} items")
+    parser = argparse.ArgumentParser(
+        description="Index LinkedIn content for GraphRAG",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  uv run python -m linkedin_api.index_content           # Process all unindexed
+  uv run python -m linkedin_api.index_content --limit 5 # Process first 5
+  uv run python -m linkedin_api.index_content -v        # Verbose output
+        """,
+    )
+    parser.add_argument(
+        "--limit", "-l", type=int, help="Process only first N items (for testing)"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Show detailed progress per item"
+    )
+    args = parser.parse_args()
+
+    logger.info("🚀 LinkedIn Content Indexing for GraphRAG")
+    logger.info("=" * 60)
+    if args.limit:
+        logger.info(f"🧪 TEST MODE: Limited to {args.limit} items")
+    if args.verbose:
+        logger.info("📢 Verbose mode enabled")
 
     # Connect to Neo4j
-    print(f"\n🔌 Connecting to Neo4j...")
-    print(f"   URI: {NEO4J_URI}")
-    print(f"   Database: {NEO4J_DATABASE}")
+    logger.info(f"\n🔌 Connecting to Neo4j at {NEO4J_URI}...")
 
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USERNAME, NEO4J_PASSWORD))
 
     try:
         driver.verify_connectivity()
-        print("   ✅ Connected successfully")
+        logger.info("   ✅ Connected")
     except Exception as e:
-        print(f"   ❌ Connection failed: {str(e)}")
+        logger.error(f"   ❌ Connection failed: {str(e)}")
         return
 
-    # Initialize embedder - fail immediately on error
-    print(f"\n🤖 Initializing embedding model...")
-    print(f"   Model: {EMBEDDING_MODEL}")
+    # Initialize embedder
+    logger.info(f"\n🤖 Initializing embedder ({EMBEDDING_MODEL})...")
     try:
         embedder = VertexAIEmbeddings(model=EMBEDDING_MODEL)
-        # Test the embedder with a simple query to verify it works and get actual dimensions
         test_embedding = embedder.embed_query("test")
         if not test_embedding or len(test_embedding) == 0:
             raise ValueError("Embedder returned empty test embedding")
 
-        # Get actual dimensions from the embedder
         actual_dimensions = len(test_embedding)
-        print(f"   ✅ Embedder initialized and tested successfully")
-        print(f"   Actual dimensions: {actual_dimensions}")
+        logger.info(f"   ✅ Ready (dimensions: {actual_dimensions})")
 
-        # Warn if different from expected, but use actual dimensions
         if actual_dimensions != EMBEDDING_DIMENSIONS:
-            msg = (
-                f"   ⚠️  Note: Using actual dimensions ({actual_dimensions}) "
-                f"instead of default ({EMBEDDING_DIMENSIONS})"
+            logger.info(
+                f"   Note: Using {actual_dimensions} dims (default: {EMBEDDING_DIMENSIONS})"
             )
-            print(msg)
     except Exception as e:
-        print(f"\n❌ FATAL ERROR: Failed to initialize embedder")
-        print(f"   Error: {str(e)}")
-        print(f"   Model: {EMBEDDING_MODEL}")
-        print(f"\n💡 Troubleshooting:")
-        print(
-            f"   1. Verify the model '{EMBEDDING_MODEL}' is available in your Vertex AI project"
-        )
-        print(
-            f"   2. Check GOOGLE_APPLICATION_CREDENTIALS is set or authentication is configured"
-        )
-        print(
-            f"   3. Try a different model: textembedding-gecko@002 or textembedding-gecko"
-        )
-        print(f"   4. Ensure Vertex AI API is enabled in your Google Cloud project")
+        logger.error(f"\n❌ FATAL: Embedder initialization failed")
+        logger.error(f"   Error: {str(e)}")
+        logger.error(f"\n💡 Check: model availability, GCP credentials, Vertex AI API")
         driver.close()
         raise RuntimeError(f"Embedder initialization failed: {str(e)}") from e
 
     # Index content
     try:
-        index_content_for_graphrag(driver, embedder, actual_dimensions, limit=limit)
+        index_content_for_graphrag(
+            driver, embedder, actual_dimensions, limit=args.limit, verbose=args.verbose
+        )
     finally:
         driver.close()
-        print("\n🔌 Connection closed")
+        logger.info("\n🔌 Connection closed")
 
 
 if __name__ == "__main__":
