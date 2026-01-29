@@ -154,7 +154,14 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
     SET post.author_name = $name,
         post.author_profile_url = $profile_url
 
-    // Create or merge Person node
+    // Update existing Person node linked to this post (CREATES or REPOSTS)
+    OPTIONAL MATCH (linked_person:Person)-[:CREATES|REPOSTS]->(post)
+    FOREACH (_ IN CASE WHEN linked_person IS NULL THEN [] ELSE [1] END |
+      SET linked_person.name = $name,
+          linked_person.profile_url = $profile_url
+    )
+
+    // Create or merge Person node by profile_url (fallback)
     MERGE (person:Person {profile_url: $profile_url})
     ON CREATE SET person.name = $name
     ON MATCH SET person.name = $name

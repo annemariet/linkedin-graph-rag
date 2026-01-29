@@ -139,20 +139,36 @@ def migrate_comment_urn(
             SET new += properties(old)
             SET new.urn = $new_urn
             SET new.url = $comment_url
-            WITH old, new
-            // Migrate outgoing relationships
-            MATCH (old)-[r]->(end)
-            MERGE (new)-[r2:COMMENTS_ON]->(end)
-            SET r2 = properties(r)
-            DELETE r
-            WITH old, new
-            // Migrate incoming relationships
-            MATCH (start)-[r]->(old)
-            MERGE (start)-[r2:CREATES]->(new)
-            SET r2 = properties(r)
-            DELETE r
-            DELETE old
-            RETURN count(*) as merged
+            CALL {
+                WITH old, new
+                // Migrate outgoing relationships (Comment -> Post/Comment)
+                MATCH (old)-[r:COMMENTS_ON]->(end)
+                MERGE (new)-[r2:COMMENTS_ON]->(end)
+                SET r2 = properties(r)
+                DELETE r
+                RETURN count(*) as outgoing_migrated
+            }
+            CALL {
+                WITH old, new
+                // Migrate incoming relationships (Person -> Comment)
+                MATCH (start)-[r:CREATES]->(old)
+                MERGE (start)-[r2:CREATES]->(new)
+                SET r2 = properties(r)
+                DELETE r
+                RETURN count(*) as creates_migrated
+            }
+            CALL {
+                WITH old, new
+                // Migrate reactions targeting the comment (Person -> Comment)
+                MATCH (start)-[r:REACTS_TO]->(old)
+                MERGE (start)-[r2:REACTS_TO]->(new)
+                SET r2 = properties(r)
+                DELETE r
+                RETURN count(*) as reacts_migrated
+            }
+            WITH old
+            DETACH DELETE old
+            RETURN 1 as merged
             """
             result = session.run(
                 merge_query, old_urn=old_urn, new_urn=new_urn, comment_url=comment_url

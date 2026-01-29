@@ -43,12 +43,22 @@ scalingo --app my-linkedin-graphrag env-set NEO4J_DATABASE="neo4j"
 scalingo --app my-linkedin-graphrag env-set EMBEDDING_MODEL="textembedding-gecko@002"
 scalingo --app my-linkedin-graphrag env-set LLM_MODEL="gemini-1.5-pro"
 scalingo --app my-linkedin-graphrag env-set VECTOR_INDEX_NAME="linkedin_content_index"
+scalingo --app my-linkedin-graphrag env-set VERTEX_PROJECT="your-gcp-project-id"
+scalingo --app my-linkedin-graphrag env-set VERTEX_LOCATION="europe-west9"
 
-# Google Cloud credentials (JSON key file content)
+# Google Cloud credentials
+# Option 1: Service Account Key (simpler, but not recommended by GCP)
 scalingo --app my-linkedin-graphrag env-set GOOGLE_APPLICATION_CREDENTIALS_JSON="$(cat path/to/your-service-account-key.json)"
+
+# Option 2: Workload Identity Federation (recommended, but requires setup)
+# If you've configured Workload Identity Federation, set the credential config file path:
+# scalingo --app my-linkedin-graphrag env-set GOOGLE_APPLICATION_CREDENTIALS="/path/to/workload-identity-credential-config.json"
 ```
 
-**Important**: The Gradio app automatically writes the JSON credentials to a temp file at runtime.
+**Important**: 
+- The Gradio app automatically writes JSON credentials from `GOOGLE_APPLICATION_CREDENTIALS_JSON` to a secure temp file at runtime.
+- **File Security**: The credentials file is created with `0600` permissions (read/write for owner only, no access for group/others) using `tempfile.mkstemp()` to prevent unauthorized access.
+- **Security Note**: Google Cloud recommends avoiding service account keys when possible. For Scalingo deployments, service account keys are a necessary compromise unless you set up Workload Identity Federation (which requires Scalingo to support OIDC). Consider using Google Cloud Run instead, which supports attached service accounts without keys.
 
 ### 3. Choose Deployment Method
 
@@ -101,10 +111,23 @@ scalingo --app my-linkedin-graphrag open
 
 ### Vertex AI Authentication
 
-The app handles `GOOGLE_APPLICATION_CREDENTIALS_JSON` automatically:
-- Set the env var with your service account JSON content
+The app supports two authentication methods:
+
+**Option 1: Service Account Key (Current Implementation)**
+- Set `GOOGLE_APPLICATION_CREDENTIALS_JSON` with your service account JSON content
 - App writes it to a temp file at startup
-- No manual file management needed
+- **Note**: Google Cloud recommends avoiding service account keys when possible
+
+**Option 2: Workload Identity Federation (Recommended)**
+- Configure Workload Identity Federation in Google Cloud
+- Set `GOOGLE_APPLICATION_CREDENTIALS` to point to the credential configuration file
+- Requires Scalingo to support OIDC (may not be available)
+- See: https://cloud.google.com/iam/docs/workload-identity-federation
+
+**Alternative: Use Google Cloud Run**
+- Cloud Run supports attached service accounts (no keys needed)
+- Better security posture than service account keys
+- Consider migrating if security is a priority
 
 
 ## Process Types

@@ -33,6 +33,7 @@ from linkedin_api.utils.urns import (
     parse_comment_urn,
 )
 from linkedin_api.analyze_activity import extract_statistics, print_statistics, save_statistics
+from linkedin_api.extract_resources import extract_urls_from_text
 
 # Resource type constants
 RESOURCE_REACTIONS = "socialActions/likes"
@@ -275,6 +276,10 @@ def process_post(element, activity, people, posts, relationships, skipped_by_rea
     }
     if content:
         post_props["content"] = content[:200]
+        # Extract URLs from full content before truncation
+        urls = extract_urls_from_text(content)
+        if urls:
+            post_props["extracted_urls"] = urls
     if original_post_urn:
         post_props["original_post_urn"] = original_post_urn
 
@@ -346,17 +351,24 @@ def process_comment(
     comment_url = comment_urn_to_post_url(comment_urn) or ""
 
     if comment_urn not in comments:
+        comment_props = {
+            "urn": comment_urn,
+            "comment_id": comment_id,
+            "text": comment_text[:200] if comment_text else "",
+            "timestamp": timestamp,
+            "created_at": format_timestamp(timestamp),
+            "url": comment_url,
+        }
+        # Extract URLs from full comment text before truncation
+        if comment_text:
+            urls = extract_urls_from_text(comment_text)
+            if urls:
+                comment_props["extracted_urls"] = urls
+
         comments[comment_urn] = {
             "id": comment_urn,
             "label": "Comment",
-            "properties": {
-                "urn": comment_urn,
-                "comment_id": comment_id,
-                "text": comment_text[:200] if comment_text else "",
-                "timestamp": timestamp,
-                "created_at": format_timestamp(timestamp),
-                "url": comment_url,
-            },
+            "properties": comment_props,
         }
 
     create_post_node(post_urn, posts)

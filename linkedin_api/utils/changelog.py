@@ -77,7 +77,7 @@ def fetch_changelog_data(
     resource_filter: Optional[List[str]] = None,
     filter_func: Optional[Callable[[dict], bool]] = None,
     batch_size: int = 50,
-    start_time: Optional[int] = 1764716400000,
+    start_time: Optional[int] = None,
     verbose: bool = True,
 ) -> List[dict]:
     """
@@ -91,8 +91,8 @@ def fetch_changelog_data(
         batch_size: Number of elements to fetch per request (default: 50)
         start_time: Optional start time in epoch milliseconds. Returns events
                    created after this time. LinkedIn keeps data for 28 days.
-                   If None, automatically loads from .last_run file.
-                   Default: 1764716400000 (Dec 3, 2025 00:00:00)
+                   If None, automatically loads from .last_run file, or falls back
+                   to DEFAULT_START_TIME if .last_run doesn't exist.
         verbose: If True, print progress messages (default: True)
 
     Returns:
