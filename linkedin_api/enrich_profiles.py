@@ -155,6 +155,7 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
     MATCH (post:Post {urn: $urn})
     SET post.author_name = $name,
         post.author_profile_url = $profile_url
+    WITH post
 
     // Update existing Person node linked to this post (CREATES or REPOSTS)
     OPTIONAL MATCH (linked_person:Person)-[:CREATES|REPOSTS]->(post)
@@ -173,7 +174,6 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
 
     RETURN post.urn as urn, person.profile_url as person_url
     """
-
     with driver.session(database=NEO4J_DATABASE) as session:
         result = session.run(
             query,
