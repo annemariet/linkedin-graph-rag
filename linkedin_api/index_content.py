@@ -197,9 +197,7 @@ def get_posts_and_comments(driver) -> List[Dict]:
         return nodes
 
 
-def create_chunks_batch(
-    tx, chunks_data: List[Dict]
-) -> List[str]:
+def create_chunks_batch(tx, chunks_data: List[Dict]) -> List[str]:
     """
     Create or update multiple Chunk nodes in a single transaction.
 
@@ -247,8 +245,11 @@ def store_embeddings_batch(tx, embeddings_data: List[Dict]) -> int:
 
 
 def index_content_for_graphrag(
-    driver, embedder, embedding_dimensions: int, limit: Optional[int] = None,
-    verbose: bool = False
+    driver,
+    embedder,
+    embedding_dimensions: int,
+    limit: Optional[int] = None,
+    verbose: bool = False,
 ):
     """
     Main function to index post and comment content for GraphRAG.
@@ -324,23 +325,27 @@ def index_content_for_graphrag(
             chunk_id = f"{urn}_chunk_{chunk_idx}"
 
             # Add to pending chunks
-            pending_chunks.append({
-                "chunk_id": chunk_id,
-                "text": chunk_text,
-                "source_urn": urn,
-                "chunk_index": chunk_idx,
-                "total_chunks": len(chunks),
-            })
+            pending_chunks.append(
+                {
+                    "chunk_id": chunk_id,
+                    "text": chunk_text,
+                    "source_urn": urn,
+                    "chunk_index": chunk_idx,
+                    "total_chunks": len(chunks),
+                }
+            )
 
             # Generate embedding
             try:
                 embedding = embedder.embed_query(chunk_text)
                 if not embedding or len(embedding) == 0:
                     raise ValueError("Empty embedding returned")
-                pending_embeddings.append({
-                    "chunk_id": chunk_id,
-                    "embedding": embedding,
-                })
+                pending_embeddings.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "embedding": embedding,
+                    }
+                )
             except Exception as e:
                 logger.error(f"\n❌ FATAL: Embedding failed for {chunk_id}")
                 logger.error(f"   Error: {str(e)}")
@@ -394,9 +399,9 @@ def _flush_batch(
 def _print_summary(driver, processed: int, failed: int, total: int):
     """Print final indexing summary with verification."""
     with driver.session(database=NEO4J_DATABASE) as session:
-        total_chunks = session.run(
-            "MATCH (c:Chunk) RETURN count(c) as count"
-        ).single()["count"]
+        total_chunks = session.run("MATCH (c:Chunk) RETURN count(c) as count").single()[
+            "count"
+        ]
         chunks_with_embedding = session.run(
             "MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) as count"
         ).single()["count"]
@@ -416,7 +421,9 @@ def _print_summary(driver, processed: int, failed: int, total: int):
         logger.info(f"   Embedding dimensions: {sample['dims']}")
 
     if chunks_with_embedding == 0:
-        logger.warning("\n   ⚠️  WARNING: No embeddings found! Vector search won't work.")
+        logger.warning(
+            "\n   ⚠️  WARNING: No embeddings found! Vector search won't work."
+        )
     elif chunks_with_embedding < total_chunks:
         logger.warning(
             f"\n   ⚠️  WARNING: {total_chunks - chunks_with_embedding} chunks missing embeddings"
@@ -492,8 +499,7 @@ Examples:
     # Index content
     try:
         index_content_for_graphrag(
-            driver, embedder, actual_dimensions,
-            limit=args.limit, verbose=args.verbose
+            driver, embedder, actual_dimensions, limit=args.limit, verbose=args.verbose
         )
     finally:
         driver.close()
