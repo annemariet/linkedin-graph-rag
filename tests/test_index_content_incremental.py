@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 from linkedin_api.index_content import (
     get_posts_and_comments,
     split_text_into_chunks,
-    create_chunk_node,
+    create_chunks_batch,
+    store_embeddings_batch,
 )
 
 
@@ -150,55 +151,83 @@ class TestGetPostsAndCommentsIncremental:
         assert nodes[0]["url"] == "https://linkedin.com/posts/valid"
 
 
-class TestCreateChunkNodeIdempotency:
-    """Test create_chunk_node idempotency behavior."""
+class TestCreateChunksBatchIdempotency:
+    """Test create_chunks_batch idempotency behavior."""
 
-    def test_create_chunk_node_is_idempotent(self):
-        """Test that calling create_chunk_node multiple times doesn't create duplicates."""
+    def test_create_chunks_batch_is_idempotent(self):
+        """Test that calling create_chunks_batch with same data is idempotent."""
         mock_tx = MagicMock()
         mock_result = MagicMock()
-        mock_result.single.return_value = {"node_id": 123, "chunk_id": "test_chunk_0"}
+        mock_result.__iter__.return_value = [
+            {"chunk_id": "test_chunk_0"},
+            {"chunk_id": "test_chunk_1"},
+        ]
         mock_tx.run.return_value = mock_result
+
+        chunks_data = [
+            {
+                "chunk_id": "test_chunk_0",
+                "text": "Test text 1",
+                "source_urn": "urn:li:activity:123",
+                "chunk_index": 0,
+                "total_chunks": 2,
+            },
+            {
+                "chunk_id": "test_chunk_1",
+                "text": "Test text 2",
+                "source_urn": "urn:li:activity:123",
+                "chunk_index": 1,
+                "total_chunks": 2,
+            },
+        ]
 
         # First call
-        node_id1 = create_chunk_node(
-            mock_tx,
-            chunk_id="test_chunk_0",
-            text="Test text",
-            source_urn="urn:li:activity:123",
-            chunk_index=0,
-            total_chunks=1,
-        )
+        ids1 = create_chunks_batch(mock_tx, chunks_data)
 
-        # Second call with same chunk_id - should be idempotent
-        node_id2 = create_chunk_node(
-            mock_tx,
-            chunk_id="test_chunk_0",
-            text="Updated text",
-            source_urn="urn:li:activity:123",
-            chunk_index=0,
-            total_chunks=1,
-        )
+        # Second call with same data - should be idempotent (MERGE behavior)
+        ids2 = create_chunks_batch(mock_tx, chunks_data)
 
-        # Should return same node_id (idempotent behavior)
-        assert node_id1 == 123
-        assert node_id2 == 123
+        assert ids1 == ["test_chunk_0", "test_chunk_1"]
+        assert ids2 == ["test_chunk_0", "test_chunk_1"]
 
-    def test_create_chunk_node_returns_node_id(self):
-        """Test that function returns the node ID for further operations."""
+    def test_create_chunks_batch_returns_chunk_ids(self):
+        """Test that function returns chunk IDs for reference."""
         mock_tx = MagicMock()
         mock_result = MagicMock()
-        mock_result.single.return_value = {"node_id": 456, "chunk_id": "test_chunk"}
+        mock_result.__iter__.return_value = [{"chunk_id": "test_chunk"}]
         mock_tx.run.return_value = mock_result
 
-        node_id = create_chunk_node(
-            mock_tx,
-            chunk_id="test_chunk",
-            text="Test text",
-            source_urn="urn:li:activity:456",
-            chunk_index=0,
-            total_chunks=1,
-        )
+        chunks_data = [
+            {
+                "chunk_id": "test_chunk",
+                "text": "Test text",
+                "source_urn": "urn:li:activity:456",
+                "chunk_index": 0,
+                "total_chunks": 1,
+            }
+        ]
 
-        assert node_id == 456
-        assert isinstance(node_id, int)
+        chunk_ids = create_chunks_batch(mock_tx, chunks_data)
+
+        assert chunk_ids == ["test_chunk"]
+
+
+class TestStoreEmbeddingsBatch:
+    """Test store_embeddings_batch functionality."""
+
+    def test_store_embeddings_batch_returns_count(self):
+        """Test that function returns count of updated chunks."""
+        mock_tx = MagicMock()
+        mock_result = MagicMock()
+        mock_result.single.return_value = {"updated": 3}
+        mock_tx.run.return_value = mock_result
+
+        embeddings_data = [
+            {"chunk_id": "chunk_0", "embedding": [0.1] * 768},
+            {"chunk_id": "chunk_1", "embedding": [0.2] * 768},
+            {"chunk_id": "chunk_2", "embedding": [0.3] * 768},
+        ]
+
+        updated = store_embeddings_batch(mock_tx, embeddings_data)
+
+        assert updated == 3
