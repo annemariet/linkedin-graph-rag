@@ -29,7 +29,9 @@ def _normalize_post_url(url: str) -> Optional[str]:
         return None
 
     if "urn:li:comment:" in url:
-        comment_url = comment_urn_to_post_url(url.replace("https://www.linkedin.com/feed/update/", ""))
+        comment_url = comment_urn_to_post_url(
+            url.replace("https://www.linkedin.com/feed/update/", "")
+        )
         if comment_url:
             return comment_url
 

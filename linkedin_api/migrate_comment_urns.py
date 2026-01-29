@@ -14,7 +14,7 @@ This script:
 """
 
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
@@ -60,32 +60,12 @@ def find_comments_with_incorrect_urns(driver) -> List[Dict]:
             parent_urn = record["parent_urn"]
             parent_labels = record["parent_labels"] or []
 
-            # Determine parent type from labels or URN
-            parent_type = None
             if parent_urn:
-                if "Post" in parent_labels:
-                    # Extract type from URN (activity, ugcPost, share, etc.)
-                    if parent_urn.startswith("urn:li:activity:"):
-                        parent_type = "activity"
-                    elif parent_urn.startswith("urn:li:ugcPost:"):
-                        parent_type = "ugcPost"
-                    elif parent_urn.startswith("urn:li:share:"):
-                        parent_type = "share"
-                    elif parent_urn.startswith("urn:li:groupPost:"):
-                        parent_type = "groupPost"
-                elif "Comment" in parent_labels:
+                if "Comment" in parent_labels:
                     # Parent is a comment - extract from its URN
                     parsed = parse_comment_urn(parent_urn)
                     if parsed and parsed.get("parent_urn"):
                         parent_urn = parsed["parent_urn"]
-                        if parent_urn.startswith("urn:li:activity:"):
-                            parent_type = "activity"
-                        elif parent_urn.startswith("urn:li:ugcPost:"):
-                            parent_type = "ugcPost"
-                        elif parent_urn.startswith("urn:li:share:"):
-                            parent_type = "share"
-                        elif parent_urn.startswith("urn:li:groupPost:"):
-                            parent_type = "groupPost"
 
             if not comment_id:
                 # Try to extract from old_urn
@@ -104,9 +84,7 @@ def find_comments_with_incorrect_urns(driver) -> List[Dict]:
         return comments
 
 
-def migrate_comment_urn(
-    driver, old_urn: str, new_urn: str, comment_url: str
-) -> bool:
+def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) -> bool:
     """
     Migrate a Comment node from old URN to new URN.
 

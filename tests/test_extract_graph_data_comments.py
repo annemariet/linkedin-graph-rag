@@ -11,9 +11,7 @@ def _run_process_comment(activity, element):
     relationships = []
     skipped = defaultdict(int)
 
-    process_comment(
-        element, activity, people, posts, comments, relationships, skipped
-    )
+    process_comment(element, activity, people, posts, comments, relationships, skipped)
     return people, posts, comments, relationships, skipped
 
 
@@ -39,18 +37,12 @@ def test_top_level_comment_links_to_post_and_creates_comment():
         "type": "CREATES",
         "from": actor,
         "to": comment_urn,
-    } in [
-        {"type": r["type"], "from": r["from"], "to": r["to"]}
-        for r in relationships
-    ]
+    } in [{"type": r["type"], "from": r["from"], "to": r["to"]} for r in relationships]
     assert {
         "type": "COMMENTS_ON",
         "from": comment_urn,
         "to": post_urn,
-    } in [
-        {"type": r["type"], "from": r["from"], "to": r["to"]}
-        for r in relationships
-    ]
+    } in [{"type": r["type"], "from": r["from"], "to": r["to"]} for r in relationships]
 
 
 def test_reply_comment_links_to_parent_comment_urn():
@@ -79,17 +71,13 @@ def test_reply_comment_links_to_parent_comment_urn():
         "type": "COMMENTS_ON",
         "from": comment_urn,
         "to": parent_comment_urn,
-    } in [
-        {"type": r["type"], "from": r["from"], "to": r["to"]}
-        for r in relationships
-    ]
+    } in [{"type": r["type"], "from": r["from"], "to": r["to"]} for r in relationships]
     assert {
         "type": "COMMENTS_ON",
         "from": comment_urn,
         "to": post_urn,
     } not in [
-        {"type": r["type"], "from": r["from"], "to": r["to"]}
-        for r in relationships
+        {"type": r["type"], "from": r["from"], "to": r["to"]} for r in relationships
     ]
 
     expected_url = comment_urn_to_post_url(parent_comment_urn) or ""
@@ -122,7 +110,4 @@ def test_reply_comment_links_when_parent_id_only():
         "type": "COMMENTS_ON",
         "from": comment_urn,
         "to": parent_comment_urn,
-    } in [
-        {"type": r["type"], "from": r["from"], "to": r["to"]}
-        for r in relationships
-    ]
+    } in [{"type": r["type"], "from": r["from"], "to": r["to"]} for r in relationships]

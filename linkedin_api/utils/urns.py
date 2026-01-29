@@ -59,7 +59,7 @@ def parse_comment_urn(comment_urn: str) -> Optional[dict]:
         return None
 
     # Extract the part after "urn:li:comment:"
-    comment_part = comment_urn[len("urn:li:comment:"):]
+    comment_part = comment_urn[len("urn:li:comment:") :]
 
     # Check if it's the simple format (just comment_id) - old format
     if not comment_part.startswith("("):

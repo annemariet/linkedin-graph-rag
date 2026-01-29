@@ -32,7 +32,11 @@ from linkedin_api.utils.urns import (
     comment_urn_to_post_url,
     parse_comment_urn,
 )
-from linkedin_api.analyze_activity import extract_statistics, print_statistics, save_statistics
+from linkedin_api.analyze_activity import (
+    extract_statistics,
+    print_statistics,
+    save_statistics,
+)
 from linkedin_api.extract_resources import extract_urls_from_text
 
 # Resource type constants
@@ -132,6 +136,7 @@ def _extract_post_urn_for_reaction(element, activity):
             return parts[1]
 
     return ""
+
 
 def _is_delete_action(element):
     """Check whether the changelog element represents a delete action."""
