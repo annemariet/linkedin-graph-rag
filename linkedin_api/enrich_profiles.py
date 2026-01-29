@@ -7,8 +7,6 @@ on the Post nodes in Neo4j.
 """
 
 import os
-import json
-import time
 from typing import Dict, Optional
 
 import requests
@@ -22,36 +20,6 @@ NEO4J_URI = os.getenv("NEO4J_URI") or "neo4j://localhost:7687"
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME") or "neo4j"
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD") or "password"
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE") or "neo4j"
-
-# region agent log
-_AGENT_LOG_PATH = "/Users/lucy/Dev/amai-lab/projects/linkedin/.cursor/debug.log"
-
-
-def _agent_log(
-    *, run_id: str, hypothesis_id: str, location: str, message: str, data: dict
-):
-    try:
-        with open(_AGENT_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "sessionId": "debug-session",
-                        "runId": run_id,
-                        "hypothesisId": hypothesis_id,
-                        "location": location,
-                        "message": message,
-                        "data": data,
-                        "timestamp": int(time.time() * 1000),
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-    except Exception:
-        pass
-
-
-# endregion
 
 
 def extract_author_profile(url: str) -> Optional[Dict[str, str]]:
@@ -155,18 +123,6 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
         post_urn: URN of the post to update
         author_info: Dict with 'name' and 'profile_url'
     """
-    _agent_log(
-        run_id="pre-fix",
-        hypothesis_id="H1",
-        location="linkedin_api/enrich_profiles.py:update_post_author:entry",
-        message="update_post_author called",
-        data={
-            "post_urn_prefix": post_urn[:32] if isinstance(post_urn, str) else None,
-            "has_name": bool(author_info.get("name")),
-            "has_profile_url": bool(author_info.get("profile_url")),
-            "profile_url_prefix": (author_info.get("profile_url") or "")[:32],
-        },
-    )
     query = """
     MATCH (post:Post {urn: $urn})
     SET post.author_name = $name,
@@ -190,43 +146,14 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
 
     RETURN post.urn as urn, person.profile_url as person_url
     """
-    _agent_log(
-        run_id="pre-fix",
-        hypothesis_id="H1",
-        location="linkedin_api/enrich_profiles.py:update_post_author:before_run",
-        message="Running Cypher to update post author",
-        data={
-            "query_first_10_lines": "\n".join(query.strip("\n").splitlines()[:10]),
-            "contains_with_post": "WITH post" in query,
-        },
-    )
-
     with driver.session(database=NEO4J_DATABASE) as session:
-        try:
-            result = session.run(
-                query,
-                urn=post_urn,
-                name=author_info["name"],
-                profile_url=author_info["profile_url"],
-            )
-            ok = result.single() is not None
-            _agent_log(
-                run_id="pre-fix",
-                hypothesis_id="H1",
-                location="linkedin_api/enrich_profiles.py:update_post_author:after_run",
-                message="Cypher executed",
-                data={"ok": ok},
-            )
-            return ok
-        except Exception as e:
-            _agent_log(
-                run_id="pre-fix",
-                hypothesis_id="H1",
-                location="linkedin_api/enrich_profiles.py:update_post_author:error",
-                message="Cypher execution failed",
-                data={"error_type": type(e).__name__, "error": str(e)[:200]},
-            )
-            raise
+        result = session.run(
+            query,
+            urn=post_urn,
+            name=author_info["name"],
+            profile_url=author_info["profile_url"],
+        )
+        return result.single() is not None
 
 
 def main():
