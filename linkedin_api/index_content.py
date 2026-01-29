@@ -34,12 +34,7 @@ from neo4j_graphrag.indexes import create_vector_index
 
 dotenv.load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    stream=sys.stdout,
-)
+# Module-level logger (configured in main() when run as script)
 logger = logging.getLogger(__name__)
 
 NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
@@ -433,9 +428,20 @@ def _print_summary(driver, processed: int, failed: int, total: int):
     logger.info("💡 Run query_graphrag to search this content")
 
 
+def _configure_logging():
+    """Configure logging for CLI usage (only if not already configured)."""
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+
+
 def main():
     """Main entry point."""
     import argparse
+
+    _configure_logging()
 
     parser = argparse.ArgumentParser(
         description="Index LinkedIn content for GraphRAG",
