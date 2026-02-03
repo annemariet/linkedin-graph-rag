@@ -3,11 +3,15 @@
 Enrich Post nodes with author profile information by scraping LinkedIn URLs.
 
 Extracts author name and profile URL from post HTML and stores them as properties
-on the Post nodes in Neo4j.
+on the Post nodes in Neo4j. Can fetch once per URL and parse author + post content
+from the same HTML; optionally cache raw HTML for reuse.
 """
 
+import hashlib
 import os
-from typing import Dict, Optional
+import re
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,6 +20,57 @@ from neo4j import GraphDatabase
 from linkedin_api.utils.urns import comment_urn_to_post_url
 
 load_dotenv()
+
+# Dir for caching fetched HTML (optional): outputs/review/cache/
+_CACHE_DIR: Optional[Path] = None
+
+
+def _post_html_cache_dir() -> Optional[Path]:
+    global _CACHE_DIR
+    if _CACHE_DIR is None:
+        base = Path(__file__).resolve().parent.parent
+        d = base / "outputs" / "review" / "cache"
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            _CACHE_DIR = d
+        except OSError:
+            _CACHE_DIR = False
+    return _CACHE_DIR if _CACHE_DIR else None
+
+
+def _url_to_cache_key(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()[:32]
+
+
+def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
+    """Render cached HTML with Playwright and save a screenshot; return png_path if successful."""
+    if not html_path.exists() or png_path.exists():
+        return png_path if png_path.exists() else None
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(viewport={"width": 800, "height": 900})
+                page.goto(f"file://{html_path.resolve()}", wait_until="domcontentloaded", timeout=8000)
+                page.screenshot(path=str(png_path), full_page=False)
+                return png_path
+            finally:
+                browser.close()
+    except Exception:
+        return None
+
+
+# Shared selectors for post content (same as index_content / extract_resources)
+_CONTENT_SELECTORS = [
+    "article[data-id]",
+    ".feed-shared-update-v2__description",
+    ".feed-shared-text",
+    '[data-test-id="main-feed-activity-card"]',
+]
 
 NEO4J_URI = os.getenv("NEO4J_URI") or "neo4j://localhost:7687"
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME") or "neo4j"
@@ -39,8 +94,133 @@ def _normalize_post_url(url: str) -> Optional[str]:
 
 
 def _is_private_post_url(url: str) -> bool:
-    """Skip URLs that are not publicly accessible."""
-    return "urn:li:groupPost:" in url or "urn:li:activity:" in url
+    """Skip URLs that are not publicly accessible (e.g. group posts). activity: and share:/ugcPost: are normal feed posts."""
+    return "urn:li:groupPost:" in url
+
+
+def _parse_author_from_soup(soup: BeautifulSoup) -> Optional[Dict[str, str]]:
+    """Extract author name and profile_url from parsed post HTML."""
+    for link in soup.find_all("a", href=True):
+        href = link["href"]
+        if "/in/" not in href or ("feed-actor-name" not in href and "actor-name" not in href):
+            continue
+        profile_url = link["href"].split("?")[0]
+        profile_url = re.sub(
+            r"https?://[a-z]{2}\.linkedin\.com",
+            "https://www.linkedin.com",
+            profile_url,
+        )
+        if not profile_url.startswith("https://www.linkedin.com") and "//linkedin.com" in profile_url:
+            profile_url = profile_url.replace("//linkedin.com", "//www.linkedin.com")
+        name = (
+            link.get_text(strip=True)
+            if link.string is None
+            else (link.string or "").strip()
+        )
+        if name and 1 < len(name) < 100:
+            return {"name": name, "profile_url": profile_url}
+    return None
+
+
+def _parse_content_from_soup(soup: BeautifulSoup) -> str:
+    """Extract post body text from parsed HTML (same logic as index_content / extract_resources)."""
+    content_text = []
+    for selector in _CONTENT_SELECTORS:
+        for elem in soup.select(selector):
+            text = elem.get_text(strip=True)
+            if text and len(text) > 20:
+                content_text.append(text)
+    if content_text:
+        return "\n".join(content_text)
+    og = soup.find("meta", property="og:description")
+    if og and og.get("content"):
+        content_text.append(og["content"])
+    title = soup.find("title")
+    if title:
+        t = title.get_text(strip=True)
+        if " | " in t:
+            content_text.append(t.split(" | ")[0])
+    return "\n".join(content_text) if content_text else ""
+
+
+def fetch_post_page(
+    url: str,
+    *,
+    use_cache: bool = True,
+    save_to_cache: bool = True,
+) -> Dict[str, Any]:
+    """
+    Fetch a LinkedIn post URL once; parse author and content from the same HTML.
+    Optionally read/write raw HTML under outputs/review/cache/ to avoid repeated requests.
+
+    Returns:
+        dict with: url_tried, normalized_url, status_code, html (raw), content (parsed text),
+        author (dict or None), error, skip_reason. If from cache, status_code may be None.
+    """
+    out = {
+        "url_tried": url or "",
+        "normalized_url": None,
+        "status_code": None,
+        "html": None,
+        "content": "",
+        "author": None,
+        "error": None,
+        "skip_reason": None,
+        "from_cache": False,
+    }
+    if not url:
+        out["error"] = "No URL provided."
+        return out
+    normalized = _normalize_post_url(url)
+    out["normalized_url"] = normalized
+    if not normalized:
+        out["error"] = "Could not normalize URL (e.g. comment URN could not be resolved to post URL)."
+        return out
+    if _is_private_post_url(normalized):
+        out["skip_reason"] = "Private or group post URL; not fetched."
+        return out
+
+    cache_dir = _post_html_cache_dir() if (use_cache or save_to_cache) else None
+    cache_key = _url_to_cache_key(normalized)
+    cached_path = (cache_dir / f"{cache_key}.html") if cache_dir else None
+
+    if use_cache and cached_path and cached_path.exists():
+        try:
+            raw = cached_path.read_text(encoding="utf-8", errors="replace")
+            out["html"] = raw
+            out["from_cache"] = True
+            soup = BeautifulSoup(raw, "html.parser")
+            out["author"] = _parse_author_from_soup(soup)
+            out["content"] = _parse_content_from_soup(soup)
+            return out
+        except Exception as e:
+            out["error"] = f"Cache read failed: {e}"
+            out["html"] = None
+
+    try:
+        response = requests.get(normalized, timeout=10, allow_redirects=True)
+        out["status_code"] = response.status_code
+        if response.status_code == 404:
+            out["error"] = "Not found (404)."
+            return out
+        response.raise_for_status()
+        raw = response.text
+        out["html"] = raw
+        if save_to_cache and cached_path:
+            try:
+                cached_path.write_text(raw, encoding="utf-8")
+            except OSError:
+                pass
+        soup = BeautifulSoup(raw, "html.parser")
+        out["author"] = _parse_author_from_soup(soup)
+        out["content"] = _parse_content_from_soup(soup)
+        return out
+    except requests.exceptions.HTTPError as e:
+        out["error"] = f"HTTP error: {e}"
+        return out
+    except Exception as e:
+        out["error"] = str(e)
+        return out
 
 
 def extract_author_profile(url: str) -> Optional[Dict[str, str]]:
@@ -110,6 +290,57 @@ def extract_author_profile(url: str) -> Optional[Dict[str, str]]:
     except Exception as e:
         print(f"   ⚠️  Error extracting author from {url}: {str(e)}")
         return None
+
+
+def get_thumbnail_path_for_url(url: str) -> Optional[str]:
+    """
+    Return path to a PNG thumbnail of the post page, or None.
+    Requires HTML to be already cached (e.g. after fetch_post_page or extract_author_profile_with_details).
+    Uses Playwright to screenshot the cached HTML file; if playwright is not installed, returns None.
+    """
+    if not url:
+        return None
+    normalized = _normalize_post_url(url)
+    if not normalized or _is_private_post_url(normalized):
+        return None
+    cache_dir = _post_html_cache_dir()
+    if not cache_dir:
+        return None
+    cache_key = _url_to_cache_key(normalized)
+    html_path = cache_dir / f"{cache_key}.html"
+    png_path = cache_dir / f"{cache_key}.png"
+    result = _ensure_thumbnail(html_path, png_path)
+    return str(result) if result else None
+
+
+def fetch_post_page_for_ui(
+    url: str, *, use_cache: bool = True, save_to_cache: bool = True
+) -> Dict[str, Any]:
+    """
+    Fetch once and return author + content for UI. Same as fetch_post_page;
+    name clarifies use. Result includes content (parsed post text) and author.
+    """
+    return fetch_post_page(url, use_cache=use_cache, save_to_cache=save_to_cache)
+
+
+def extract_author_profile_with_details(url: str) -> Dict:
+    """
+    Extract author with details for UI (and parsed content from same fetch).
+    Uses single fetch; returns url_tried, normalized_url, status_code, author,
+    content (post text), error, skip_reason, from_cache.
+    """
+    result = fetch_post_page(url, use_cache=True, save_to_cache=True)
+    # Keep same keys UI expects; add content for resources
+    return {
+        "url_tried": result["url_tried"],
+        "normalized_url": result["normalized_url"],
+        "status_code": result["status_code"],
+        "author": result["author"],
+        "content": result.get("content") or "",
+        "error": result["error"],
+        "skip_reason": result["skip_reason"],
+        "from_cache": result.get("from_cache", False),
+    }
 
 
 def get_posts_without_author(driver, limit: Optional[int] = None) -> list:

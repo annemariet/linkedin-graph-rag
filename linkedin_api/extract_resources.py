@@ -18,12 +18,17 @@ from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
 
+def _is_comment_feed_url(url: str) -> bool:
+    """True if URL is a feed/update with a comment URN (not a post); such URLs don't return post content."""
+    return bool(url and "urn:li:comment:" in url)
+
+
 def fetch_post_content_from_url(url: str) -> Optional[str]:
     """
     Fetch full post content from a LinkedIn post URL.
 
     Args:
-        url: LinkedIn post URL
+        url: LinkedIn post URL (must be a post URN in the path, not a comment URN)
 
     Returns:
         Extracted text content or None if extraction fails
@@ -615,7 +620,7 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
                 # Fallback 2: fetch from post URL if no URLs found or content seems truncated
                 if not urls or is_truncated:
                     post_url = props.get("url", "")
-                    if post_url:
+                    if post_url and not _is_comment_feed_url(post_url):
                         print(f"   🔄 Fetching content from post URL: {post_url}")
                         full_content = fetch_post_content_from_url(post_url)
                         if full_content:
@@ -765,9 +770,10 @@ def enrich_posts_with_resources(
                 is_truncated = True
 
             # Fallback: fetch from post URL if no URLs found or content seems truncated
-            if (not urls or is_truncated) and post.get("url"):
-                print(f"   🔄 Fetching content from post URL: {post['url']}")
-                full_content = fetch_post_content_from_url(post["url"])
+            post_url = post.get("url")
+            if (not urls or is_truncated) and post_url and not _is_comment_feed_url(post_url):
+                print(f"   🔄 Fetching content from post URL: {post_url}")
+                full_content = fetch_post_content_from_url(post_url)
                 if full_content:
                     urls = extract_urls_from_text(full_content)
             if urls:
