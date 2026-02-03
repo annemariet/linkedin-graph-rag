@@ -10,6 +10,13 @@ import getpass
 import os
 
 try:
+    import dotenv
+except ImportError:
+    pass
+else:
+    dotenv.load_dotenv()
+
+try:
     import keyring  # type: ignore[import-unresolved]
 except ImportError:
     print("❌ keyring library not installed")
@@ -25,7 +32,7 @@ def main():
     print("=" * 50)
 
     SERVICE = "LINKEDIN_ACCESS_TOKEN"
-    ACCOUNT = os.getenv("LINKEDIN_ACCOUNT")
+    ACCOUNT = os.environ.get("LINKEDIN_ACCOUNT")
 
     # Check if token already exists
     existing = keyring.get_password(SERVICE, ACCOUNT) or get_access_token()
@@ -58,6 +65,13 @@ def main():
             sys.exit(1)
 
     # Store in keyring
+    if not ACCOUNT:
+        print(
+            "\n⚠️  LINKEDIN_ACCOUNT is not set. The token will be stored under account 'None'."
+        )
+        print(
+            "   Set LINKEDIN_ACCOUNT in .env (e.g. your email) so the app uses the same account to read the token."
+        )
     print(f"\n💾 Storing token in keyring... (length: {len(token)})")
     try:
         keyring.set_password(SERVICE, ACCOUNT, token)

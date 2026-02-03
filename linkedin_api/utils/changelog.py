@@ -16,6 +16,12 @@ DEFAULT_START_TIME = 1764716400000  # Dec 3, 2025 00:00:00
 LAST_RUN_FILE = Path(__file__).parent.parent.parent / ".last_run"
 
 
+class TokenExpiredError(Exception):
+    """Raised when the LinkedIn API returns 401 EXPIRED_ACCESS_TOKEN."""
+
+    pass
+
+
 def get_last_processed_timestamp() -> Optional[int]:
     """
     Read the last processed timestamp from .last_run file.
@@ -149,6 +155,8 @@ def fetch_changelog_data(
                 if verbose:
                     print(f"❌ Error: {response.status_code}")
                     print(f"Response: {response.text[:200]}...")
+                if response.status_code == 401 and "EXPIRED_ACCESS_TOKEN" in response.text:
+                    raise TokenExpiredError("LinkedIn access token has expired")
                 break
 
             data = response.json()
@@ -196,6 +204,8 @@ def fetch_changelog_data(
 
             start += batch_size
 
+        except TokenExpiredError:
+            raise
         except Exception as e:
             if verbose:
                 print(f"❌ Exception: {str(e)}")
