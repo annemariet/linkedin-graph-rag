@@ -380,20 +380,8 @@ def main():
     )
     port = int(os.getenv("PORT", 7860))
     host = os.getenv("HOST", "0.0.0.0")
-    # Auto-reload on code changes (disable in production by setting GRADIO_WATCH=false)
-    watch = (
-        ["linkedin_api"]
-        if os.getenv("GRADIO_WATCH", "true").lower() != "false"
-        else None
-    )
-    logger.info(f"Starting Gradio app on {host}:{port} (watch={watch is not None})")
-    demo.launch(
-        server_name=host,
-        server_port=port,
-        share=False,
-        show_error=True,
-        watch=watch,
-    )
+    logger.info(f"Starting Gradio app on {host}:{port}")
+    demo.launch(server_name=host, server_port=port, share=False, show_error=True)
 
 
 if __name__ == "__main__":
