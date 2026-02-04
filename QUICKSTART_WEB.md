@@ -18,6 +18,8 @@ uv run python -m linkedin_api.gradio_app
 
 Visit `http://localhost:7860` in your browser.
 
+**Development:** Auto-reload is a Gradio **CLI** feature (there is no `watch` argument in `launch()`). Run `uv run gradio linkedin_api/gradio_app.py` and pass `--demo-name` if your demo variable has another name. Our app builds the demo in `main()`, so to use CLI reload you’d need a module-level `demo`; until then, restart the process to pick up code changes.
+
 ## Features
 
 - **Natural language queries** - Ask questions about your LinkedIn content
