@@ -166,7 +166,10 @@ def _format_author_result(details: dict) -> str:
         return "\n".join(lines)
     if details.get("author"):
         lines.append("Author:")
-        lines.append(json.dumps(details["author"], indent=2))
+        try:
+            lines.append(json.dumps(details["author"], indent=2, default=str))
+        except (TypeError, ValueError):
+            lines.append(str(details["author"]))
         return "\n".join(lines)
     if details.get("error"):
         lines.append(f"Result: {details['error']}")
@@ -749,28 +752,44 @@ def create_review_interface():
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
             return "No item."
-        author_text, _ = _enrichment_preview(queue[index], include_thumbnail=False)
-        return author_text
+        try:
+            author_text, _, _ = _enrichment_preview(
+                queue[index], include_thumbnail=False
+            )
+            return author_text
+        except Exception as e:
+            logger.exception("Extract author failed")
+            return f"Error extracting author:\n{type(e).__name__}: {e}"
 
     def on_extract_resources(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
             return "No item."
-        _, resources_text = _enrichment_preview(queue[index], include_thumbnail=False)
-        return resources_text
+        try:
+            _, resources_text, _ = _enrichment_preview(
+                queue[index], include_thumbnail=False
+            )
+            return resources_text
+        except Exception as e:
+            logger.exception("Extract resources failed")
+            return f"Error extracting resources:\n{type(e).__name__}: {e}"
 
     def on_load_thumbnail(state):
         """Load thumbnail for current item only (on-demand, can be slow)."""
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
             return None
-        item = queue[index]
-        preview = item.get("corrected_json") or item.get("extracted_json") or {}
-        raw = item.get("raw_json") or {}
-        url = _get_post_url_from_extracted(preview)
-        if not url:
-            url = _get_post_url_from_raw(raw)
-        return get_thumbnail_path_for_url(url) if url else None
+        try:
+            item = queue[index]
+            preview = item.get("corrected_json") or item.get("extracted_json") or {}
+            raw = item.get("raw_json") or {}
+            url = _get_post_url_from_extracted(preview)
+            if not url:
+                url = _get_post_url_from_raw(raw)
+            return get_thumbnail_path_for_url(url) if url else None
+        except Exception as e:
+            logger.exception("Load thumbnail failed")
+            return None
 
     def on_export_fixtures():
         n = export_fixtures()
