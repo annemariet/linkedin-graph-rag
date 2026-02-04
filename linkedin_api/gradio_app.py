@@ -38,8 +38,12 @@ from linkedin_api.query_graphrag import (
     create_vector_retriever,
 )
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging (visible in the terminal where you run the app)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -275,7 +279,9 @@ def get_database_stats(services: GraphRAGServices) -> str:
 def create_query_interface():
     """Build the GraphRAG query Blocks (lazy-init Neo4j/Vertex). Used as second tab."""
     with gr.Blocks(title="GraphRAG Query", theme=gr.themes.Soft()) as demo:
-        gr.Markdown("# GraphRAG Query\nQuery your indexed LinkedIn content. Initialize once to connect.")
+        gr.Markdown(
+            "# GraphRAG Query\nQuery your indexed LinkedIn content. Initialize once to connect."
+        )
 
         services_state = gr.State(value=None)
 

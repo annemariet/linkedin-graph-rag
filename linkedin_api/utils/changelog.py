@@ -5,10 +5,13 @@ This module provides shared functions for fetching changelog data from the
 LinkedIn Member Data Portability API, handling pagination, filtering, and errors.
 """
 
+import logging
 from pathlib import Path
 from time import time
 from typing import List, Optional, Callable
 from linkedin_api.utils.auth import build_linkedin_session, get_access_token
+
+logger = logging.getLogger(__name__)
 
 
 BASE_URL = "https://api.linkedin.com/rest"
@@ -136,6 +139,8 @@ def fetch_changelog_data(
         try:
             if verbose:
                 print(f"   📡 Fetching batch starting at {start}...")
+            else:
+                logger.info("Fetching changelog batch start=%s...", start)
 
             params = {
                 "q": "memberAndApplication",
@@ -155,7 +160,10 @@ def fetch_changelog_data(
                 if verbose:
                     print(f"❌ Error: {response.status_code}")
                     print(f"Response: {response.text[:200]}...")
-                if response.status_code == 401 and "EXPIRED_ACCESS_TOKEN" in response.text:
+                if (
+                    response.status_code == 401
+                    and "EXPIRED_ACCESS_TOKEN" in response.text
+                ):
                     raise TokenExpiredError("LinkedIn access token has expired")
                 break
 
@@ -186,6 +194,12 @@ def fetch_changelog_data(
             if verbose:
                 total_filtered = len(all_elements)
                 print(f"   ✅ Got {len(elements)} elements (total: {total_filtered})")
+            else:
+                logger.info(
+                    "Changelog batch: got %s elements (total: %s)",
+                    len(elements),
+                    len(all_elements),
+                )
 
             # Check for more pages
             paging = data.get("paging", {})

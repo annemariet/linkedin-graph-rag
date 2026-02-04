@@ -223,11 +223,18 @@ def process_reaction(
     is_delete = _is_delete_action(element)
     if trace is not None:
         _add_trace(trace, "activity.root", activity.get("root"), "post_urn_candidate")
-        _add_trace(trace, "activity.object", activity.get("object"), "post_urn_candidate")
+        _add_trace(
+            trace, "activity.object", activity.get("object"), "post_urn_candidate"
+        )
         _add_trace(trace, "activity.reactionType", reaction_type, "reaction_type")
         _add_trace(trace, "element.actor", element.get("actor"), "actor")
         _add_trace(trace, "activity.actor", activity.get("actor"), "actor")
-        _add_trace(trace, "activity.created.time", activity.get("created", {}).get("time"), "timestamp")
+        _add_trace(
+            trace,
+            "activity.created.time",
+            activity.get("created", {}).get("time"),
+            "timestamp",
+        )
 
     if not post_urn:
         skipped_by_reason[f"reaction_no_post_urn_{resource_name}"] += 1
@@ -270,10 +277,27 @@ def process_post(
     if trace is not None:
         _add_trace(trace, "activity.id", post_urn, "post_urn")
         _add_trace(trace, "activity.author", activity.get("author"), "author")
-        _add_trace(trace, "activity.created.time", activity.get("created", {}).get("time"), "timestamp")
-        share_content = activity.get("specificContent", {}).get("com.linkedin.ugc.ShareContent", {})
-        _add_trace(trace, "activity.specificContent...shareCommentary.text", share_content.get("shareCommentary", {}).get("text", "")[:100], "content")
-        _add_trace(trace, "activity.responseContext.parent", activity.get("responseContext", {}).get("parent"), "original_post_urn")
+        _add_trace(
+            trace,
+            "activity.created.time",
+            activity.get("created", {}).get("time"),
+            "timestamp",
+        )
+        share_content = activity.get("specificContent", {}).get(
+            "com.linkedin.ugc.ShareContent", {}
+        )
+        _add_trace(
+            trace,
+            "activity.specificContent...shareCommentary.text",
+            share_content.get("shareCommentary", {}).get("text", "")[:100],
+            "content",
+        )
+        _add_trace(
+            trace,
+            "activity.responseContext.parent",
+            activity.get("responseContext", {}).get("parent"),
+            "original_post_urn",
+        )
 
     if not post_urn:
         skipped_by_reason[f"post_no_id_{resource_name}"] += 1
@@ -374,7 +398,12 @@ def process_comment(
         _add_trace(trace, "activity.object", post_urn, "post_urn")
         _add_trace(trace, "element.actor", element.get("actor"), "actor")
         _add_trace(trace, "activity.actor", activity.get("actor"), "actor")
-        _add_trace(trace, "activity.message.text", activity.get("message", {}).get("text", "")[:100], "comment_text")
+        _add_trace(
+            trace,
+            "activity.message.text",
+            activity.get("message", {}).get("text", "")[:100],
+            "comment_text",
+        )
 
     if not comment_id:
         skipped_by_reason[f"comment_no_id_{resource_name}"] += 1
@@ -482,9 +511,16 @@ def process_instant_repost(
     reposted_share = activity.get("repostedContent", {}).get("share", "")
     actor = extract_actor(element, activity)
     if trace is not None:
-        _add_trace(trace, "activity.repostedContent.share", reposted_share, "reposted_share")
+        _add_trace(
+            trace, "activity.repostedContent.share", reposted_share, "reposted_share"
+        )
         _add_trace(trace, "element.actor", element.get("actor"), "actor")
-        _add_trace(trace, "activity.created.time", activity.get("created", {}).get("time"), "timestamp")
+        _add_trace(
+            trace,
+            "activity.created.time",
+            activity.get("created", {}).get("time"),
+            "timestamp",
+        )
 
     if not reposted_share:
         skipped_by_reason[f"instant_repost_no_share_{resource_name}"] += 1

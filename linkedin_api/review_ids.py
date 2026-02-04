@@ -7,7 +7,6 @@ upsert and resume review state without duplicates.
 
 import hashlib
 import json
-from typing import Any
 
 
 def compute_element_id(element: dict) -> str:

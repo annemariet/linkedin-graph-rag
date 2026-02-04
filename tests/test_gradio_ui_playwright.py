@@ -36,6 +36,7 @@ def test_gradio_review_ui_loads():
     """Start review-only Gradio app in subprocess; use Playwright to check page content."""
     pytest.importorskip("playwright")
     from playwright.sync_api import sync_playwright
+
     launch_script = """
 import os
 os.environ.setdefault("PORT", "7862")
@@ -55,25 +56,39 @@ demo.launch(server_name="127.0.0.1", server_port=7862, share=False)
             stderr = proc.stderr.read().decode() if proc.stderr else ""
             proc.terminate()
             proc.wait(timeout=5)
-            pytest.fail(f"Server did not become ready on port {TEST_PORT}. stderr: {stderr[:500]}")
+            pytest.fail(
+                f"Server did not become ready on port {TEST_PORT}. stderr: {stderr[:500]}"
+            )
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 try:
                     page = browser.new_page()
-                    page.goto(f"http://127.0.0.1:{TEST_PORT}", wait_until="domcontentloaded", timeout=15000)
+                    page.goto(
+                        f"http://127.0.0.1:{TEST_PORT}",
+                        wait_until="domcontentloaded",
+                        timeout=15000,
+                    )
                     # Gradio keeps connections open; don't wait for networkidle
                     page.wait_for_selector("button", timeout=10000)
                     # Should show review UI
                     content = page.content()
-                    assert "LinkedIn Extraction Review" in content or "Extraction Review" in content
+                    assert (
+                        "LinkedIn Extraction Review" in content
+                        or "Extraction Review" in content
+                    )
                     assert "Load from API" in content or "Load" in content
-                    assert "Enrichment preview" in content or "Extract author" in content
+                    assert (
+                        "Enrichment preview" in content or "Extract author" in content
+                    )
                 finally:
                     browser.close()
         except Exception as e:
             err_str = str(e)
-            if "Executable doesn't exist" in err_str or "playwright install" in err_str.lower():
+            if (
+                "Executable doesn't exist" in err_str
+                or "playwright install" in err_str.lower()
+            ):
                 pytest.skip(
                     "Playwright browsers not installed. Run: uv run playwright install chromium"
                 )

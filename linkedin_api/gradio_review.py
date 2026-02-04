@@ -8,7 +8,7 @@ with Neo4j-style property cards, trace, validate/skip/incorrect, and correction 
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import gradio as gr
 
@@ -36,6 +36,7 @@ from linkedin_api.review_store import (
     update_correction,
     update_status,
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +83,9 @@ def _extracted_to_markdown_cards(extracted: dict) -> str:
             to_urn = rel.get("to", "")[:40]
             props = rel.get("properties", {})
             prop_str = (" " + json.dumps(props)) if props else ""
-            lines.append(f"  `{_escape_md(from_urn)}...` -[:{rtype}]-> `{_escape_md(to_urn)}...`")
+            lines.append(
+                f"  `{_escape_md(from_urn)}...` -[:{rtype}]-> `{_escape_md(to_urn)}...`"
+            )
             if prop_str:
                 lines.append(f"    props: `{_escape_md(prop_str.strip())}`")
         lines.append("")
@@ -106,7 +109,9 @@ def _trace_to_markdown(trace: List[dict]) -> str:
         val = t.get("value_used", "")
         if len(str(val)) > 60:
             val = str(val)[:60] + "..."
-        lines.append(f"- **{_escape_md(field)}** \u2190 `{_escape_md(str(path))}` `{_escape_md(str(val))}`")
+        lines.append(
+            f"- **{_escape_md(field)}** \u2190 `{_escape_md(str(path))}` `{_escape_md(str(val))}`"
+        )
     return "\n".join(lines)
 
 
@@ -145,12 +150,17 @@ def _format_author_result(details: dict) -> str:
     """Format extract_author_profile_with_details result for the UI."""
     lines = []
     lines.append(f"URL tried: {details.get('url_tried') or '(none)'}")
-    if details.get("normalized_url") and details["normalized_url"] != details.get("url_tried"):
+    if details.get("normalized_url") and details["normalized_url"] != details.get(
+        "url_tried"
+    ):
         lines.append(f"Normalized URL (fetched): {details['normalized_url']}")
     if details.get("from_cache"):
         lines.append("(from cache)")
     if details.get("status_code") is not None:
-        lines.append(f"HTTP status: {details['status_code']}" + (" (404 Not Found)" if details["status_code"] == 404 else ""))
+        lines.append(
+            f"HTTP status: {details['status_code']}"
+            + (" (404 Not Found)" if details["status_code"] == 404 else "")
+        )
     if details.get("skip_reason"):
         lines.append(f"Result: {details['skip_reason']}")
         return "\n".join(lines)
@@ -189,7 +199,9 @@ def _format_resources_result(
 def _get_content_from_raw(raw: dict) -> str:
     """Get full post or comment text from raw changelog element (API content)."""
     activity = raw.get("activity") or {}
-    share = (activity.get("specificContent") or {}).get("com.linkedin.ugc.ShareContent", {})
+    share = (activity.get("specificContent") or {}).get(
+        "com.linkedin.ugc.ShareContent", {}
+    )
     commentary = (share.get("shareCommentary") or {}).get("text", "")
     if commentary:
         return commentary
@@ -229,9 +241,17 @@ def load_and_sync(start_time: Optional[int] = None) -> tuple:
             source = "default (fetch from beginning)"
         fetch_from_label = _format_fetch_from(effective_start, source)
 
+        logger.info(
+            "Load: fetching changelog from API (start_time=%s)...", api_start_time
+        )
         elements = get_all_post_activities(start_time=api_start_time, verbose=False)
+        logger.info(
+            "Load: got %s elements, syncing to store...",
+            len(elements) if elements else 0,
+        )
         synced = sync_elements(elements) if elements else 0
         queue = get_work_queue()
+        logger.info("Load: queue has %s items", len(queue))
         base = f"Fetch from: **{fetch_from_label}**. Work queue: {len(queue)} items (pending + needs_fix + skipped)."
         if not elements:
             hint = " Tip: enter Start time **0** to re-fetch from the beginning."
@@ -243,7 +263,10 @@ def load_and_sync(start_time: Optional[int] = None) -> tuple:
             queue,
             "**Token expired.**\n\n"
             "1. Run `uv run python setup_token.py` and enter your new token.\n"
-            "2. Set **LINKEDIN_ACCOUNT** the same everywhere (e.g. in `.env`: `LINKEDIN_ACCOUNT=your-email@example.com`). The app reads the token from keyring using this account; if it differs from when you ran setup_token, you get the old token.\n"
+            "2. Set **LINKEDIN_ACCOUNT** the same everywhere (e.g. in `.env`: "
+            "`LINKEDIN_ACCOUNT=your-email@example.com`). The app reads the token "
+            "from keyring using this account; if it differs from when you ran "
+            "setup_token, you get the old token.\n"
             "3. Restart the Gradio app, then Load again.\n"
             "4. Verify with `uv run python check_token.py` in the same terminal/env as the app.",
         )
@@ -298,7 +321,9 @@ def render_item(
     counter = f"{idx + 1} / {queue_len}" if queue_len else "0 / 0"
 
     correction_visible = status == STATUS_NEEDS_FIX
-    corrected_str = json.dumps(corrected if corrected else extracted, indent=2, default=str)
+    corrected_str = json.dumps(
+        corrected if corrected else extracted, indent=2, default=str
+    )
 
     raw_safe = _sanitize_for_json(raw)
     return (
@@ -334,46 +359,135 @@ def create_review_interface():
                 pass
         queue, msg = load_and_sync(start_time=start_time)
         if not queue:
-            return {"queue": [], "index": 0}, msg, "_No items._", "", {}, "0 / 0", "{}", "", "", "No item.", "No item.", None
+            return (
+                {"queue": [], "index": 0},
+                msg,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "",
+                "No item.",
+                "No item.",
+                None,
+            )
         for i, q in enumerate(queue):
             q["_index"] = i
         item = queue[0]
-        cards, trace_md, raw, _ext_json, counter, _corr_vis, corr_str, notes = render_item(
-            item, False, len(queue), 0
+        cards, trace_md, raw, _ext_json, counter, _corr_vis, corr_str, notes = (
+            render_item(item, False, len(queue), 0)
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(item)
-        return {"queue": queue, "index": 0}, msg, cards, trace_md, raw, counter, corr_str, notes, "", author_text, resources_text, thumb_path
+        # Defer enrichment so Load returns quickly; user can click "Extract author" / "Extract resources"
+        author_text = "Click 'Extract author' or 'Extract resources' to load."
+        resources_text = ""
+        thumb_path = None
+        return (
+            {"queue": queue, "index": 0},
+            msg,
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            "",
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
     def on_prev(state):
         queue, index = _get_queue_index(state)
         if not queue:
-            return state, "_No items._", "", {}, "0 / 0", "{}", "", "No item.", "No item.", None
+            return (
+                state,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "No item.",
+                "No item.",
+                None,
+            )
         idx = max(0, index - 1)
         item = queue[idx]
         item["_index"] = idx
         cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
             item, False, len(queue), idx
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(item)
-        return {"queue": queue, "index": idx}, cards, trace_md, raw, counter, corr_str, notes, author_text, resources_text, thumb_path
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            item, include_thumbnail=False
+        )
+        return (
+            {"queue": queue, "index": idx},
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
     def on_next(state):
         queue, index = _get_queue_index(state)
         if not queue:
-            return state, "_No items._", "", {}, "0 / 0", "{}", "", "No item.", "No item.", None
+            return (
+                state,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "No item.",
+                "No item.",
+                None,
+            )
         idx = min(len(queue) - 1, index + 1)
         item = queue[idx]
         item["_index"] = idx
         cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
             item, False, len(queue), idx
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(item)
-        return {"queue": queue, "index": idx}, cards, trace_md, raw, counter, corr_str, notes, author_text, resources_text, thumb_path
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            item, include_thumbnail=False
+        )
+        return (
+            {"queue": queue, "index": idx},
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
     def on_validate(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
-            return state, "_No items._", "", {}, "0 / 0", "{}", "", "No item to validate.", "No item.", "No item.", None
+            return (
+                state,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "No item to validate.",
+                "No item.",
+                "No item.",
+                None,
+            )
         item = queue[index]
         eid = item["element_id"]
         update_status(eid, STATUS_VALIDATED)
@@ -383,18 +497,56 @@ def create_review_interface():
         if index >= len(new_queue):
             index = max(0, len(new_queue) - 1)
         if not new_queue:
-            return {"queue": [], "index": 0}, "_No items._", "", {}, "0 / 0", "{}", "", "Validated. Queue empty.", "No item.", "No item.", None
+            return (
+                {"queue": [], "index": 0},
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "Validated. Queue empty.",
+                "No item.",
+                "No item.",
+                None,
+            )
         item = new_queue[index]
         cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
             item, False, len(new_queue), index
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(item)
-        return {"queue": new_queue, "index": index}, cards, trace_md, raw, counter, corr_str, notes, "Validated.", author_text, resources_text, thumb_path
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            item, include_thumbnail=False
+        )
+        return (
+            {"queue": new_queue, "index": index},
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            "Validated.",
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
     def on_skip(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
-            return state, "_No items._", "", {}, "0 / 0", "{}", "", "No item to skip.", "No item.", "No item.", None
+            return (
+                state,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "No item to skip.",
+                "No item.",
+                "No item.",
+                None,
+            )
         item = queue[index]
         eid = item["element_id"]
         update_status(eid, STATUS_SKIPPED)
@@ -404,18 +556,56 @@ def create_review_interface():
         if index >= len(new_queue):
             index = max(0, len(new_queue) - 1)
         if not new_queue:
-            return {"queue": [], "index": 0}, "_No items._", "", {}, "0 / 0", "{}", "", "Skipped. Queue empty.", "No item.", "No item.", None
+            return (
+                {"queue": [], "index": 0},
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "Skipped. Queue empty.",
+                "No item.",
+                "No item.",
+                None,
+            )
         item = new_queue[index]
         cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
             item, False, len(new_queue), index
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(item)
-        return {"queue": new_queue, "index": index}, cards, trace_md, raw, counter, corr_str, notes, "Skipped.", author_text, resources_text, thumb_path
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            item, include_thumbnail=False
+        )
+        return (
+            {"queue": new_queue, "index": index},
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            "Skipped.",
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
     def on_incorrect(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
-            return state, "_No items._", "", {}, "0 / 0", "{}", "", "No item.", "No item.", "No item.", None
+            return (
+                state,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "No item.",
+                "No item.",
+                "No item.",
+                None,
+            )
         item = queue[index]
         eid = item["element_id"]
         update_status(eid, STATUS_NEEDS_FIX)
@@ -424,33 +614,63 @@ def create_review_interface():
         new_queue = get_work_queue()
         for i, q in enumerate(new_queue):
             q["_index"] = i
-        pos = next((i for i, q in enumerate(new_queue) if q["element_id"] == eid), index)
+        pos = next(
+            (i for i, q in enumerate(new_queue) if q["element_id"] == eid), index
+        )
         if pos >= len(new_queue):
             pos = 0
         it = new_queue[pos]
         cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
             it, False, len(new_queue), pos
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(it)
-        return {"queue": new_queue, "index": pos}, cards, trace_md, raw, counter, corr_str, notes, "Marked incorrect. Edit correction below.", author_text, resources_text, thumb_path
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            it, include_thumbnail=False
+        )
+        return (
+            {"queue": new_queue, "index": pos},
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            "Marked incorrect. Edit correction below.",
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
     def on_save_correction(state, corrected_json_str, notes):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
-            return "No item."
+            return "No item.", ""
         item = queue[index]
         eid = item["element_id"]
         try:
-            corrected = json.loads(corrected_json_str) if corrected_json_str.strip() else None
+            corrected = (
+                json.loads(corrected_json_str) if corrected_json_str.strip() else None
+            )
         except json.JSONDecodeError:
-            return "Invalid JSON."
+            return "Invalid JSON.", ""
         update_correction(eid, corrected_json=corrected, notes=notes or None)
-        return "Correction saved."
+        return "Correction saved.", ""
 
     def on_mark_fixed(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
-            return state, "_No items._", "", {}, "0 / 0", "{}", "", "No item.", "No item.", "No item.", None
+            return (
+                state,
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "No item.",
+                "No item.",
+                "No item.",
+                None,
+            )
         item = queue[index]
         eid = item["element_id"]
         update_status(eid, STATUS_FIXED_VALIDATED)
@@ -460,16 +680,43 @@ def create_review_interface():
         if index >= len(new_queue):
             index = max(0, len(new_queue) - 1)
         if not new_queue:
-            return {"queue": [], "index": 0}, "_No items._", "", {}, "0 / 0", "{}", "", "Marked fixed. Queue empty.", "No item.", "No item.", None
+            return (
+                {"queue": [], "index": 0},
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "{}",
+                "",
+                "Marked fixed. Queue empty.",
+                "No item.",
+                "No item.",
+                None,
+            )
         it = new_queue[index]
         cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
             it, False, len(new_queue), index
         )
-        author_text, resources_text, thumb_path = _enrichment_preview(it)
-        return {"queue": new_queue, "index": index}, cards, trace_md, raw, counter, corr_str, notes, "Marked fixed + validated.", author_text, resources_text, thumb_path
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            it, include_thumbnail=False
+        )
+        return (
+            {"queue": new_queue, "index": index},
+            cards,
+            trace_md,
+            raw,
+            counter,
+            corr_str,
+            notes,
+            "Marked fixed + validated.",
+            author_text,
+            resources_text,
+            thumb_path,
+        )
 
-    def _enrichment_preview(item: dict) -> tuple:
-        """Compute author, resources, and thumbnail from one fetch per URL; fallback when no URL or skip."""
+    def _enrichment_preview(item: dict, include_thumbnail: bool = False) -> tuple:
+        """Author and resources from one fetch per URL.
+        Thumbnail only when include_thumbnail=True (on-demand)."""
         if not item:
             return "No item.", "No item.", None
         preview = item.get("corrected_json") or item.get("extracted_json") or {}
@@ -477,10 +724,12 @@ def create_review_interface():
         url = _get_post_url_from_extracted(preview)
         if not url:
             url = _get_post_url_from_raw(raw)
-        # Single fetch: get author + content from same HTML (cached for reuse)
         details = extract_author_profile_with_details(url) if url else {}
-        author_text = _format_author_result(details) if details else "URL tried: (none)\nResult: No Post URL in extracted data or raw element."
-        # Resources: prefer content from the same fetched page, else extracted/raw
+        author_text = (
+            _format_author_result(details)
+            if details
+            else "URL tried: (none)\nResult: No Post URL in extracted data or raw element."
+        )
         content = (details.get("content") or "").strip()
         content_source = "fetched page"
         if not content:
@@ -491,22 +740,37 @@ def create_review_interface():
             content_source = "raw API"
         urls = extract_urls_from_text(content) if content else []
         resources_text = _format_resources_result(content, urls, content_source)
-        thumbnail_path = get_thumbnail_path_for_url(url) if url else None
+        thumbnail_path = (
+            get_thumbnail_path_for_url(url) if (url and include_thumbnail) else None
+        )
         return author_text, resources_text, thumbnail_path
 
     def on_extract_author(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
             return "No item."
-        author_text, _ = _enrichment_preview(queue[index])
+        author_text, _ = _enrichment_preview(queue[index], include_thumbnail=False)
         return author_text
 
     def on_extract_resources(state):
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
             return "No item."
-        _, resources_text = _enrichment_preview(queue[index])
+        _, resources_text = _enrichment_preview(queue[index], include_thumbnail=False)
         return resources_text
+
+    def on_load_thumbnail(state):
+        """Load thumbnail for current item only (on-demand, can be slow)."""
+        queue, index = _get_queue_index(state)
+        if not queue or index >= len(queue):
+            return None
+        item = queue[index]
+        preview = item.get("corrected_json") or item.get("extracted_json") or {}
+        raw = item.get("raw_json") or {}
+        url = _get_post_url_from_extracted(preview)
+        if not url:
+            url = _get_post_url_from_raw(raw)
+        return get_thumbnail_path_for_url(url) if url else None
 
     def on_export_fixtures():
         n = export_fixtures()
@@ -519,17 +783,31 @@ def create_review_interface():
         item = queue[index]
         preview = item.get("corrected_json") or item.get("extracted_json") or {}
         if show_json:
-            return "**Extracted (JSON)**\n\n```json\n" + json.dumps(preview, indent=2, default=str) + "\n```"
+            return (
+                "**Extracted (JSON)**\n\n```json\n"
+                + json.dumps(preview, indent=2, default=str)
+                + "\n```"
+            )
         return _extracted_to_markdown_cards(preview)
 
     with gr.Blocks(title="LinkedIn Extraction Review", theme=gr.themes.Soft()) as demo:
         review_state = gr.State(value=_review_state_default())
-        gr.Markdown("# LinkedIn Extraction Review\nReview Portability API extraction item-by-item. Load data, then use the queue to validate, skip, or correct.")
+        gr.Markdown(
+            "# LinkedIn Extraction Review\n"
+            "Review Portability API extraction item-by-item. Load data, then use "
+            "the queue to validate, skip, or correct.\n\n"
+            "*To stop the app: press **Ctrl+C** in the terminal.*"
+        )
 
         with gr.Row():
-            start_time_in = gr.Textbox(label="Start time (epoch ms, optional)", placeholder="Leave empty for .last_run, or 0 to fetch from beginning")
+            start_time_in = gr.Textbox(
+                label="Start time (epoch ms, optional)",
+                placeholder="Leave empty for .last_run, or 0 to fetch from beginning",
+            )
             load_btn = gr.Button("Load from API and sync", variant="primary")
-        load_status = gr.Markdown(value="Click Load to fetch changelog and build work queue (pending + needs_fix + skipped).")
+        load_status = gr.Markdown(
+            value="Click Load to fetch changelog and build work queue (pending + needs_fix + skipped)."
+        )
 
         gr.Markdown("---")
         gr.Markdown("### Current item")
@@ -541,7 +819,12 @@ def create_review_interface():
                 trace_out = gr.Markdown(label="Trace (field ← json_path)")
             with gr.Column(scale=1):
                 raw_json_out = gr.JSON(label="Raw element JSON")
-                gr.Markdown("*For reaction/comment elements the raw changelog does not include the post body (only the post URN); post content appears only for post elements.*", elem_classes=["small"])
+                gr.Markdown(
+                    "*For reaction/comment elements the raw changelog does not "
+                    "include the post body (only the post URN); post content "
+                    "appears only for post elements.*",
+                    elem_classes=["small"],
+                )
 
         counter_out = gr.Markdown(value="0 / 0")
         with gr.Row():
@@ -552,7 +835,9 @@ def create_review_interface():
             incorrect_btn = gr.Button("Incorrect (needs fix)")
 
         with gr.Accordion("Correction editor (when status = needs_fix)", open=True):
-            corrected_json_in = gr.Textbox(label="Corrected extraction (JSON)", lines=12)
+            corrected_json_in = gr.Textbox(
+                label="Corrected extraction (JSON)", lines=12
+            )
             notes_in = gr.Textbox(label="Notes")
             with gr.Row():
                 save_correction_btn = gr.Button("Save correction")
@@ -564,9 +849,14 @@ def create_review_interface():
                 with gr.Column(scale=1):
                     extract_author_btn = gr.Button("Extract author (from post URL)")
                     author_out = gr.Textbox(label="Author", lines=3)
-                    extract_resources_btn = gr.Button("Extract resources (URLs from content)")
+                    extract_resources_btn = gr.Button(
+                        "Extract resources (URLs from content)"
+                    )
                     resources_out = gr.Textbox(label="URLs", lines=5)
-                thumbnail_out = gr.Image(label="Page thumbnail", type="filepath", height=300)
+                    load_thumb_btn = gr.Button("Load thumbnail (on-demand)")
+                thumbnail_out = gr.Image(
+                    label="Page thumbnail", type="filepath", height=300
+                )
 
         export_btn = gr.Button("Export fixtures")
         export_status = gr.Markdown(value="")
@@ -595,43 +885,113 @@ def create_review_interface():
         prev_btn.click(
             fn=on_prev,
             inputs=[review_state],
-            outputs=[review_state, cards_out, trace_out, raw_json_out, counter_out, corrected_json_in, notes_in, author_out, resources_out, thumbnail_out],
+            outputs=[
+                review_state,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                corrected_json_in,
+                notes_in,
+                author_out,
+                resources_out,
+                thumbnail_out,
+            ],
         )
 
         next_btn.click(
             fn=on_next,
             inputs=[review_state],
-            outputs=[review_state, cards_out, trace_out, raw_json_out, counter_out, corrected_json_in, notes_in, author_out, resources_out, thumbnail_out],
+            outputs=[
+                review_state,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                corrected_json_in,
+                notes_in,
+                author_out,
+                resources_out,
+                thumbnail_out,
+            ],
         )
 
         validate_btn.click(
             fn=on_validate,
             inputs=[review_state],
-            outputs=[review_state, cards_out, trace_out, raw_json_out, counter_out, corrected_json_in, notes_in, action_msg, author_out, resources_out, thumbnail_out],
+            outputs=[
+                review_state,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                corrected_json_in,
+                notes_in,
+                action_msg,
+                author_out,
+                resources_out,
+                thumbnail_out,
+            ],
         )
 
         skip_btn.click(
             fn=on_skip,
             inputs=[review_state],
-            outputs=[review_state, cards_out, trace_out, raw_json_out, counter_out, corrected_json_in, notes_in, action_msg, author_out, resources_out, thumbnail_out],
+            outputs=[
+                review_state,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                corrected_json_in,
+                notes_in,
+                action_msg,
+                author_out,
+                resources_out,
+                thumbnail_out,
+            ],
         )
 
         incorrect_btn.click(
             fn=on_incorrect,
             inputs=[review_state],
-            outputs=[review_state, cards_out, trace_out, raw_json_out, counter_out, corrected_json_in, notes_in, action_msg, author_out, resources_out, thumbnail_out],
+            outputs=[
+                review_state,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                corrected_json_in,
+                notes_in,
+                action_msg,
+                author_out,
+                resources_out,
+                thumbnail_out,
+            ],
         )
 
         save_correction_btn.click(
             fn=on_save_correction,
             inputs=[review_state, corrected_json_in, notes_in],
-            outputs=[action_msg],
+            outputs=[action_msg, correction_status],
         )
 
         mark_fixed_btn.click(
             fn=on_mark_fixed,
             inputs=[review_state],
-            outputs=[review_state, cards_out, trace_out, raw_json_out, counter_out, corrected_json_in, notes_in, action_msg, author_out, resources_out, thumbnail_out],
+            outputs=[
+                review_state,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                corrected_json_in,
+                notes_in,
+                action_msg,
+                author_out,
+                resources_out,
+                thumbnail_out,
+            ],
         )
 
         extract_author_btn.click(
@@ -643,6 +1003,11 @@ def create_review_interface():
             fn=on_extract_resources,
             inputs=[review_state],
             outputs=[resources_out],
+        )
+        load_thumb_btn.click(
+            fn=on_load_thumbnail,
+            inputs=[review_state],
+            outputs=[thumbnail_out],
         )
 
         export_btn.click(fn=on_export_fixtures, outputs=[export_status])

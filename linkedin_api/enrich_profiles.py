@@ -55,7 +55,11 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
             browser = p.chromium.launch(headless=True)
             try:
                 page = browser.new_page(viewport={"width": 800, "height": 900})
-                page.goto(f"file://{html_path.resolve()}", wait_until="domcontentloaded", timeout=8000)
+                page.goto(
+                    f"file://{html_path.resolve()}",
+                    wait_until="domcontentloaded",
+                    timeout=8000,
+                )
                 page.screenshot(path=str(png_path), full_page=False)
                 return png_path
             finally:
@@ -94,7 +98,8 @@ def _normalize_post_url(url: str) -> Optional[str]:
 
 
 def _is_private_post_url(url: str) -> bool:
-    """Skip URLs that are not publicly accessible (e.g. group posts). activity: and share:/ugcPost: are normal feed posts."""
+    """Skip URLs that are not publicly accessible (e.g. group posts).
+    activity: and share:/ugcPost: are normal feed posts."""
     return "urn:li:groupPost:" in url
 
 
@@ -102,7 +107,9 @@ def _parse_author_from_soup(soup: BeautifulSoup) -> Optional[Dict[str, str]]:
     """Extract author name and profile_url from parsed post HTML."""
     for link in soup.find_all("a", href=True):
         href = link["href"]
-        if "/in/" not in href or ("feed-actor-name" not in href and "actor-name" not in href):
+        if "/in/" not in href or (
+            "feed-actor-name" not in href and "actor-name" not in href
+        ):
             continue
         profile_url = link["href"].split("?")[0]
         profile_url = re.sub(
@@ -110,7 +117,10 @@ def _parse_author_from_soup(soup: BeautifulSoup) -> Optional[Dict[str, str]]:
             "https://www.linkedin.com",
             profile_url,
         )
-        if not profile_url.startswith("https://www.linkedin.com") and "//linkedin.com" in profile_url:
+        if (
+            not profile_url.startswith("https://www.linkedin.com")
+            and "//linkedin.com" in profile_url
+        ):
             profile_url = profile_url.replace("//linkedin.com", "//www.linkedin.com")
         name = (
             link.get_text(strip=True)
@@ -174,7 +184,9 @@ def fetch_post_page(
     normalized = _normalize_post_url(url)
     out["normalized_url"] = normalized
     if not normalized:
-        out["error"] = "Could not normalize URL (e.g. comment URN could not be resolved to post URL)."
+        out["error"] = (
+            "Could not normalize URL (e.g. comment URN could not be resolved to post URL)."
+        )
         return out
     if _is_private_post_url(normalized):
         out["skip_reason"] = "Private or group post URL; not fetched."

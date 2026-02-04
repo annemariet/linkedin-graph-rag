@@ -4,10 +4,7 @@ Test enrichment preview formatting and author extraction with details.
 Run: uv run pytest tests/test_gradio_review_enrichment.py -v
 """
 
-import json
 from unittest.mock import patch
-
-import pytest
 
 from linkedin_api.gradio_review import (
     _format_author_result,
@@ -25,33 +22,42 @@ class TestFormatAuthorResult:
         assert "No URL provided" in out
 
     def test_404(self):
-        out = _format_author_result({
-            "url_tried": "https://example.com/post",
-            "normalized_url": "https://example.com/post",
-            "status_code": 404,
-            "error": "Not found (404).",
-        })
+        out = _format_author_result(
+            {
+                "url_tried": "https://example.com/post",
+                "normalized_url": "https://example.com/post",
+                "status_code": 404,
+                "error": "Not found (404).",
+            }
+        )
         assert "URL tried:" in out
         assert "404" in out
         assert "Not found" in out or "404" in out
 
     def test_success(self):
-        out = _format_author_result({
-            "url_tried": "https://linkedin.com/feed/update/urn:li:share:1",
-            "normalized_url": "https://linkedin.com/feed/update/urn:li:share:1",
-            "status_code": 200,
-            "author": {"name": "Jane Doe", "profile_url": "https://www.linkedin.com/in/janedoe"},
-        })
+        out = _format_author_result(
+            {
+                "url_tried": "https://linkedin.com/feed/update/urn:li:share:1",
+                "normalized_url": "https://linkedin.com/feed/update/urn:li:share:1",
+                "status_code": 200,
+                "author": {
+                    "name": "Jane Doe",
+                    "profile_url": "https://www.linkedin.com/in/janedoe",
+                },
+            }
+        )
         assert "URL tried:" in out
         assert "Jane Doe" in out
         assert "profile_url" in out
 
     def test_skip_reason(self):
-        out = _format_author_result({
-            "url_tried": "https://linkedin.com/feed/update/urn:li:groupPost:123",
-            "normalized_url": "https://linkedin.com/feed/update/urn:li:groupPost:123",
-            "skip_reason": "Private or group post URL; not fetched.",
-        })
+        out = _format_author_result(
+            {
+                "url_tried": "https://linkedin.com/feed/update/urn:li:groupPost:123",
+                "normalized_url": "https://linkedin.com/feed/update/urn:li:groupPost:123",
+                "skip_reason": "Private or group post URL; not fetched.",
+            }
+        )
         assert "Private" in out or "not fetched" in out
 
 

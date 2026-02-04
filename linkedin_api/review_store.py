@@ -114,7 +114,12 @@ def upsert(
                 ),
             )
         else:
-            updates = ["raw_json = ?", "extracted_json = ?", "processed_at = ?", "updated_at = strftime('%s','now')"]
+            updates = [
+                "raw_json = ?",
+                "extracted_json = ?",
+                "processed_at = ?",
+                "updated_at = strftime('%s','now')",
+            ]
             params: List[Any] = [raw_json_str, extracted_json_str, processed_at]
             if status is not None:
                 updates.append("status = ?")
@@ -213,7 +218,15 @@ def sync_elements(elements: List[dict]) -> int:
                     (element_id, processed_at, resource_name, method_name, raw_json, extracted_json, status, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))
                     """,
-                    (element_id, processed_at, resource_name, method_name, raw_json_str, extracted_json_str, STATUS_PENDING),
+                    (
+                        element_id,
+                        processed_at,
+                        resource_name,
+                        method_name,
+                        raw_json_str,
+                        extracted_json_str,
+                        STATUS_PENDING,
+                    ),
                 )
                 count += 1
         conn.commit()
@@ -270,7 +283,9 @@ def get_item(element_id: str) -> Optional[dict]:
     conn = _get_conn()
     try:
         row = conn.execute(
-            "SELECT element_id, processed_at, resource_name, method_name, raw_json, extracted_json, status, notes, corrected_json, updated_at FROM review_items WHERE element_id = ?",
+            "SELECT element_id, processed_at, resource_name, method_name, raw_json, "
+            "extracted_json, status, notes, corrected_json, updated_at "
+            "FROM review_items WHERE element_id = ?",
             (element_id,),
         ).fetchone()
         if row is None:
@@ -281,10 +296,14 @@ def get_item(element_id: str) -> Optional[dict]:
             "resource_name": row["resource_name"],
             "method_name": row["method_name"],
             "raw_json": json.loads(row["raw_json"]) if row["raw_json"] else {},
-            "extracted_json": json.loads(row["extracted_json"]) if row["extracted_json"] else {},
+            "extracted_json": (
+                json.loads(row["extracted_json"]) if row["extracted_json"] else {}
+            ),
             "status": row["status"],
             "notes": row["notes"],
-            "corrected_json": json.loads(row["corrected_json"]) if row["corrected_json"] else None,
+            "corrected_json": (
+                json.loads(row["corrected_json"]) if row["corrected_json"] else None
+            ),
             "updated_at": row["updated_at"],
         }
     finally:
@@ -296,13 +315,16 @@ def get_fixture_items() -> List[dict]:
     conn = _get_conn()
     try:
         rows = conn.execute(
-            "SELECT element_id, raw_json, corrected_json FROM review_items WHERE corrected_json IS NOT NULL AND corrected_json != ''"
+            "SELECT element_id, raw_json, corrected_json FROM review_items "
+            "WHERE corrected_json IS NOT NULL AND corrected_json != ''"
         ).fetchall()
         return [
             {
                 "element_id": r["element_id"],
                 "raw_element": json.loads(r["raw_json"]) if r["raw_json"] else {},
-                "expected_extracted": json.loads(r["corrected_json"]) if r["corrected_json"] else {},
+                "expected_extracted": (
+                    json.loads(r["corrected_json"]) if r["corrected_json"] else {}
+                ),
             }
             for r in rows
         ]
@@ -324,7 +346,10 @@ def export_fixtures(fixtures_dir: Optional[Path] = None) -> int:
         path = fixtures_dir / f"{item['element_id']}.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(
-                {"raw_element": item["raw_element"], "expected_extracted": item["expected_extracted"]},
+                {
+                    "raw_element": item["raw_element"],
+                    "expected_extracted": item["expected_extracted"],
+                },
                 f,
                 indent=2,
                 default=str,

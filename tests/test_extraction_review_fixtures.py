@@ -13,7 +13,9 @@ import pytest
 
 from linkedin_api.extraction_preview import extract_element_preview
 
-FIXTURES_DIR = Path(__file__).resolve().parent.parent / "outputs" / "review" / "fixtures"
+FIXTURES_DIR = (
+    Path(__file__).resolve().parent.parent / "outputs" / "review" / "fixtures"
+)
 
 
 def _normalize_for_compare(data):
