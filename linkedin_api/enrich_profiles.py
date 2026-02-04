@@ -8,10 +8,14 @@ from the same HTML; optionally cache raw HTML for reuse.
 """
 
 import hashlib
+import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 import requests
 from bs4 import BeautifulSoup
@@ -46,25 +50,60 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
     """Render cached HTML with Playwright and save a screenshot; return png_path if successful."""
     if not html_path.exists() or png_path.exists():
         return png_path if png_path.exists() else None
+    t0 = time.perf_counter()
+    html_size_kb = html_path.stat().st_size / 1024
+    logger.info(
+        "Starting thumbnail generation (HTML: %s, size: %.1f KB)",
+        html_path.name,
+        html_size_kb,
+    )
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
     except ImportError:
+        logger.warning("Playwright not installed; cannot generate thumbnail")
         return None
     try:
+        t1 = time.perf_counter()
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            t2 = time.perf_counter()
+            logger.info("Playwright context created (%.1fms)", (t2 - t1) * 1000)
+            # Launch with faster settings (disable JS but keep images for thumbnail)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-javascript"],  # Faster, but keep images for thumbnail
+            )
+            t3 = time.perf_counter()
+            logger.info("Browser launched (%.1fms)", (t3 - t2) * 1000)
             try:
-                page = browser.new_page(viewport={"width": 800, "height": 900})
-                page.goto(
-                    f"file://{html_path.resolve()}",
-                    wait_until="domcontentloaded",
-                    timeout=8000,
+                page = browser.new_page(viewport={"width": 800, "height": 600})
+                t4 = time.perf_counter()
+                logger.info("Page created (%.1fms)", (t4 - t3) * 1000)
+                # Use commit (faster than domcontentloaded) with short timeout
+                try:
+                    page.goto(
+                        f"file://{html_path.resolve()}",
+                        wait_until="commit",  # Fastest: just wait for navigation
+                        timeout=3000,  # 3 seconds max
+                    )
+                except PlaywrightTimeout:
+                    logger.warning("Page.goto timeout, taking screenshot anyway")
+                t5 = time.perf_counter()
+                logger.info("Page navigation done (%.1fms)", (t5 - t4) * 1000)
+                # Small delay to let any critical rendering happen, then screenshot
+                page.wait_for_timeout(500)  # 500ms max for any critical rendering
+                page.screenshot(path=str(png_path), full_page=False, timeout=2000)
+                t6 = time.perf_counter()
+                logger.info(
+                    "Screenshot saved (%.1fms, total: %.1fms)",
+                    (t6 - t5) * 1000,
+                    (t6 - t0) * 1000,
                 )
-                page.screenshot(path=str(png_path), full_page=False)
                 return png_path
             finally:
                 browser.close()
-    except Exception:
+    except Exception as e:
+        elapsed = (time.perf_counter() - t0) * 1000
+        logger.exception("Thumbnail generation failed after %.1fms", elapsed)
         return None
 
 
