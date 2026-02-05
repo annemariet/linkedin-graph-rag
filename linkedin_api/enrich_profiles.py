@@ -46,6 +46,90 @@ def _url_to_cache_key(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:32]
 
 
+def _create_preview_html(html_path: Path) -> Optional[Path]:
+    """Extract post content from HTML and create a simple preview HTML for screenshot."""
+    try:
+        from bs4 import BeautifulSoup
+
+        raw = html_path.read_text(encoding="utf-8", errors="replace")
+        soup = BeautifulSoup(raw, "html.parser")
+
+        # Extract post content (same logic as _parse_content_from_soup)
+        content_text = []
+        og = soup.find("meta", property="og:description")
+        og_content = og.get("content") if og and og.get("content") else None
+        if og_content:
+            content_text.append(og_content)
+        
+        title = soup.find("title")
+        if title:
+            t = title.get_text(strip=True)
+            if " | " in t:
+                title_content = t.split(" | ")[0]
+                # Only add title if it's different from og:description to avoid duplicates
+                if title_content != og_content:
+                    content_text.append(title_content)
+
+        # Extract author info
+        author = _parse_author_from_soup(soup)
+        author_name = author.get("name") if author else "Unknown"
+
+        # Create simple preview HTML
+        preview_content = "\n".join(content_text) if content_text else "No content available"
+        preview_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>LinkedIn Post Preview</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f3f2ef;
+            color: #000000;
+        }}
+        .post-container {{
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }}
+        .author {{
+            font-weight: 600;
+            font-size: 14px;
+            color: #0a66c2;
+            margin-bottom: 12px;
+            padding-top: 8px;
+        }}
+        .content {{
+            font-size: 14px;
+            line-height: 1.5;
+            color: #000000;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-top: 0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="post-container">
+        <div class="author">{author_name}</div>
+        <div class="content">{preview_content}</div>
+    </div>
+</body>
+</html>"""
+
+        # Save preview HTML to temp file
+        preview_path = html_path.parent / f"{html_path.stem}_preview.html"
+        preview_path.write_text(preview_html, encoding="utf-8")
+        return preview_path
+    except Exception as e:
+        logger.warning("Failed to create preview HTML: %s", e)
+        return None
+
+
 def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
     """Render cached HTML with Playwright and save a screenshot; return png_path if successful."""
     if not html_path.exists() or png_path.exists():
@@ -62,6 +146,13 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
     except ImportError:
         logger.warning("Playwright not installed; cannot generate thumbnail")
         return None
+    
+    # Create preview HTML from post content instead of screenshotting full LinkedIn page
+    preview_path = _create_preview_html(html_path)
+    if not preview_path:
+        logger.warning("Could not create preview HTML, falling back to full page screenshot")
+        preview_path = html_path
+    
     try:
         t1 = time.perf_counter()
         with sync_playwright() as p:
@@ -71,13 +162,14 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
             t3 = time.perf_counter()
             logger.info("Browser launched (%.1fms)", (t3 - t2) * 1000)
             try:
-                # Smaller viewport = less to render, often finishes screenshot
-                page = browser.new_page(viewport={"width": 640, "height": 480})
+                # Simple viewport for preview HTML (no need to block network - preview is self-contained)
+                context = browser.new_context(viewport={"width": 640, "height": 800})
+                page = context.new_page()
                 t4 = time.perf_counter()
                 logger.info("Page created (%.1fms)", (t4 - t3) * 1000)
                 try:
                     page.goto(
-                        f"file://{html_path.resolve()}",
+                        f"file://{preview_path.resolve()}",
                         wait_until="domcontentloaded",
                         timeout=5000,
                     )
@@ -85,16 +177,19 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
                     logger.warning("Page.goto timeout, attempting screenshot anyway")
                 t5 = time.perf_counter()
                 logger.info("Page navigation done (%.1fms)", (t5 - t4) * 1000)
-                page.wait_for_timeout(1000)  # Let layout settle
+                page.wait_for_timeout(500)  # Let layout settle
+                
+                # Screenshot the preview (much simpler - no privacy notice, just post content)
                 try:
-                    page.screenshot(
-                        path=str(png_path),
-                        full_page=False,
-                        timeout=20000,  # 20s for heavy LinkedIn DOM
-                    )
+                    # Focus on the post container
+                    post_container = page.locator(".post-container")
+                    if post_container.count() > 0:
+                        post_container.first.screenshot(path=str(png_path), timeout=5000)
+                    else:
+                        page.screenshot(path=str(png_path), full_page=False, timeout=5000)
                 except PlaywrightTimeout:
                     logger.warning(
-                        "Screenshot timed out (20s); LinkedIn page may be too heavy. "
+                        "Screenshot timed out (10s); LinkedIn page may be too heavy. "
                         "Skipping thumbnail for this item."
                     )
                     return None
