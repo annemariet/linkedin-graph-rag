@@ -354,7 +354,11 @@ def get_thumbnail_path_for_url(url: str) -> Optional[str]:
     Return path to a PNG thumbnail of the post page, or None.
     Requires HTML to be already cached (e.g. after fetch_post_page or extract_author_profile_with_details).
     Uses Playwright to screenshot the cached HTML file; if playwright is not installed, returns None.
+    
+    Set DISABLE_THUMBNAILS=1 to skip thumbnail generation (useful if Playwright is slow).
     """
+    if os.getenv("DISABLE_THUMBNAILS", "").lower() in ("1", "true", "yes"):
+        return None
     if not url:
         return None
     normalized = _normalize_post_url(url)
