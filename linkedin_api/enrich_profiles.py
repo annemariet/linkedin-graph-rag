@@ -67,31 +67,37 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
         with sync_playwright() as p:
             t2 = time.perf_counter()
             logger.info("Playwright context created (%.1fms)", (t2 - t1) * 1000)
-            # Launch with faster settings (disable JS but keep images for thumbnail)
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-javascript"],  # Faster, but keep images for thumbnail
-            )
+            browser = p.chromium.launch(headless=True)
             t3 = time.perf_counter()
             logger.info("Browser launched (%.1fms)", (t3 - t2) * 1000)
             try:
-                page = browser.new_page(viewport={"width": 800, "height": 600})
+                # Smaller viewport = less to render, often finishes screenshot
+                page = browser.new_page(viewport={"width": 640, "height": 480})
                 t4 = time.perf_counter()
                 logger.info("Page created (%.1fms)", (t4 - t3) * 1000)
-                # Use commit (faster than domcontentloaded) with short timeout
                 try:
                     page.goto(
                         f"file://{html_path.resolve()}",
-                        wait_until="commit",  # Fastest: just wait for navigation
-                        timeout=3000,  # 3 seconds max
+                        wait_until="domcontentloaded",
+                        timeout=5000,
                     )
                 except PlaywrightTimeout:
-                    logger.warning("Page.goto timeout, taking screenshot anyway")
+                    logger.warning("Page.goto timeout, attempting screenshot anyway")
                 t5 = time.perf_counter()
                 logger.info("Page navigation done (%.1fms)", (t5 - t4) * 1000)
-                # Small delay to let any critical rendering happen, then screenshot
-                page.wait_for_timeout(500)  # 500ms max for any critical rendering
-                page.screenshot(path=str(png_path), full_page=False, timeout=2000)
+                page.wait_for_timeout(1000)  # Let layout settle
+                try:
+                    page.screenshot(
+                        path=str(png_path),
+                        full_page=False,
+                        timeout=20000,  # 20s for heavy LinkedIn DOM
+                    )
+                except PlaywrightTimeout:
+                    logger.warning(
+                        "Screenshot timed out (20s); LinkedIn page may be too heavy. "
+                        "Skipping thumbnail for this item."
+                    )
+                    return None
                 t6 = time.perf_counter()
                 logger.info(
                     "Screenshot saved (%.1fms, total: %.1fms)",
