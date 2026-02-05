@@ -55,7 +55,7 @@ def _sanitize_for_json(obj: Any) -> Any:
         return {"_error": "Could not serialize raw element"}
 
 
-def _extracted_to_markdown_cards(extracted: dict) -> str:
+def _extracted_to_markdown_cards(extracted: dict, author_info: str = None, resources_info: str = None) -> str:
     """Render extracted nodes and relationships as Neo4j-style Markdown property cards."""
     nodes = extracted.get("nodes", [])
     relationships = extracted.get("relationships", [])
@@ -94,6 +94,21 @@ def _extracted_to_markdown_cards(extracted: dict) -> str:
         lines.append("**Skipped reasons**")
         for k, v in extracted["skipped_reasons"].items():
             lines.append(f"  - {k}: {v}")
+
+    # Add enrichment info if available
+    if author_info and author_info != "No item." and "Click 'Extract author'" not in author_info:
+        lines.append("")
+        lines.append("**Author (enriched)**")
+        lines.append("```")
+        lines.append(author_info)
+        lines.append("```")
+    
+    if resources_info and resources_info != "No item.":
+        lines.append("")
+        lines.append("**Resources (enriched)**")
+        lines.append("```")
+        lines.append(resources_info)
+        lines.append("```")
 
     return "\n".join(lines) if lines else "_No entities extracted_"
 
@@ -287,7 +302,12 @@ def select_item(queue: List[dict], index: int) -> dict:
 
 
 def render_item(
-    item: dict, show_extracted_json: bool, queue_len: int = 0, idx: int = 0
+    item: dict,
+    show_extracted_json: bool,
+    queue_len: int = 0,
+    idx: int = 0,
+    author_info: str = None,
+    resources_info: str = None,
 ) -> tuple:
     """
     Return (cards_md, trace_md, raw_json, extracted_json_str, counter, correction_visible, corrected_json_str, notes).
@@ -313,7 +333,7 @@ def render_item(
     if corrected:
         preview = corrected
 
-    cards_md = _extracted_to_markdown_cards(preview)
+    cards_md = _extracted_to_markdown_cards(preview, author_info, resources_info)
     try:
         preview_result = extract_element_preview(raw)
         trace = preview_result.get("trace") or []
@@ -379,13 +399,13 @@ def create_review_interface():
         for i, q in enumerate(queue):
             q["_index"] = i
         item = queue[0]
-        cards, trace_md, raw, _ext_json, counter, _corr_vis, corr_str, notes = (
-            render_item(item, False, len(queue), 0)
+        # Load enrichment (author, resources, thumbnail) by default now that thumbnails are fast
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            item, include_thumbnail=True
         )
-        # Defer enrichment so Load returns quickly; user can click "Extract author" / "Extract resources"
-        author_text = "Click 'Extract author' or 'Extract resources' to load."
-        resources_text = ""
-        thumb_path = None
+        cards, trace_md, raw, _ext_json, counter, _corr_vis, corr_str, notes = (
+            render_item(item, False, len(queue), 0, author_text, resources_text)
+        )
         return (
             {"queue": queue, "index": 0},
             msg,
@@ -419,11 +439,11 @@ def create_review_interface():
         idx = max(0, index - 1)
         item = queue[idx]
         item["_index"] = idx
-        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
-            item, False, len(queue), idx
-        )
         author_text, resources_text, thumb_path = _enrichment_preview(
-            item, include_thumbnail=False
+            item, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
+            item, False, len(queue), idx, author_text, resources_text
         )
         return (
             {"queue": queue, "index": idx},
@@ -456,11 +476,11 @@ def create_review_interface():
         idx = min(len(queue) - 1, index + 1)
         item = queue[idx]
         item["_index"] = idx
-        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
-            item, False, len(queue), idx
-        )
         author_text, resources_text, thumb_path = _enrichment_preview(
-            item, include_thumbnail=False
+            item, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
+            item, False, len(queue), idx, author_text, resources_text
         )
         return (
             {"queue": queue, "index": idx},
@@ -514,11 +534,11 @@ def create_review_interface():
                 None,
             )
         item = new_queue[index]
-        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
-            item, False, len(new_queue), index
-        )
         author_text, resources_text, thumb_path = _enrichment_preview(
-            item, include_thumbnail=False
+            item, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
+            item, False, len(new_queue), index, author_text, resources_text
         )
         return (
             {"queue": new_queue, "index": index},
@@ -577,7 +597,7 @@ def create_review_interface():
             item, False, len(new_queue), index
         )
         author_text, resources_text, thumb_path = _enrichment_preview(
-            item, include_thumbnail=False
+            item, include_thumbnail=True
         )
         return (
             {"queue": new_queue, "index": index},
@@ -623,11 +643,11 @@ def create_review_interface():
         if pos >= len(new_queue):
             pos = 0
         it = new_queue[pos]
-        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
-            it, False, len(new_queue), pos
-        )
         author_text, resources_text, thumb_path = _enrichment_preview(
-            it, include_thumbnail=False
+            it, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
+            it, False, len(new_queue), pos, author_text, resources_text
         )
         return (
             {"queue": new_queue, "index": pos},
@@ -697,11 +717,11 @@ def create_review_interface():
                 None,
             )
         it = new_queue[index]
-        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
-            it, False, len(new_queue), index
-        )
         author_text, resources_text, thumb_path = _enrichment_preview(
-            it, include_thumbnail=False
+            it, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes = render_item(
+            it, False, len(new_queue), index, author_text, resources_text
         )
         return (
             {"queue": new_queue, "index": index},
@@ -774,8 +794,8 @@ def create_review_interface():
             logger.exception("Extract resources failed")
             return f"Error extracting resources:\n{type(e).__name__}: {e}"
 
-    def on_load_thumbnail(state):
-        """Load thumbnail for current item only (on-demand, can be slow)."""
+    def on_regenerate_thumbnail(state):
+        """Regenerate thumbnail by deleting cached PNG and regenerating."""
         queue, index = _get_queue_index(state)
         if not queue or index >= len(queue):
             return None
@@ -786,9 +806,24 @@ def create_review_interface():
             url = _get_post_url_from_extracted(preview)
             if not url:
                 url = _get_post_url_from_raw(raw)
-            return get_thumbnail_path_for_url(url) if url else None
-        except Exception as e:
-            logger.exception("Load thumbnail failed")
+            if not url:
+                return None
+            # Delete cached thumbnail to force regeneration
+            from linkedin_api.enrich_profiles import (
+                _url_to_cache_key,
+                _post_html_cache_dir,
+            )
+
+            cache_dir = _post_html_cache_dir()
+            if cache_dir:
+                cache_key = _url_to_cache_key(url)
+                png_path = cache_dir / f"{cache_key}.png"
+                if png_path.exists():
+                    png_path.unlink()
+            # Regenerate
+            return get_thumbnail_path_for_url(url)
+        except Exception:
+            logger.exception("Regenerate thumbnail failed")
             return None
 
     def on_export_fixtures():
@@ -844,6 +879,11 @@ def create_review_interface():
                     "appears only for post elements.*",
                     elem_classes=["small"],
                 )
+            with gr.Column(scale=1):
+                thumbnail_out = gr.Image(
+                    label="Post preview", type="filepath", height=300, show_label=False
+                )
+                regenerate_thumb_btn = gr.Button("Regenerate thumbnail", size="sm")
 
         counter_out = gr.Markdown(value="0 / 0")
         with gr.Row():
@@ -872,10 +912,6 @@ def create_review_interface():
                         "Extract resources (URLs from content)"
                     )
                     resources_out = gr.Textbox(label="URLs", lines=5)
-                    load_thumb_btn = gr.Button("Load thumbnail (on-demand)")
-                thumbnail_out = gr.Image(
-                    label="Page thumbnail", type="filepath", height=300
-                )
 
         export_btn = gr.Button("Export fixtures")
         export_status = gr.Markdown(value="")
@@ -1023,8 +1059,8 @@ def create_review_interface():
             inputs=[review_state],
             outputs=[resources_out],
         )
-        load_thumb_btn.click(
-            fn=on_load_thumbnail,
+        regenerate_thumb_btn.click(
+            fn=on_regenerate_thumbnail,
             inputs=[review_state],
             outputs=[thumbnail_out],
         )
