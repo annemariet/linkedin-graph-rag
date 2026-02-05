@@ -37,6 +37,14 @@ jobs:
         uv sync --all-groups
 
     #----------------------------------------------
+    # Install Playwright browsers (for thumbnail tests)
+    #----------------------------------------------
+    - name: Install Playwright browsers
+      run: |
+        uv run playwright install chromium
+      continue-on-error: false
+
+    #----------------------------------------------
     # Run linters
     #----------------------------------------------
     - name: Run black
