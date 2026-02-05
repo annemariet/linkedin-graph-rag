@@ -15,13 +15,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger(__name__)
-
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
+
 from linkedin_api.utils.urns import comment_urn_to_post_url
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -60,7 +61,7 @@ def _create_preview_html(html_path: Path) -> Optional[Path]:
         og_content = og.get("content") if og and og.get("content") else None
         if og_content:
             content_text.append(og_content)
-        
+
         title = soup.find("title")
         if title:
             t = title.get_text(strip=True)
@@ -75,7 +76,9 @@ def _create_preview_html(html_path: Path) -> Optional[Path]:
         author_name = author.get("name") if author else "Unknown"
 
         # Create simple preview HTML
-        preview_content = "\n".join(content_text) if content_text else "No content available"
+        preview_content = (
+            "\n".join(content_text) if content_text else "No content available"
+        )
         preview_html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -142,17 +145,22 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
         html_size_kb,
     )
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+        from playwright.sync_api import (
+            sync_playwright,
+            TimeoutError as PlaywrightTimeout,
+        )
     except ImportError:
         logger.warning("Playwright not installed; cannot generate thumbnail")
         return None
-    
+
     # Create preview HTML from post content instead of screenshotting full LinkedIn page
     preview_path = _create_preview_html(html_path)
     if not preview_path:
-        logger.warning("Could not create preview HTML, falling back to full page screenshot")
+        logger.warning(
+            "Could not create preview HTML, falling back to full page screenshot"
+        )
         preview_path = html_path
-    
+
     try:
         t1 = time.perf_counter()
         with sync_playwright() as p:
@@ -178,15 +186,19 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
                 t5 = time.perf_counter()
                 logger.info("Page navigation done (%.1fms)", (t5 - t4) * 1000)
                 page.wait_for_timeout(500)  # Let layout settle
-                
+
                 # Screenshot the preview (much simpler - no privacy notice, just post content)
                 try:
                     # Focus on the post container
                     post_container = page.locator(".post-container")
                     if post_container.count() > 0:
-                        post_container.first.screenshot(path=str(png_path), timeout=5000)
+                        post_container.first.screenshot(
+                            path=str(png_path), timeout=5000
+                        )
                     else:
-                        page.screenshot(path=str(png_path), full_page=False, timeout=5000)
+                        page.screenshot(
+                            path=str(png_path), full_page=False, timeout=5000
+                        )
                 except PlaywrightTimeout:
                     logger.warning(
                         "Screenshot timed out (10s); LinkedIn page may be too heavy. "
@@ -202,7 +214,7 @@ def _ensure_thumbnail(html_path: Path, png_path: Path) -> Optional[Path]:
                 return png_path
             finally:
                 browser.close()
-    except Exception as e:
+    except Exception:
         elapsed = (time.perf_counter() - t0) * 1000
         logger.exception("Thumbnail generation failed after %.1fms", elapsed)
         return None
@@ -449,7 +461,7 @@ def get_thumbnail_path_for_url(url: str) -> Optional[str]:
     Return path to a PNG thumbnail of the post page, or None.
     Requires HTML to be already cached (e.g. after fetch_post_page or extract_author_profile_with_details).
     Uses Playwright to screenshot the cached HTML file; if playwright is not installed, returns None.
-    
+
     Set DISABLE_THUMBNAILS=1 to skip thumbnail generation (useful if Playwright is slow).
     """
     if os.getenv("DISABLE_THUMBNAILS", "").lower() in ("1", "true", "yes"):

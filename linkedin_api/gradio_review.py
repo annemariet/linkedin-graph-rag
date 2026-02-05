@@ -55,7 +55,9 @@ def _sanitize_for_json(obj: Any) -> Any:
         return {"_error": "Could not serialize raw element"}
 
 
-def _extracted_to_markdown_cards(extracted: dict, author_info: str = None, resources_info: str = None) -> str:
+def _extracted_to_markdown_cards(
+    extracted: dict, author_info: str = None, resources_info: str = None
+) -> str:
     """Render extracted nodes and relationships as Neo4j-style Markdown property cards."""
     nodes = extracted.get("nodes", [])
     relationships = extracted.get("relationships", [])
@@ -96,13 +98,17 @@ def _extracted_to_markdown_cards(extracted: dict, author_info: str = None, resou
             lines.append(f"  - {k}: {v}")
 
     # Add enrichment info if available
-    if author_info and author_info != "No item." and "Click 'Extract author'" not in author_info:
+    if (
+        author_info
+        and author_info != "No item."
+        and "Click 'Extract author'" not in author_info
+    ):
         lines.append("")
         lines.append("**Author (enriched)**")
         lines.append("```")
         lines.append(author_info)
         lines.append("```")
-    
+
     if resources_info and resources_info != "No item.":
         lines.append("")
         lines.append("**Resources (enriched)**")
