@@ -5,15 +5,24 @@ This module provides shared functions for fetching changelog data from the
 LinkedIn Member Data Portability API, handling pagination, filtering, and errors.
 """
 
+import logging
 from pathlib import Path
 from time import time
 from typing import List, Optional, Callable
 from linkedin_api.utils.auth import build_linkedin_session, get_access_token
 
+logger = logging.getLogger(__name__)
+
 
 BASE_URL = "https://api.linkedin.com/rest"
 DEFAULT_START_TIME = 1764716400000  # Dec 3, 2025 00:00:00
 LAST_RUN_FILE = Path(__file__).parent.parent.parent / ".last_run"
+
+
+class TokenExpiredError(Exception):
+    """Raised when the LinkedIn API returns 401 EXPIRED_ACCESS_TOKEN."""
+
+    pass
 
 
 def get_last_processed_timestamp() -> Optional[int]:
@@ -130,6 +139,8 @@ def fetch_changelog_data(
         try:
             if verbose:
                 print(f"   📡 Fetching batch starting at {start}...")
+            else:
+                logger.info("Fetching changelog batch start=%s...", start)
 
             params = {
                 "q": "memberAndApplication",
@@ -149,6 +160,11 @@ def fetch_changelog_data(
                 if verbose:
                     print(f"❌ Error: {response.status_code}")
                     print(f"Response: {response.text[:200]}...")
+                if (
+                    response.status_code == 401
+                    and "EXPIRED_ACCESS_TOKEN" in response.text
+                ):
+                    raise TokenExpiredError("LinkedIn access token has expired")
                 break
 
             data = response.json()
@@ -178,6 +194,12 @@ def fetch_changelog_data(
             if verbose:
                 total_filtered = len(all_elements)
                 print(f"   ✅ Got {len(elements)} elements (total: {total_filtered})")
+            else:
+                logger.info(
+                    "Changelog batch: got %s elements (total: %s)",
+                    len(elements),
+                    len(all_elements),
+                )
 
             # Check for more pages
             paging = data.get("paging", {})
@@ -196,6 +218,8 @@ def fetch_changelog_data(
 
             start += batch_size
 
+        except TokenExpiredError:
+            raise
         except Exception as e:
             if verbose:
                 print(f"❌ Exception: {str(e)}")

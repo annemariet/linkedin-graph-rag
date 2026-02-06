@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Gradio web interface for LinkedIn GraphRAG.
+Gradio web interface for LinkedIn: extraction review and GraphRAG query.
 
-This provides a web UI for querying indexed LinkedIn content using GraphRAG.
+Tab 1: Review extraction (no Neo4j/Vertex required).
+Tab 2: GraphRAG query (lazy-init Neo4j and Vertex AI on demand).
 """
 
 # Standard library imports
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from neo4j import Driver
 
 # Local imports
+from linkedin_api.gradio_review import create_review_interface
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -36,8 +38,12 @@ from linkedin_api.query_graphrag import (
     create_vector_retriever,
 )
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging (visible in the terminal where you run the app)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 
@@ -270,28 +276,26 @@ def get_database_stats(services: GraphRAGServices) -> str:
         return f"❌ Error getting stats: {str(e)}"
 
 
-def create_gradio_interface(services: GraphRAGServices):
-    """
-    Create and configure the Gradio interface.
-
-    Args:
-        services: Initialized GraphRAG services
-    """
-
-    # Create closures to capture services
-    def query_fn(query_text: str, use_cypher: bool, top_k: int) -> str:
-        return query_linkedin_graphrag(services, query_text, use_cypher, top_k)
-
-    def stats_fn() -> str:
-        return get_database_stats(services)
-
-    with gr.Blocks(title="LinkedIn GraphRAG Query", theme=gr.themes.Soft()) as demo:
+def create_query_interface():
+    """Build the GraphRAG query Blocks (lazy-init Neo4j/Vertex). Used as second tab."""
+    with gr.Blocks(title="GraphRAG Query", theme=gr.themes.Soft()) as demo:
         gr.Markdown(
-            """
-        # 🔍 LinkedIn GraphRAG Query Interface
+            "# GraphRAG Query\nQuery your indexed LinkedIn content. Initialize once to connect."
+        )
 
-        Query your indexed LinkedIn posts and comments using natural language.
-        """
+        services_state = gr.State(value=None)
+
+        def init_fn():
+            try:
+                services = initialize_services()
+                return services, "Connected to Neo4j and Vertex AI. You can query now."
+            except RuntimeError as e:
+                logger.exception("GraphRAG init failed")
+                return None, f"Initialization failed: {e}"
+
+        init_btn = gr.Button("Initialize GraphRAG", variant="secondary")
+        init_status = gr.Markdown(
+            value="GraphRAG is not initialized. Click the button to connect to Neo4j and Vertex AI."
         )
 
         with gr.Row():
@@ -301,7 +305,6 @@ def create_gradio_interface(services: GraphRAGServices):
                     placeholder="What are the main themes in my LinkedIn posts?",
                     lines=3,
                 )
-
                 with gr.Row():
                     use_cypher = gr.Checkbox(
                         label="Use Graph Traversal (Cypher)",
@@ -315,17 +318,13 @@ def create_gradio_interface(services: GraphRAGServices):
                         step=1,
                         label="Number of Results (top_k)",
                     )
-
-                submit_btn = gr.Button("🔍 Search", variant="primary", size="lg")
-
+                submit_btn = gr.Button("Search", variant="primary", size="lg")
             with gr.Column(scale=1):
-                stats_output = gr.Markdown(value=stats_fn())
-                refresh_stats = gr.Button("🔄 Refresh Stats", size="sm")
+                stats_output = gr.Markdown(value="Initialize GraphRAG to load stats.")
+                refresh_stats = gr.Button("Refresh Stats", size="sm")
 
         answer_output = gr.Markdown(label="Answer")
 
-        # Example queries
-        gr.Markdown("### 💡 Example Queries")
         gr.Examples(
             examples=[
                 ["What topics do I post about most frequently?", False, 5],
@@ -336,38 +335,51 @@ def create_gradio_interface(services: GraphRAGServices):
             inputs=[query_input, use_cypher, top_k],
         )
 
-        # Event handlers
+        init_btn.click(
+            fn=init_fn,
+            inputs=[],
+            outputs=[services_state, init_status],
+        )
+
+        def do_query(svc, q, cypher, k):
+            if svc is None:
+                return "Click **Initialize GraphRAG** first to connect to Neo4j and Vertex AI."
+            return query_linkedin_graphrag(svc, q, cypher, k)
+
+        def do_stats(svc):
+            if svc is None:
+                return "Click **Initialize GraphRAG** to load database statistics."
+            return get_database_stats(svc)
+
         submit_btn.click(
-            fn=query_fn,
-            inputs=[query_input, use_cypher, top_k],
+            fn=do_query,
+            inputs=[services_state, query_input, use_cypher, top_k],
             outputs=answer_output,
         )
-
         query_input.submit(
-            fn=query_fn,
-            inputs=[query_input, use_cypher, top_k],
+            fn=do_query,
+            inputs=[services_state, query_input, use_cypher, top_k],
             outputs=answer_output,
         )
-
-        refresh_stats.click(fn=stats_fn, outputs=stats_output)
-
+        refresh_stats.click(
+            fn=do_stats,
+            inputs=[services_state],
+            outputs=stats_output,
+        )
     return demo
 
 
 def main():
-    """Launch the Gradio app."""
-    try:
-        services = initialize_services()
-    except RuntimeError as e:
-        logger.error(f"Initialization failed: {e}")
-        raise
-
-    demo = create_gradio_interface(services)
-
-    # Get port from environment (for Scalingo deployment)
+    """Launch the Gradio app with Review and Query tabs (TabbedInterface)."""
+    review_demo = create_review_interface()
+    query_demo = create_query_interface()
+    demo = gr.TabbedInterface(
+        [review_demo, query_demo],
+        ["Review extraction", "GraphRAG query"],
+        title="LinkedIn Extraction & GraphRAG",
+    )
     port = int(os.getenv("PORT", 7860))
     host = os.getenv("HOST", "0.0.0.0")
-
     logger.info(f"Starting Gradio app on {host}:{port}")
     demo.launch(server_name=host, server_port=port, share=False, show_error=True)
 

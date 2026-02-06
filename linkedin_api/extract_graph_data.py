@@ -51,6 +51,19 @@ OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
+def _add_trace(trace_list, json_path, value_used, field_name):
+    """Append a trace entry if trace_list is provided (for extraction preview)."""
+    if trace_list is not None:
+        v = value_used
+        if isinstance(v, (dict, list)):
+            v = json.dumps(v)[:200]
+        elif isinstance(v, str) and len(v) > 200:
+            v = v[:200] + "..."
+        trace_list.append(
+            {"json_path": json_path, "value_used": v, "field_name": field_name}
+        )
+
+
 def format_timestamp(timestamp):
     """Format timestamp in milliseconds to ISO string."""
     if not timestamp:
@@ -194,7 +207,13 @@ def _extract_parent_comment_urn(activity, response_context, post_urn):
 
 
 def process_reaction(
-    element, activity, people, posts, relationships, skipped_by_reason
+    element,
+    activity,
+    people,
+    posts,
+    relationships,
+    skipped_by_reason,
+    trace=None,
 ):
     """Process a reaction element and update entities/relationships."""
     resource_name = element.get("resourceName", "")
@@ -202,6 +221,20 @@ def process_reaction(
     reaction_type = activity.get("reactionType", "UNKNOWN")
     actor = extract_actor(element, activity)
     is_delete = _is_delete_action(element)
+    if trace is not None:
+        _add_trace(trace, "activity.root", activity.get("root"), "post_urn_candidate")
+        _add_trace(
+            trace, "activity.object", activity.get("object"), "post_urn_candidate"
+        )
+        _add_trace(trace, "activity.reactionType", reaction_type, "reaction_type")
+        _add_trace(trace, "element.actor", element.get("actor"), "actor")
+        _add_trace(trace, "activity.actor", activity.get("actor"), "actor")
+        _add_trace(
+            trace,
+            "activity.created.time",
+            activity.get("created", {}).get("time"),
+            "timestamp",
+        )
 
     if not post_urn:
         skipped_by_reason[f"reaction_no_post_urn_{resource_name}"] += 1
@@ -235,10 +268,36 @@ def process_reaction(
     )
 
 
-def process_post(element, activity, people, posts, relationships, skipped_by_reason):
+def process_post(
+    element, activity, people, posts, relationships, skipped_by_reason, trace=None
+):
     """Process a post element and update entities/relationships."""
     resource_name = element.get("resourceName", "")
     post_urn = activity.get("id", "")
+    if trace is not None:
+        _add_trace(trace, "activity.id", post_urn, "post_urn")
+        _add_trace(trace, "activity.author", activity.get("author"), "author")
+        _add_trace(
+            trace,
+            "activity.created.time",
+            activity.get("created", {}).get("time"),
+            "timestamp",
+        )
+        share_content = activity.get("specificContent", {}).get(
+            "com.linkedin.ugc.ShareContent", {}
+        )
+        _add_trace(
+            trace,
+            "activity.specificContent...shareCommentary.text",
+            share_content.get("shareCommentary", {}).get("text", "")[:100],
+            "content",
+        )
+        _add_trace(
+            trace,
+            "activity.responseContext.parent",
+            activity.get("responseContext", {}).get("parent"),
+            "original_post_urn",
+        )
 
     if not post_urn:
         skipped_by_reason[f"post_no_id_{resource_name}"] += 1
@@ -320,13 +379,31 @@ def process_post(element, activity, people, posts, relationships, skipped_by_rea
 
 
 def process_comment(
-    element, activity, people, posts, comments, relationships, skipped_by_reason
+    element,
+    activity,
+    people,
+    posts,
+    comments,
+    relationships,
+    skipped_by_reason,
+    trace=None,
 ):
     """Process a comment element and update entities/relationships."""
     resource_name = element.get("resourceName", "")
     comment_id = activity.get("id", "")
     post_urn = activity.get("object", "")
     actor = extract_actor(element, activity)
+    if trace is not None:
+        _add_trace(trace, "activity.id", comment_id, "comment_id")
+        _add_trace(trace, "activity.object", post_urn, "post_urn")
+        _add_trace(trace, "element.actor", element.get("actor"), "actor")
+        _add_trace(trace, "activity.actor", activity.get("actor"), "actor")
+        _add_trace(
+            trace,
+            "activity.message.text",
+            activity.get("message", {}).get("text", "")[:100],
+            "comment_text",
+        )
 
     if not comment_id:
         skipped_by_reason[f"comment_no_id_{resource_name}"] += 1
@@ -421,12 +498,29 @@ def process_comment(
 
 
 def process_instant_repost(
-    element, activity, people, posts, relationships, skipped_by_reason
+    element,
+    activity,
+    people,
+    posts,
+    relationships,
+    skipped_by_reason,
+    trace=None,
 ):
     """Process an instant repost element and update entities/relationships."""
     resource_name = element.get("resourceName", "")
     reposted_share = activity.get("repostedContent", {}).get("share", "")
     actor = extract_actor(element, activity)
+    if trace is not None:
+        _add_trace(
+            trace, "activity.repostedContent.share", reposted_share, "reposted_share"
+        )
+        _add_trace(trace, "element.actor", element.get("actor"), "actor")
+        _add_trace(
+            trace,
+            "activity.created.time",
+            activity.get("created", {}).get("time"),
+            "timestamp",
+        )
 
     if not reposted_share:
         skipped_by_reason[f"instant_repost_no_share_{resource_name}"] += 1
@@ -611,7 +705,7 @@ def parse_start_time(value):
         return None
 
 
-def get_all_post_activities(start_time=None):
+def get_all_post_activities(start_time=None, verbose=True):
     """Fetch all changelog data related to public posts."""
     post_related_resources = [
         RESOURCE_REACTIONS,
@@ -621,11 +715,11 @@ def get_all_post_activities(start_time=None):
         RESOURCE_INSTANT_REPOSTS,
     ]
 
-    print("🔍 Fetching all post-related activities...")
     elements = fetch_changelog_data(
-        resource_filter=post_related_resources, start_time=start_time
+        resource_filter=post_related_resources,
+        start_time=start_time,
+        verbose=verbose,
     )
-    print(f"✅ Total post-related elements: {len(elements)}")
     return elements
 
 
