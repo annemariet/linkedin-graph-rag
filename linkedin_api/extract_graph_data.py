@@ -339,8 +339,7 @@ def process_post(
         "created_at": format_timestamp(timestamp),
     }
     if content:
-        post_props["content"] = content[:200]
-        # Extract URLs from full content before truncation
+        post_props["content"] = content
         urls = extract_urls_from_text(content)
         if urls:
             post_props["extracted_urls"] = urls
@@ -436,12 +435,11 @@ def process_comment(
         comment_props = {
             "urn": comment_urn,
             "comment_id": comment_id,
-            "text": comment_text[:200] if comment_text else "",
+            "text": comment_text or "",
             "timestamp": timestamp,
             "created_at": format_timestamp(timestamp),
             "url": comment_url,
         }
-        # Extract URLs from full comment text before truncation
         if comment_text:
             urls = extract_urls_from_text(comment_text)
             if urls:

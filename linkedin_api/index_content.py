@@ -52,6 +52,13 @@ CHUNK_OVERLAP = 100  # Overlap between chunks
 EMBEDDING_DIMENSIONS = 768  # Standard for gecko models
 BATCH_SIZE = 50  # Number of chunks to process per batch
 
+# When set (1, true, yes), use only content from Neo4j (API); never fetch LinkedIn URLs.
+USE_API_CONTENT_ONLY = os.getenv("USE_API_CONTENT_ONLY", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 
 def extract_post_content(url: str) -> Optional[str]:
     """
@@ -173,7 +180,9 @@ def get_posts_and_comments(driver) -> List[Dict]:
       AND NOT EXISTS {
         MATCH (n)<-[:FROM_CHUNK]-(:Chunk)
       }
-    RETURN n.urn as urn, n.url as url, labels(n) as labels, n.post_id as post_id, n.comment_id as comment_id
+    RETURN n.urn as urn, n.url as url, labels(n) as labels,
+           n.post_id as post_id, n.comment_id as comment_id,
+           n.content as content, n.text as text
     """
 
     with driver.session(database=NEO4J_DATABASE) as session:
@@ -187,6 +196,8 @@ def get_posts_and_comments(driver) -> List[Dict]:
                     "labels": record["labels"],
                     "post_id": record.get("post_id"),
                     "comment_id": record.get("comment_id"),
+                    "content": record.get("content"),
+                    "text": record.get("text"),
                 }
             )
         return nodes
@@ -300,12 +311,18 @@ def index_content_for_graphrag(
         elif i == 1 or i % 10 == 0 or i == len(nodes):
             logger.info(f"   Processing {i}/{len(nodes)}...")
 
-        # Extract content
-        content = extract_post_content(url)
+        # Prefer content from Neo4j (API); fall back to URL fetch unless USE_API_CONTENT_ONLY
+        content = None
+        if "Post" in labels:
+            content = (node.get("content") or "").strip()
+        elif "Comment" in labels:
+            content = (node.get("text") or "").strip()
 
+        if not content and not USE_API_CONTENT_ONLY:
+            content = extract_post_content(url)
         if not content:
             if verbose:
-                logger.warning(f"   ⚠️  No content extracted from {url}")
+                logger.warning(f"   ⚠️  No content (API or URL) for {urn[:50]}...")
             failed += 1
             continue
 

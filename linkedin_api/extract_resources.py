@@ -9,6 +9,7 @@ Extracts URLs from:
 Creates Resource nodes with REFERENCES relationships to posts and comments.
 """
 
+import os
 import re
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -16,6 +17,14 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
+
+
+# When set (1, true, yes), use only content from API/Neo4j; never fetch LinkedIn URLs.
+USE_API_CONTENT_ONLY = os.getenv("USE_API_CONTENT_ONLY", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 def _is_comment_feed_url(url: str) -> bool:
@@ -617,8 +626,8 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
                         len(content) > 190
                         and not content.endswith((".", "!", "?", "…"))
                     )
-                # Fallback 2: fetch from post URL if no URLs found or content seems truncated
-                if not urls or is_truncated:
+                # Fallback 2: fetch from post URL only if allowed and content missing/truncated
+                if (not urls or is_truncated) and not USE_API_CONTENT_ONLY:
                     post_url = props.get("url", "")
                     if post_url and not _is_comment_feed_url(post_url):
                         print(f"   🔄 Fetching content from post URL: {post_url}")
@@ -769,17 +778,14 @@ def enrich_posts_with_resources(
             else:
                 is_truncated = True
 
-            # Fallback: fetch from post URL if no URLs found or content seems truncated
-            post_url = post.get("url")
-            if (
-                (not urls or is_truncated)
-                and post_url
-                and not _is_comment_feed_url(post_url)
-            ):
-                print(f"   🔄 Fetching content from post URL: {post_url}")
-                full_content = fetch_post_content_from_url(post_url)
-                if full_content:
-                    urls = extract_urls_from_text(full_content)
+            # Fallback: fetch from post URL only if allowed and content missing/truncated
+            if (not urls or is_truncated) and not USE_API_CONTENT_ONLY:
+                post_url = post.get("url")
+                if post_url and not _is_comment_feed_url(post_url):
+                    print(f"   🔄 Fetching content from post URL: {post_url}")
+                    full_content = fetch_post_content_from_url(post_url)
+                    if full_content:
+                        urls = extract_urls_from_text(full_content)
             if urls:
                 post_resources[post["urn"]] = urls
 

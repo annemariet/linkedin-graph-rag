@@ -68,6 +68,15 @@ NEO4J_PASSWORD=your_password
 NEO4J_DATABASE=neo4j
 ```
 
+### 5. Optional: Compliance / API-only mode
+
+To avoid fetching LinkedIn post pages (see [API terms compliance](docs/API_TERMS_COMPLIANCE.md)):
+
+- **`USE_API_CONTENT_ONLY=1`** – Use only content from the Portability API/Neo4j for indexing and resource extraction. Never fetch post URLs for content.
+- **`ENABLE_AUTHOR_ENRICHMENT=0`** – Disable author name/profile enrichment (no HTTP requests to LinkedIn post pages). Build graph and `enrich_profiles` will skip author fetch; Gradio review will show "Author enrichment disabled".
+
+By default, content is taken from the API first; URL fetch is only used when content is missing (e.g. legacy data). Author enrichment is enabled by default.
+
 ## Building the Graph
 
 ### Step-by-Step Workflow
@@ -104,8 +113,8 @@ uv run python -m linkedin_api.build_graph
 
 **What it does:**
 1. Loads nodes and relationships from JSON into Neo4j
-2. Enriches Post nodes with author information (name, profile URL) by scraping LinkedIn
-3. Extracts external resources (articles, videos, GitHub repos) from post/comment content
+2. Optionally enriches Post nodes with author information (name, profile URL); set `ENABLE_AUTHOR_ENRICHMENT=0` to skip
+3. Extracts external resources (articles, videos, GitHub repos) from post/comment content (API content used first; set `USE_API_CONTENT_ONLY=1` to never fetch post URLs)
 4. Creates Resource nodes and REFERENCES relationships
 
 **Options:**
