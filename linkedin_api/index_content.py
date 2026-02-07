@@ -2,14 +2,15 @@
 """
 Index LinkedIn post and comment content for GraphRAG.
 
-This script:
+Content is sourced from the Portability API (stored in Neo4j). This script:
 1. Fetches Post and Comment nodes from Neo4j
-2. Extracts content from their URLs
+2. Uses content from Neo4j; optionally fetches from post URLs only when content is missing
 3. Creates Chunk nodes with embeddings
 4. Links chunks to posts/comments
 5. Creates vector index for GraphRAG retrieval
 
 Supports incremental indexing: only processes posts/comments without existing Chunk nodes.
+Set USE_API_CONTENT_ONLY=1 to never fetch post URLs.
 """
 
 import os
@@ -52,7 +53,7 @@ CHUNK_OVERLAP = 100  # Overlap between chunks
 EMBEDDING_DIMENSIONS = 768  # Standard for gecko models
 BATCH_SIZE = 50  # Number of chunks to process per batch
 
-# When set (1, true, yes), use only content from Neo4j (API); never fetch LinkedIn URLs.
+# When set (1, true, yes), use only content from Neo4j (Portability API); never read post URLs.
 USE_API_CONTENT_ONLY = os.getenv("USE_API_CONTENT_ONLY", "").lower() in (
     "1",
     "true",

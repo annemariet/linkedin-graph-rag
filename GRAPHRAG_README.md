@@ -6,7 +6,7 @@ This guide explains how to index LinkedIn post and comment content for GraphRAG 
 
 ## Overview
 
-The GraphRAG system indexes the text content of LinkedIn posts and comments, creates embeddings, and enables semantic search over your LinkedIn activity.
+The GraphRAG system indexes the text content of LinkedIn posts and comments (sourced from the Portability API and Neo4j), creates embeddings, and enables semantic search over your LinkedIn activity.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ The GraphRAG system indexes the text content of LinkedIn posts and comments, cre
 
 ## Step 1: Index Content
 
-Run the indexing script to extract content from LinkedIn URLs and create embeddings:
+Run the indexing script to index content (from the Portability API/Neo4j; post URLs are only used when content is missing):
 
 ```bash
 # Process all posts/comments
@@ -38,8 +38,8 @@ uv run python -m linkedin_api.index_content --limit 5
 ```
 
 This script will:
-- Fetch all Post and Comment nodes with URLs from Neo4j
-- Extract text content from each URL
+- Fetch Post and Comment nodes from Neo4j (content comes from the Portability API; URL fetch only when content is missing)
+- Use stored content or extract text from post URL when needed
 - Split content into chunks (500 chars with 100 char overlap)
 - Create Chunk nodes linked to posts/comments
 - Generate embeddings using Google Vertex AI
@@ -123,7 +123,7 @@ Better for queries requiring relationship context.
 
 ### No content extracted
 
-LinkedIn pages may require authentication or have dynamic content. The script uses basic HTML parsing which may not work for all posts.
+Content is primarily from the Portability API (stored in Neo4j). When content is missing, the script may fetch the post URL; that path uses basic HTML parsing and may not work for all posts (e.g. auth or dynamic content).
 
 ### Embedding errors
 

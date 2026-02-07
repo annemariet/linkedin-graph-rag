@@ -127,7 +127,7 @@ def create_relationships_batch(tx, rels_batch, incremental=True):
 
 def enrich_posts_with_authors(driver):
     """
-    Enrich Post nodes with author information by fetching LinkedIn post URLs.
+    Enrich Post nodes with author information using post URLs from the Portability API (optional).
     Only runs when ENABLE_AUTHOR_ENRICHMENT=1; only processes posts without author info.
     """
     if not is_author_enrichment_enabled():

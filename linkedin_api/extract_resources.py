@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
 
-# When set (1, true, yes), use only content from API/Neo4j; never fetch LinkedIn URLs.
+# When set (1, true, yes), use only content from API/Neo4j; never read LinkedIn post URLs.
 USE_API_CONTENT_ONLY = os.getenv("USE_API_CONTENT_ONLY", "").lower() in (
     "1",
     "true",

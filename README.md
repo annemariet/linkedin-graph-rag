@@ -1,13 +1,13 @@
 # LinkedIn Graph Data Extraction
 
-A Python client for extracting LinkedIn activity data from the Member Data Portability API and building a Neo4j knowledge graph.
+A Python client for extracting LinkedIn activity data from the **Member Data Portability API** and building a Neo4j knowledge graph. Data comes from selective reading of your own activity via the official API, not from scraping the site.
 
 ## Features
 
-- ✅ Fetch post-related activities (posts, comments, reactions)
+- ✅ Fetch your post-related activities (posts, comments, reactions) via the Portability API
 - ✅ Extract entities and relationships for Neo4j
-- ✅ Enrich posts with author profiles
-- ✅ Extract and link external resources (articles, videos, repos)
+- ✅ Optionally enrich posts with author profiles (using post URLs from the API)
+- ✅ Extract and link external resources (articles, videos, repos) from API content
 - ✅ Build Neo4j knowledge graph
 - ✅ Query graph with GraphRAG
 
@@ -68,9 +68,9 @@ NEO4J_PASSWORD=your_password
 NEO4J_DATABASE=neo4j
 ```
 
-### 5. Optional: Compliance / API-only mode
+### 5. Optional: API-only mode (no URL fetching)
 
-To avoid fetching LinkedIn post pages (see [API terms compliance](docs/API_TERMS_COMPLIANCE.md)):
+To use only Portability API and Neo4j data, without any HTTP requests to post URLs:
 
 - **`USE_API_CONTENT_ONLY=1`** – Use only content from the Portability API/Neo4j for indexing and resource extraction. Never fetch post URLs for content.
 - **`ENABLE_AUTHOR_ENRICHMENT=0`** – Disable author name/profile enrichment (no HTTP requests to LinkedIn post pages). Build graph and `enrich_profiles` will skip author fetch; Gradio review will show "Author enrichment disabled".

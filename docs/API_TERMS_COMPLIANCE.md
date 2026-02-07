@@ -2,15 +2,19 @@
 
 This doc summarizes how this project uses LinkedIn and where it aligns or may conflict with LinkedIn’s terms. **It is not legal advice.** You should read the official terms and, if needed, get legal advice.
 
+## How this project gets data
+
+The project is built around **selective use of the LinkedIn Member Data Portability API**: you request your own activity (changelog), and the code uses that API-derived data as the primary source. It is not a scraper: it does not discover or crawl LinkedIn; it only works with activity and URLs that the API already returns for the authenticated member.
+
 ## Official terms to review
 
 - **[Additional Terms for the LinkedIn DMA Portability API Programs](https://www.linkedin.com/legal/l/portability-api-terms)** – governs Portability API use; overrides general API terms where they conflict.
 - **[LinkedIn API Terms of Use](https://www.linkedin.com/legal/l/api-terms-of-use)** – general API and platform rules.
-- **LinkedIn User Agreement** – general use of LinkedIn (including automated access and scraping).
+- **LinkedIn User Agreement** – general use of LinkedIn (including automated access to pages).
 
 ## What this project does
 
-### 1. Member Data Portability API (Changelog)
+### 1. Member Data Portability API (Changelog) — primary data source
 
 - **How:** OAuth with `r_dma_portability_self_serve`, then REST calls to the Member Changelog API.
 - **What:** Fetches the **authenticated member’s own** activity (posts, comments, reactions they created or interacted with).
@@ -18,21 +22,21 @@ This doc summarizes how this project uses LinkedIn and where it aligns or may co
 
 **Compliance:** This use fits the Portability API’s purpose (member retrieving and using their own data). It is limited to the data and use cases described in the Portability and API terms (e.g. no advertising, sales, or recruiting use).
 
-### 2. HTTP requests to public LinkedIn post URLs
+### 2. Optional: reading content from URLs returned by the API
 
-- **How:** `requests.get(post_url)` and HTML parsing (e.g. BeautifulSoup) on **public** post pages.
+- **How:** For a subset of items (your own), the code may issue `requests.get(post_url)` and parse HTML to obtain full post text or author info. The **URLs come only from the Portability API** (your changelog); the project does not discover or crawl other members or feeds.
 - **Where used:**
-  - **enrich_profiles.py** – author name and profile URL from post HTML.
-  - **index_content.py** – full post text for chunking/embedding.
-  - **extract_resources.py** – post content and link extraction; **extract_title_from_url** also fetches arbitrary URLs (including non-LinkedIn).
-- **Context:** URLs come from the Portability API (your own changelog). The extra HTTP fetch is used to get full content/author for **your own** feed items, not to crawl other members at scale.
+  - **enrich_profiles.py** – optional author name and profile URL from post HTML (can be disabled with `ENABLE_AUTHOR_ENRICHMENT=0`).
+  - **index_content.py** – full post text when not already in Neo4j (API content is used first; `USE_API_CONTENT_ONLY=1` disables URL fetch).
+  - **extract_resources.py** – post content and link extraction from API/Neo4j first; **extract_title_from_url** also fetches arbitrary URLs (including non-LinkedIn) for resource metadata.
+- **Context:** This is selective reading of pages for **your own** activity items already returned by the API, not bulk or cross-user scraping.
 
-**Compliance concern:** LinkedIn’s terms generally prohibit:
+**Compliance concern:** LinkedIn's terms generally prohibit:
 
 - **Scraping / automated access** – programmatic fetching and parsing of LinkedIn pages is typically restricted, even for public content.
-- **Commingling** – combining LinkedIn data with other sources (including “scraped” content) in ways that violate the API terms.
+- **Commingling** – combining LinkedIn data with other sources in ways that violate the API terms.
 
-So: **using the Portability API is aligned with the Portability/API terms; adding content/author by HTTP‑fetching public post pages is a compliance risk** under the general API and user terms.
+So: **using the Portability API as the sole source of discovery and primary source of content is aligned with the Portability/API terms; optional enrichment by reading public post URLs for your own items is a separate compliance consideration** under the general API and user terms.
 
 ## Geographic / eligibility
 
@@ -45,15 +49,15 @@ So: **using the Portability API is aligned with the Portability/API terms; addin
    Open the Portability and API terms links above and confirm your use case and data handling match.
 
 2. **Reduce reliance on HTTP fetching of LinkedIn pages**
-   Where possible, rely only on data returned by the Portability API (e.g. any post/comment text or identifiers it provides) for indexing and author info, and avoid or minimize HTML scraping of post URLs.
+   Where possible, rely only on data returned by the Portability API (e.g. post/comment text or identifiers it provides) for indexing and author info, and avoid or minimize reading post URLs.
 
 3. **Optional: document and gate “enrichment”**
    If you keep post-URL fetching:
    - Treat it as an optional enrichment (e.g. feature flag or doc note) so the core flow is “API only.”
-   - In docs/UI, state that author/content enrichment uses public page fetches and may be subject to LinkedIn’s scraping/automation rules.
+   - In docs/UI, state that author/content enrichment uses selective reads of post URLs (from the API) and may be subject to LinkedIn’s automation rules.
 
 4. **No advertising / sales / recruiting**
-   Do not use Portability or scraped data for ads, lead gen, sales prospects, or recruiting. This project’s use (personal graph/GraphRAG) is consistent with that.
+   Do not use Portability or other project data for ads, lead gen, sales prospects, or recruiting. This project’s use (personal graph/GraphRAG) is consistent with that.
 
 5. **Data retention**
    Portability terms may have expectations on how long you keep data; general API terms sometimes impose short retention (e.g. 24–48h) for certain data. Check the current Portability and API terms for any retention or storage limits.
@@ -64,8 +68,8 @@ So: **using the Portability API is aligned with the Portability/API terms; addin
 |-----------------------------|----------------|
 | Portability API usage       | Aligned (own data, personal use). |
 | Long-term storage of API data | Confirm against current Portability/API terms. |
-| HTTP fetch of post URLs     | **Risk:** may conflict with anti-scraping and commingling rules. |
-| Author/content enrichment  | Same risk as above; consider making optional or API-only where possible. |
+| Optional read of post URLs (your own, from API) | **Risk:** may conflict with anti-scraping and commingling rules. |
+| Author/content enrichment  | Same risk as above; gated by env vars; API-only mode available. |
 
 You should validate this against the latest Portability and API terms and your own legal requirements.
 

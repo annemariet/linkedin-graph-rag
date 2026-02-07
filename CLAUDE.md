@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Python client for LinkedIn's Portability API (DMA-compliant) that fetches user activity data (saved posts, reactions, comments), builds a knowledge graph in Neo4j, and enables GraphRAG-powered semantic search over LinkedIn content.
+A Python client for LinkedIn's Portability API (DMA-compliant) that uses the API for selective reading of your own activity (posts, reactions, comments), builds a knowledge graph in Neo4j, and enables GraphRAG-powered semantic search. Data is obtained via the Portability API, not by scraping.
 
 ## Core Workflow
 
@@ -139,8 +139,8 @@ Loads graph data into Neo4j:
 
 #### `linkedin_api/index_content.py`
 Indexes post/comment content for GraphRAG:
-- Fetches Post/Comment nodes with URLs from Neo4j
-- Extracts text via BeautifulSoup (LinkedIn HTML parsing)
+- Fetches Post/Comment nodes from Neo4j (content sourced from Portability API)
+- Uses content from Neo4j; only fetches from post URLs when content is missing (e.g. legacy data)
 - Splits text into chunks (500 chars, 100 char overlap)
 - Generates embeddings via Google Vertex AI (`textembedding-gecko@002`)
 - Creates Chunk nodes linked to source posts/comments
@@ -275,7 +275,7 @@ uv run python setup_token.py
 
 ### GraphRAG Limitations
 - Content extraction from LinkedIn URLs requires public accessibility
-- Dynamic content may not be fully parsed (basic HTML parsing)
+- Content is primarily from the Portability API; URL fetch is only a fallback and may not work for all posts (basic HTML parsing)
 - Embedding generation fails fast (no silent errors)
 - Vector index dimensions must match embedding model (768 for gecko)
 
