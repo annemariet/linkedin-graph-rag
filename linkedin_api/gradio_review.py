@@ -15,6 +15,7 @@ import gradio as gr
 from linkedin_api.enrich_profiles import (
     extract_author_profile_with_details,
     get_thumbnail_path_for_url,
+    is_author_enrichment_enabled,
 )
 from linkedin_api.extract_resources import extract_urls_from_text
 from linkedin_api.extract_graph_data import get_all_post_activities
@@ -753,12 +754,19 @@ def create_review_interface():
         url = _get_post_url_from_extracted(preview)
         if not url:
             url = _get_post_url_from_raw(raw)
-        details = extract_author_profile_with_details(url) if url else {}
-        author_text = (
-            _format_author_result(details)
-            if details
-            else "URL tried: (none)\nResult: No Post URL in extracted data or raw element."
+        details = (
+            extract_author_profile_with_details(url)
+            if url and is_author_enrichment_enabled()
+            else {}
         )
+        if not url:
+            author_text = "URL tried: (none)\nResult: No Post URL in extracted data or raw element."
+        elif not is_author_enrichment_enabled():
+            author_text = "Author enrichment disabled (ENABLE_AUTHOR_ENRICHMENT=0)."
+        else:
+            author_text = (
+                _format_author_result(details) if details else _format_author_result({})
+            )
         content = (details.get("content") or "").strip()
         content_source = "fetched page"
         if not content:

@@ -1,6 +1,9 @@
 """
 Test thumbnail generation with Playwright.
 
+Requires Chromium: run `uv run playwright install chromium` before tests.
+If Chromium is not installed, browser-dependent tests are skipped.
+
 Run: uv run pytest tests/test_enrich_thumbnails.py -v
 """
 
@@ -13,10 +16,32 @@ import pytest
 from linkedin_api.enrich_profiles import _ensure_thumbnail, get_thumbnail_path_for_url
 
 
+def _chromium_available() -> bool:
+    """Return True if Playwright and Chromium are available for screenshot tests."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        return True
+    except Exception:
+        return False
+
+
+# Skip browser-dependent tests when Chromium isn't installed (e.g. fresh clone).
+# CI installs it via: uv run playwright install chromium
+_skip_no_chromium = pytest.mark.skipif(
+    not _chromium_available(),
+    reason="Playwright Chromium not installed. Run: uv run playwright install chromium",
+)
+
+
 @pytest.mark.unit
 class TestEnsureThumbnail:
     """_ensure_thumbnail generates screenshots from HTML files."""
 
+    @_skip_no_chromium
     def test_simple_html_generates_thumbnail(self):
         """Simple HTML should generate a thumbnail successfully."""
         html_content = """<!DOCTYPE html>
@@ -35,6 +60,7 @@ class TestEnsureThumbnail:
             assert png_path.exists()
             assert png_path.stat().st_size > 0
 
+    @_skip_no_chromium
     def test_existing_thumbnail_is_reused(self):
         """If PNG already exists, return it without regenerating."""
         html_content = "<html><body>Test</body></html>"
@@ -60,6 +86,7 @@ class TestEnsureThumbnail:
             assert result is None
             assert not png_path.exists()
 
+    @_skip_no_chromium
     def test_external_requests_blocked(self):
         """External network requests should be blocked to prevent timeouts."""
         # HTML with external resources that would normally cause timeouts

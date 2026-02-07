@@ -1,0 +1,26 @@
+# Enforce LF line endings for all text files
+* text=auto eol=lf
+
+# Explicitly set Python files
+*.py text eol=lf
+
+# Explicitly set markdown files
+*.md text eol=lf
+
+# Explicitly set config files
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary

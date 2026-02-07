@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Enrich Post nodes with author profile information by scraping LinkedIn URLs.
+Enrich Post nodes with author profile information using post URLs from the Portability API.
 
 Extracts author name and profile URL from post HTML and stores them as properties
-on the Post nodes in Neo4j. Can fetch once per URL and parse author + post content
-from the same HTML; optionally cache raw HTML for reuse.
+on the Post nodes in Neo4j. Post URLs come from the Portability API (your changelog).
+Optional: can fetch once per URL and parse author + post content from the same HTML;
+optionally cache raw HTML for reuse. Disable with ENABLE_AUTHOR_ENRICHMENT=0.
 """
 
 import hashlib
@@ -25,6 +26,19 @@ from linkedin_api.utils.urns import comment_urn_to_post_url
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+# When unset or 0/false/no, author enrichment (reading post URLs from the API for author name/URL) is skipped.
+ENABLE_AUTHOR_ENRICHMENT = os.getenv("ENABLE_AUTHOR_ENRICHMENT", "1").lower() not in (
+    "0",
+    "false",
+    "no",
+)
+
+
+def is_author_enrichment_enabled() -> bool:
+    """Return True if author profile enrichment (reading post URLs from the API) is enabled."""
+    return ENABLE_AUTHOR_ENRICHMENT
+
 
 # Dir for caching fetched HTML (optional): outputs/review/cache/
 _CACHE_DIR: Optional[Path] = None
@@ -589,6 +603,13 @@ def main():
 
     print("🔍 LinkedIn Post Author Profile Enrichment")
     print("=" * 60)
+
+    if not ENABLE_AUTHOR_ENRICHMENT:
+        print("⏭️  Author enrichment is disabled (ENABLE_AUTHOR_ENRICHMENT=0).")
+        print(
+            "   Set ENABLE_AUTHOR_ENRICHMENT=1 to fetch author name/profile from post URLs."
+        )
+        return
 
     # Parse command line args
     limit = None

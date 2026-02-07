@@ -24,6 +24,7 @@ from linkedin_api.enrich_profiles import (
     get_posts_without_author,
     extract_author_profile,
     update_post_author,
+    is_author_enrichment_enabled,
 )
 from linkedin_api.extract_resources import enrich_posts_with_resources
 
@@ -126,9 +127,13 @@ def create_relationships_batch(tx, rels_batch, incremental=True):
 
 def enrich_posts_with_authors(driver):
     """
-    Enrich Post nodes with author information by scraping LinkedIn URLs.
-    Only processes posts that don't already have author information.
+    Enrich Post nodes with author information using post URLs from the Portability API (optional).
+    Only runs when ENABLE_AUTHOR_ENRICHMENT=1; only processes posts without author info.
     """
+    if not is_author_enrichment_enabled():
+        print("\n⏭️  Skipping author enrichment (ENABLE_AUTHOR_ENRICHMENT=0).")
+        return
+
     print("\n🔍 Enriching posts with author information...")
 
     posts = get_posts_without_author(driver)
