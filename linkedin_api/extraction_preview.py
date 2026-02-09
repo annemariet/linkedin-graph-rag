@@ -13,6 +13,7 @@ from linkedin_api.extract_graph_data import (
     RESOURCE_POST,
     RESOURCE_POSTS,
     RESOURCE_REACTIONS,
+    _is_comment_like_activity,
     process_comment,
     process_instant_repost,
     process_post,
@@ -55,6 +56,20 @@ def extract_element_preview(element: dict) -> dict:
             trace=trace,
         )
         primary = "reaction"
+    elif (
+        RESOURCE_POST in resource_name.lower() or RESOURCE_POSTS in resource_name
+    ) and _is_comment_like_activity(activity):
+        process_comment(
+            element,
+            activity,
+            people,
+            posts,
+            comments,
+            relationships,
+            skipped_by_reason,
+            trace=trace,
+        )
+        primary = "comment"
     elif RESOURCE_POST in resource_name.lower() or RESOURCE_POSTS in resource_name:
         process_post(
             element,
