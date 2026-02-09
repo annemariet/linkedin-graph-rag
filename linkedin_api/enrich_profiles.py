@@ -298,6 +298,70 @@ def _parse_author_from_soup(soup: BeautifulSoup) -> Optional[Dict[str, str]]:
     return None
 
 
+def _normalize_profile_link(link) -> Optional[Dict[str, str]]:
+    """Extract name and profile_url from a single profile link (a tag with /in/)."""
+    href = link.get("href", "")
+    if "/in/" not in href:
+        return None
+    profile_url = href.split("?")[0]
+    profile_url = re.sub(
+        r"https?://[a-z]{2}\.linkedin\.com",
+        "https://www.linkedin.com",
+        profile_url,
+    )
+    if (
+        not profile_url.startswith("https://www.linkedin.com")
+        and "//linkedin.com" in profile_url
+    ):
+        profile_url = profile_url.replace("//linkedin.com", "//www.linkedin.com")
+    name = (
+        link.get_text(strip=True)
+        if link.string is None
+        else (link.string or "").strip()
+    )
+    if name and 1 < len(name) < 100:
+        return {"name": name, "profile_url": profile_url}
+    return None
+
+
+def parse_comment_author_from_html(
+    html: str, comment_text: str
+) -> Optional[Dict[str, str]]:
+    """
+    Find the comment block in post HTML by matching comment text and extract author.
+
+    Args:
+        html: Raw post page HTML
+        comment_text: Text of the comment to find (can be truncated)
+
+    Returns:
+        Dict with 'name' and 'profile_url' or None
+    """
+    if not comment_text or not html:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    snippet = (comment_text.strip()[:150] if comment_text else "").strip()
+    if len(snippet) < 3:
+        return None
+    for elem in soup.find_all(True):
+        if snippet[:50] in elem.get_text():
+            for link in elem.find_all("a", href=True):
+                if "/in/" in link.get("href", ""):
+                    author = _normalize_profile_link(link)
+                    if author:
+                        return author
+            parent = elem.parent
+            while parent and parent.name:
+                for link in parent.find_all("a", href=True):
+                    if "/in/" in link.get("href", ""):
+                        author = _normalize_profile_link(link)
+                        if author:
+                            return author
+                parent = parent.parent
+            break
+    return None
+
+
 def _parse_content_from_soup(soup: BeautifulSoup) -> str:
     """Extract post body text from parsed HTML (same logic as index_content / extract_resources)."""
     content_text = []
@@ -595,6 +659,83 @@ def update_post_author(driver, post_urn: str, author_info: Dict[str, str]):
             profile_url=author_info["profile_url"],
         )
         return result.single() is not None
+
+
+def get_comments_without_author(driver, limit: Optional[int] = None) -> list:
+    """Fetch Comment nodes that have a url but no author_profile_url."""
+    query = """
+    MATCH (comment:Comment)
+    WHERE comment.url IS NOT NULL
+      AND (comment.author_profile_url IS NULL OR comment.author_name IS NULL)
+    OPTIONAL MATCH (p:Person)-[:CREATES]->(comment)
+    WITH comment, p
+    WHERE p IS NULL OR p.profile_url IS NULL
+    RETURN comment.urn AS urn, comment.url AS url, comment.text AS text
+    """
+    if limit:
+        query += f" LIMIT {int(limit)}"
+    with driver.session() as session:
+        result = session.run(query)
+        return [dict(record) for record in result]
+
+
+def update_comment_author(
+    driver, comment_urn: str, author_info: Dict[str, str]
+) -> bool:
+    """Set comment author; remove any existing incorrect CREATES and merge correct one."""
+    query = """
+    MATCH (comment:Comment {urn: $urn})
+    OPTIONAL MATCH (any_person:Person)-[r:CREATES]->(comment)
+    WITH comment, r
+    DELETE r
+    WITH comment
+    SET comment.author_name = $name,
+        comment.author_profile_url = $profile_url
+    MERGE (person:Person {profile_url: $profile_url})
+    ON CREATE SET person.name = $name
+    ON MATCH SET person.name = $name
+    MERGE (person)-[:CREATES]->(comment)
+    RETURN comment.urn as urn
+    """
+    with driver.session() as session:
+        result = session.run(
+            query,
+            urn=comment_urn,
+            name=author_info.get("name", ""),
+            profile_url=author_info["profile_url"],
+        )
+        return result.single() is not None
+
+
+def enrich_comments_with_authors(driver, limit: Optional[int] = None) -> None:
+    """Fetch comments without author, scrape post page, extract author, update Neo4j."""
+    comments = get_comments_without_author(driver, limit)
+    if not comments:
+        logger.info("No comments need author enrichment")
+        return
+    logger.info("Enriching %d comments with authors...", len(comments))
+    success = 0
+    failed = 0
+    for comment in comments:
+        urn = comment["urn"]
+        url = comment.get("url", "")
+        text = comment.get("text", "")
+        post_url = _normalize_post_url(url)
+        if not post_url:
+            continue
+        result = fetch_post_page(post_url, use_cache=True, save_to_cache=True)
+        html = result.get("html")
+        if not html:
+            continue
+        author = parse_comment_author_from_html(html, text)
+        if author:
+            ok = update_comment_author(driver, urn, author)
+            if ok:
+                success += 1
+            else:
+                failed += 1
+    if success or failed:
+        logger.info("Comment author enrichment: %s ok, %s failed", success, failed)
 
 
 def main():
