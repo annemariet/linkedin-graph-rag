@@ -2,11 +2,11 @@
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import time
 from unittest.mock import MagicMock, patch
 
 from linkedin_api.utils.changelog import (
     BASE_URL,
-    DEFAULT_START_TIME,
     fetch_changelog_data,
     get_last_processed_timestamp,
     get_max_processed_at,
@@ -164,7 +164,8 @@ class TestTimestampPersistence:
                 assert get_last_processed_timestamp() is None
 
                 # Write invalid timestamp (too far in future)
-                future_timestamp = DEFAULT_START_TIME + (100 * 24 * 60 * 60 * 1000)
+                # Use now + 31 days (validation allows up to now + 30 days)
+                future_timestamp = int(time() * 1000) + (31 * 24 * 60 * 60 * 1000)
                 test_file.write_text(str(future_timestamp))
                 assert get_last_processed_timestamp() is None
 
