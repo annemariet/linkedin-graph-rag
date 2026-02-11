@@ -21,6 +21,7 @@ from os import getenv
 from neo4j import GraphDatabase
 import json
 from linkedin_api.enrich_profiles import (
+    enrich_comments_with_authors,
     get_posts_without_author,
     extract_author_profile,
     update_post_author,
@@ -324,6 +325,9 @@ if __name__ == "__main__":
 
     # Enrich posts with author information (only for posts without author info)
     enrich_posts_with_authors(driver)
+
+    # Enrich comments with author information (from post HTML)
+    enrich_comments_with_authors(driver)
 
     # Extract and link external resources from posts
     enrich_posts_with_resources(driver, json_file=json_file, database=NEO4J_DATABASE)
