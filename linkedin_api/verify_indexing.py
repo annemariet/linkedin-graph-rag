@@ -12,15 +12,8 @@ This script checks:
 import os
 import dotenv
 from neo4j import GraphDatabase
-from neo4j_graphrag.embeddings.vertexai import VertexAIEmbeddings
 
-# Apply DNS fix before importing Google libraries
-try:
-    from linkedin_api.dns_utils import setup_gcp_dns_fix
-
-    setup_gcp_dns_fix(use_custom_resolver=True)
-except ImportError:
-    pass
+from linkedin_api.llm_config import create_embedder
 
 dotenv.load_dotenv()
 
@@ -28,7 +21,6 @@ NEO4J_URI = os.getenv("NEO4J_URI", "neo4j://localhost:7687")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neoneoneo")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "textembedding-gecko@002")
 
 
 def verify_chunks(driver):
@@ -286,7 +278,7 @@ def main():
     # Initialize embedder for testing
     try:
         print(f"\n🤖 Initializing embedder for testing...")
-        embedder = VertexAIEmbeddings(model=EMBEDDING_MODEL)
+        embedder = create_embedder()
         test_embedding = embedder.embed_query("test")
         print(f"   ✅ Embedder ready ({len(test_embedding)} dimensions)")
     except Exception as e:

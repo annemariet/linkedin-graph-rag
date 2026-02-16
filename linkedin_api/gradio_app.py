@@ -14,26 +14,21 @@ import tempfile
 from typing import TYPE_CHECKING
 
 # Third-party imports
-import google.auth
 import gradio as gr
-import vertexai
 from neo4j import GraphDatabase
-from neo4j_graphrag.embeddings.vertexai import VertexAIEmbeddings
 from neo4j_graphrag.generation.graphrag import GraphRAG
-from neo4j_graphrag.llm import VertexAILLM
 
 if TYPE_CHECKING:
     from neo4j import Driver
 
 # Local imports
 from linkedin_api.gradio_review import create_review_interface
+from linkedin_api.llm_config import create_embedder, create_llm
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
     NEO4J_URI,
     NEO4J_USERNAME,
-    EMBEDDING_MODEL,
-    LLM_MODEL,
     create_vector_cypher_retriever,
     create_vector_retriever,
 )
@@ -50,12 +45,7 @@ logger = logging.getLogger(__name__)
 class GraphRAGServices:
     """Container for initialized GraphRAG services."""
 
-    def __init__(
-        self,
-        driver: "Driver",
-        embedder: VertexAIEmbeddings,
-        llm: VertexAILLM,
-    ):
+    def __init__(self, driver: "Driver", embedder, llm):
         self.driver = driver
         self.embedder = embedder
         self.llm = llm
@@ -125,8 +115,10 @@ def resolve_vertex_project(project_id_from_creds: str | None) -> str:
     vertex_project = os.getenv("VERTEX_PROJECT") or project_id_from_creds
     if not vertex_project:
         try:
+            import google.auth
+
             _, vertex_project = google.auth.default()
-        except google.auth.exceptions.DefaultCredentialsError:
+        except (ImportError, Exception):
             pass
 
     if not vertex_project:
@@ -159,20 +151,25 @@ def initialize_services() -> GraphRAGServices:
     except Exception as e:
         raise RuntimeError(f"Failed to connect to Neo4j: {e}") from e
 
-    # Initialize Vertex AI
+    # Initialize LLM and embedder via llm_config (supports OpenAI, Ollama, VertexAI)
     try:
-        vertex_project = resolve_vertex_project(project_id)
-        vertex_location = os.getenv("VERTEX_LOCATION", "europe-west9")
-        logger.info(
-            f"Initializing Vertex AI with project={vertex_project}, location={vertex_location}"
-        )
-        vertexai.init(project=vertex_project, location=vertex_location)
+        # Setup GCP credentials if using VertexAI
+        if os.getenv("LLM_PROVIDER", "openai") == "vertexai":
+            try:
+                import google.auth
+                import vertexai
 
-        embedder = VertexAIEmbeddings(model=EMBEDDING_MODEL)
-        llm = VertexAILLM(model_name=LLM_MODEL, model_params={"temperature": 0.0})
-        logger.info("Initialized Vertex AI models successfully")
+                vertex_project = resolve_vertex_project(project_id)
+                vertex_location = os.getenv("VERTEX_LOCATION", "europe-west9")
+                vertexai.init(project=vertex_project, location=vertex_location)
+            except ImportError:
+                pass
+
+        embedder = create_embedder()
+        llm = create_llm()
+        logger.info("Initialized LLM and embedder successfully")
     except Exception as e:
-        raise RuntimeError(f"Failed to initialize Vertex AI: {e}") from e
+        raise RuntimeError(f"Failed to initialize LLM/embedder: {e}") from e
 
     return GraphRAGServices(driver, embedder, llm)
 
@@ -256,12 +253,35 @@ def get_database_stats(services: GraphRAGServices) -> str:
             ).single()
             comment_count = comment_result["count"] if comment_result else 0
 
+            # Count new enrichment node types
+            enrichment_counts = {}
+            for label in [
+                "Resource",
+                "Technology",
+                "Concept",
+                "Process",
+                "Challenge",
+                "Benefit",
+                "Example",
+            ]:
+                result = session.run(
+                    f"MATCH (n:{label}) RETURN count(n) as count"
+                ).single()
+                count = result["count"] if result else 0
+                if count > 0:
+                    enrichment_counts[label] = count
+
             # Format stats
             output = "**Database Statistics**\n\n"
             output += f"- Total Chunks: {chunk_count}\n"
             output += f"- Chunks with Embeddings: {chunk_with_embedding}\n"
             output += f"- Posts: {post_count}\n"
             output += f"- Comments: {comment_count}\n"
+
+            if enrichment_counts:
+                output += "\n**Enrichment Nodes:**\n"
+                for label, count in enrichment_counts.items():
+                    output += f"- {label}: {count}\n"
 
             if chunk_with_embedding == 0:
                 output += "\n⚠️ **Warning**: No embeddings found! Please run `index_content.py` first."

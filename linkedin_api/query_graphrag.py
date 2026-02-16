@@ -19,10 +19,10 @@ try:
 except ImportError:
     pass
 
-from neo4j_graphrag.embeddings.vertexai import VertexAIEmbeddings
-from neo4j_graphrag.llm import VertexAILLM
 from neo4j_graphrag.retrievers import VectorRetriever, VectorCypherRetriever
 from neo4j_graphrag.generation.graphrag import GraphRAG
+
+from linkedin_api.llm_config import create_embedder, create_llm
 
 dotenv.load_dotenv()
 
@@ -31,8 +31,6 @@ NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "neoneoneo")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "textembedding-gecko@002")
-LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-pro")
 VECTOR_INDEX_NAME = os.getenv("VECTOR_INDEX_NAME", "linkedin_content_index")
 
 
@@ -150,17 +148,19 @@ def create_vector_cypher_retriever(driver, embedder):
         // Get the chunk and traverse to related entities
         WITH node AS chunk
         MATCH (chunk)-[:FROM_CHUNK]->(source)
-        OPTIONAL MATCH (source)<-[:REACTS_TO|COMMENTS_ON|CREATES|REPOSTS]-(person:Person)
+        OPTIONAL MATCH (source)<-[:REACTED_TO|COMMENTS_ON|IS_AUTHOR_OF|REPOSTS]-(person:Person)
         OPTIONAL MATCH (source)-[:REPOSTS]->(original:Post)
+        OPTIONAL MATCH (source)-[:REFERENCES]->(resource:Resource)
 
         // Collect all related information
         WITH collect(DISTINCT chunk) AS chunks,
              collect(DISTINCT source) AS sources,
              collect(DISTINCT person) AS people,
-             collect(DISTINCT original) AS originals
+             collect(DISTINCT original) AS originals,
+             collect(DISTINCT resource) AS resources
 
         // Format context (using string concatenation instead of apoc.text.join for compatibility)
-        WITH chunks, sources, people, originals,
+        WITH chunks, sources, people, originals, resources,
              reduce(text = '', c IN chunks | text +
                 CASE WHEN text = '' THEN '' ELSE '\n---\n' END + c.text
              ) AS content_text,
@@ -172,7 +172,11 @@ def create_vector_cypher_retriever(driver, embedder):
              ) AS people_text,
              reduce(text = '', o IN originals | text +
                 CASE WHEN text = '' THEN '' ELSE '\n' END + o.urn
-             ) AS original_text
+             ) AS original_text,
+             reduce(text = '', r IN resources | text +
+                CASE WHEN text = '' THEN '' ELSE '\n' END +
+                coalesce(r.name, r.url, 'unknown') + ' (' + coalesce(r.type, '') + ')'
+             ) AS resource_text
 
         RETURN '=== Post/Comment Content ===\n' + content_text +
                '\n\n=== Source Info ===\n' + source_text +
@@ -181,6 +185,9 @@ def create_vector_cypher_retriever(driver, embedder):
                ELSE '' END +
                CASE WHEN original_text <> '' THEN
                    '\n\n=== Reposted From ===\n' + original_text
+               ELSE '' END +
+               CASE WHEN resource_text <> '' THEN
+                   '\n\n=== Referenced Resources ===\n' + resource_text
                ELSE '' END AS info
         """,
     )
@@ -208,28 +215,24 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
         driver.verify_connectivity()
         print(f"   Database: {NEO4J_DATABASE}")
 
-        # Initialize embedder and LLM - fail immediately on error
+        # Initialize embedder and LLM via llm_config (supports OpenAI, Ollama, VertexAI)
         try:
-            embedder = VertexAIEmbeddings(model=EMBEDDING_MODEL)
-            # Test embedder
+            embedder = create_embedder()
             test_embedding = embedder.embed_query("test")
             if not test_embedding or len(test_embedding) == 0:
                 raise ValueError("Embedder returned empty test embedding")
         except Exception as e:
             print(f"\n❌ FATAL ERROR: Failed to initialize embedder")
             print(f"   Error: {str(e)}")
-            print(f"   Model: {EMBEDDING_MODEL}")
-            print(
-                f"\n💡 Try a different model: textembedding-gecko@002 or textembedding-gecko"
-            )
+            print(f"   Provider: {os.getenv('EMBEDDING_PROVIDER', 'openai')}")
             raise RuntimeError(f"Embedder initialization failed: {str(e)}") from e
 
         try:
-            llm = VertexAILLM(model_name=LLM_MODEL, model_params={"temperature": 0.0})
+            llm = create_llm()
         except Exception as e:
             print(f"\n❌ FATAL ERROR: Failed to initialize LLM")
             print(f"   Error: {str(e)}")
-            print(f"   Model: {LLM_MODEL}")
+            print(f"   Provider: {os.getenv('LLM_PROVIDER', 'openai')}")
             raise RuntimeError(f"LLM initialization failed: {str(e)}") from e
 
         # Create retriever
