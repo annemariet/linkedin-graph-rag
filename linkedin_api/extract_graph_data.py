@@ -19,6 +19,14 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
+
+from linkedin_api.activity_csv import (
+    ActivityRecord,
+    ActivityType,
+    append_records_csv,
+    get_default_csv_path,
+)
 from linkedin_api.utils.changelog import (
     fetch_changelog_data,
     get_max_processed_at,
@@ -739,6 +747,439 @@ def parse_start_time(value):
         return None
 
 
+# -- ActivityRecord extraction (parallel to process_* for CSV output) -------
+
+
+def _reaction_to_record(
+    element: dict, activity: dict, owner: str = ""
+) -> Optional[ActivityRecord]:
+    """Convert a reaction element to an ActivityRecord."""
+    post_urn = _extract_post_urn_for_reaction(element, activity)
+    actor = extract_actor(element, activity)
+    if not post_urn or not actor or _is_delete_action(element):
+        return None
+
+    reaction_type = activity.get("reactionType", "UNKNOWN")
+    timestamp = activity.get("created", {}).get("time")
+
+    # Determine if reaction is to a post or comment
+    if post_urn.startswith("urn:li:comment:"):
+        activity_type = ActivityType.REACTION_TO_COMMENT.value
+    else:
+        activity_type = ActivityType.REACTION_TO_POST.value
+
+    return ActivityRecord(
+        owner=owner,
+        activity_type=activity_type,
+        time=str(timestamp or ""),
+        reaction_type=reaction_type,
+        author_urn=actor,
+        activity_urn=post_urn,
+        post_url=urn_to_post_url(post_urn) or "",
+        content="",
+        parent_urn="",
+        original_post_urn="",
+        created_at=format_timestamp(timestamp) or "",
+    )
+
+
+def _post_to_record(
+    element: dict, activity: dict, owner: str = ""
+) -> Optional[ActivityRecord]:
+    """Convert a post element to an ActivityRecord."""
+    post_urn = activity.get("id", "")
+    if not post_urn or not (
+        post_urn.startswith("urn:li:share:") or post_urn.startswith("urn:li:ugcPost:")
+    ):
+        return None
+
+    timestamp = activity.get("created", {}).get("time")
+    actor = extract_actor(element, activity)
+    is_repost = activity.get("ugcOrigin") == "RESHARE" or bool(
+        activity.get("responseContext", {}).get("parent")
+    )
+
+    if is_repost:
+        author = actor
+    else:
+        author = (
+            activity.get("author")
+            or activity.get("firstPublishedActor", {}).get("member", "")
+            or actor
+        )
+
+    share_content = activity.get("specificContent", {}).get(
+        "com.linkedin.ugc.ShareContent", {}
+    )
+    content = share_content.get("shareCommentary", {}).get("text", "")
+    original_post_urn = ""
+
+    if is_repost:
+        original_post_urn = activity.get("responseContext", {}).get(
+            "parent"
+        ) or activity.get("responseContext", {}).get("root", "")
+        activity_type = ActivityType.REPOST.value
+    else:
+        activity_type = ActivityType.POST.value
+
+    return ActivityRecord(
+        owner=owner,
+        activity_type=activity_type,
+        time=str(timestamp or ""),
+        reaction_type="",
+        author_urn=author,
+        activity_urn=post_urn,
+        post_url=urn_to_post_url(post_urn) or "",
+        content=content,
+        parent_urn=original_post_urn,
+        original_post_urn=original_post_urn,
+        created_at=format_timestamp(timestamp) or "",
+    )
+
+
+def _comment_to_record(
+    element: dict, activity: dict, owner: str = ""
+) -> Optional[ActivityRecord]:
+    """Convert a comment element to an ActivityRecord."""
+    comment_id = activity.get("id", "")
+    post_urn = activity.get("object", "")
+    actor = extract_actor(element, activity)
+    if not comment_id or not post_urn or not actor:
+        return None
+
+    timestamp = activity.get("created", {}).get("time")
+    comment_text = activity.get("message", {}).get("text", "")
+    comment_urn = build_comment_urn(post_urn, comment_id)
+    if not comment_urn:
+        return None
+
+    response_context = activity.get("responseContext", {})
+    parent_comment_urn = _extract_parent_comment_urn(
+        activity, response_context, post_urn
+    )
+
+    return ActivityRecord(
+        owner=owner,
+        activity_type=ActivityType.COMMENT.value,
+        time=str(timestamp or ""),
+        reaction_type="",
+        author_urn=actor,
+        activity_urn=comment_urn,
+        post_url=urn_to_post_url(post_urn) or "",
+        content=comment_text,
+        parent_urn=parent_comment_urn or post_urn,
+        original_post_urn="",
+        created_at=format_timestamp(timestamp) or "",
+    )
+
+
+def _instant_repost_to_record(
+    element: dict, activity: dict, owner: str = ""
+) -> Optional[ActivityRecord]:
+    """Convert an instant repost element to an ActivityRecord."""
+    reposted_share = activity.get("repostedContent", {}).get("share", "")
+    actor = extract_actor(element, activity)
+    if not reposted_share or not actor:
+        return None
+
+    timestamp = activity.get("created", {}).get("time")
+
+    return ActivityRecord(
+        owner=owner,
+        activity_type=ActivityType.INSTANT_REPOST.value,
+        time=str(timestamp or ""),
+        reaction_type="",
+        author_urn=actor,
+        activity_urn=reposted_share,
+        post_url=urn_to_post_url(reposted_share) or "",
+        content="",
+        parent_urn=reposted_share,
+        original_post_urn=reposted_share,
+        created_at=format_timestamp(timestamp) or "",
+    )
+
+
+def extract_activity_records(elements: list, owner: str = "") -> List[ActivityRecord]:
+    """Extract ActivityRecords from changelog elements.
+
+    This is a parallel extraction path to ``extract_entities_and_relationships``
+    that produces flat CSV-friendly records instead of node/relationship dicts.
+    """
+    records: List[ActivityRecord] = []
+    for element in elements:
+        resource_name = element.get("resourceName", "")
+        activity = element.get("activity", {})
+        record: Optional[ActivityRecord] = None
+
+        if RESOURCE_REACTIONS in resource_name:
+            record = _reaction_to_record(element, activity, owner)
+        elif (
+            RESOURCE_POST in resource_name.lower() or RESOURCE_POSTS in resource_name
+        ) and _is_comment_like_activity(activity):
+            record = _comment_to_record(element, activity, owner)
+        elif RESOURCE_POST in resource_name.lower() or RESOURCE_POSTS in resource_name:
+            record = _post_to_record(element, activity, owner)
+        elif RESOURCE_COMMENTS in resource_name:
+            record = _comment_to_record(element, activity, owner)
+        elif RESOURCE_INSTANT_REPOSTS in resource_name:
+            record = _instant_repost_to_record(element, activity, owner)
+
+        if record is not None:
+            records.append(record)
+
+    return records
+
+
+def records_to_neo4j_json(records: List[ActivityRecord]) -> dict:
+    """Convert ActivityRecords to the legacy neo4j_data JSON format.
+
+    This allows the existing ``build_graph.py`` to consume ActivityRecord
+    output until it is updated to read CSV directly (PR 3).
+    """
+    people: dict = {}
+    posts: dict = {}
+    comments: dict = {}
+    relationships: list = []
+
+    for rec in records:
+        # Create Person node for author
+        if rec.author_urn and rec.author_urn.startswith("urn:li:person:"):
+            if rec.author_urn not in people:
+                people[rec.author_urn] = {
+                    "id": rec.author_urn,
+                    "labels": ["Person"],
+                    "properties": {
+                        "urn": rec.author_urn,
+                        "person_id": extract_urn_id(rec.author_urn) or "",
+                    },
+                }
+
+        if rec.activity_type == ActivityType.POST.value:
+            post_urn = rec.activity_urn
+            post_id = extract_urn_id(post_urn) or ""
+            props: dict = {
+                "urn": post_urn,
+                "post_id": post_id,
+                "url": rec.post_url,
+                "type": "original",
+                "has_content": bool(rec.content),
+                "timestamp": int(rec.time) if rec.time else None,
+                "created_at": rec.created_at,
+            }
+            if rec.content:
+                props["content"] = rec.content
+                urls = extract_urls_from_text(rec.content)
+                if urls:
+                    props["extracted_urls"] = urls
+            posts[post_urn] = {
+                "id": post_urn,
+                "labels": ["Post"],
+                "properties": props,
+            }
+            relationships.append(
+                {
+                    "type": "IS_AUTHOR_OF",
+                    "startNode": rec.author_urn,
+                    "endNode": post_urn,
+                    "properties": {
+                        "timestamp": int(rec.time) if rec.time else None,
+                        "created_at": rec.created_at,
+                    },
+                }
+            )
+
+        elif rec.activity_type == ActivityType.REPOST.value:
+            post_urn = rec.activity_urn
+            post_id = extract_urn_id(post_urn) or ""
+            props = {
+                "urn": post_urn,
+                "post_id": post_id,
+                "url": rec.post_url,
+                "type": "repost",
+                "has_content": bool(rec.content),
+                "timestamp": int(rec.time) if rec.time else None,
+                "created_at": rec.created_at,
+            }
+            if rec.content:
+                props["content"] = rec.content
+            if rec.original_post_urn:
+                props["original_post_urn"] = rec.original_post_urn
+            posts[post_urn] = {
+                "id": post_urn,
+                "labels": ["Post"],
+                "properties": props,
+            }
+            # Person REPOSTS Post (share node)
+            relationships.append(
+                {
+                    "type": "REPOSTS",
+                    "startNode": rec.author_urn,
+                    "endNode": post_urn,
+                    "properties": {
+                        "timestamp": int(rec.time) if rec.time else None,
+                        "created_at": rec.created_at,
+                    },
+                }
+            )
+            # Post REPOSTS original Post
+            if rec.original_post_urn:
+                if rec.original_post_urn not in posts:
+                    orig_id = extract_urn_id(rec.original_post_urn) or ""
+                    posts[rec.original_post_urn] = {
+                        "id": rec.original_post_urn,
+                        "labels": ["Post"],
+                        "properties": {
+                            "urn": rec.original_post_urn,
+                            "post_id": orig_id,
+                            "url": urn_to_post_url(rec.original_post_urn) or "",
+                        },
+                    }
+                relationships.append(
+                    {
+                        "type": "REPOSTS",
+                        "startNode": post_urn,
+                        "endNode": rec.original_post_urn,
+                        "properties": {"relationship_type": "repost_of"},
+                    }
+                )
+
+        elif rec.activity_type in (
+            ActivityType.REACTION_TO_POST.value,
+            ActivityType.REACTION_TO_COMMENT.value,
+        ):
+            target_urn = rec.activity_urn
+            if target_urn not in posts and target_urn not in comments:
+                if target_urn.startswith("urn:li:comment:"):
+                    comments[target_urn] = {
+                        "id": target_urn,
+                        "labels": ["Comment"],
+                        "properties": {"urn": target_urn},
+                    }
+                else:
+                    target_id = extract_urn_id(target_urn) or ""
+                    posts[target_urn] = {
+                        "id": target_urn,
+                        "labels": ["Post"],
+                        "properties": {
+                            "urn": target_urn,
+                            "post_id": target_id,
+                            "url": urn_to_post_url(target_urn) or "",
+                        },
+                    }
+            relationships.append(
+                {
+                    "type": "REACTED_TO",
+                    "startNode": rec.author_urn,
+                    "endNode": target_urn,
+                    "properties": {
+                        "reaction_type": rec.reaction_type,
+                        "timestamp": int(rec.time) if rec.time else None,
+                        "created_at": rec.created_at,
+                    },
+                }
+            )
+
+        elif rec.activity_type == ActivityType.COMMENT.value:
+            comment_urn = rec.activity_urn
+            parsed = parse_comment_urn(comment_urn)
+            comment_id = parsed.get("comment_id") if parsed else ""
+            comment_url = comment_urn_to_post_url(comment_urn) or ""
+            comment_props: dict = {
+                "urn": comment_urn,
+                "comment_id": comment_id or "",
+                "text": rec.content,
+                "timestamp": int(rec.time) if rec.time else None,
+                "created_at": rec.created_at,
+                "url": comment_url,
+            }
+            if rec.content:
+                urls = extract_urls_from_text(rec.content)
+                if urls:
+                    comment_props["extracted_urls"] = urls
+            comments[comment_urn] = {
+                "id": comment_urn,
+                "labels": ["Comment"],
+                "properties": comment_props,
+            }
+            # Ensure parent post node exists
+            post_urn = ""
+            if parsed and parsed.get("parent_urn"):
+                post_urn = parsed["parent_urn"]
+            if post_urn and post_urn not in posts:
+                posts[post_urn] = {
+                    "id": post_urn,
+                    "labels": ["Post"],
+                    "properties": {
+                        "urn": post_urn,
+                        "post_id": extract_urn_id(post_urn) or "",
+                        "url": urn_to_post_url(post_urn) or "",
+                    },
+                }
+            relationships.append(
+                {
+                    "type": "IS_AUTHOR_OF",
+                    "startNode": rec.author_urn,
+                    "endNode": comment_urn,
+                    "properties": {
+                        "timestamp": int(rec.time) if rec.time else None,
+                        "created_at": rec.created_at,
+                    },
+                }
+            )
+            target_urn = rec.parent_urn or post_urn
+            if target_urn:
+                relationships.append(
+                    {
+                        "type": "COMMENTS_ON",
+                        "startNode": comment_urn,
+                        "endNode": target_urn,
+                        "properties": {
+                            "timestamp": int(rec.time) if rec.time else None,
+                            "created_at": rec.created_at,
+                        },
+                    }
+                )
+
+        elif rec.activity_type == ActivityType.INSTANT_REPOST.value:
+            target_urn = rec.activity_urn
+            if target_urn not in posts:
+                target_id = extract_urn_id(target_urn) or ""
+                posts[target_urn] = {
+                    "id": target_urn,
+                    "labels": ["Post"],
+                    "properties": {
+                        "urn": target_urn,
+                        "post_id": target_id,
+                        "url": urn_to_post_url(target_urn) or "",
+                    },
+                }
+            relationships.append(
+                {
+                    "type": "REPOSTS",
+                    "startNode": rec.author_urn,
+                    "endNode": target_urn,
+                    "properties": {
+                        "timestamp": int(rec.time) if rec.time else None,
+                        "created_at": rec.created_at,
+                        "repost_type": "instant",
+                    },
+                }
+            )
+
+    nodes = list(people.values()) + list(posts.values()) + list(comments.values())
+
+    return {
+        "nodes": nodes,
+        "relationships": relationships,
+        "statistics": {
+            "people": len(people),
+            "posts": len(posts),
+            "comments": len(comments),
+            "relationships": len(relationships),
+        },
+    }
+
+
 def get_all_post_activities(start_time=None, verbose=True):
     """Fetch all changelog data related to public posts."""
     post_related_resources = [
@@ -767,6 +1208,16 @@ def main():
         dest="start_date",
         help="Start date/time (ISO 8601 or epoch ms) for extraction.",
     )
+    parser.add_argument(
+        "--csv-only",
+        action="store_true",
+        help="Only produce CSV output (skip legacy JSON).",
+    )
+    parser.add_argument(
+        "--owner",
+        default="",
+        help="Owner URN for ActivityRecords (e.g., urn:li:person:abc).",
+    )
     args = parser.parse_args()
 
     start_time = parse_start_time(args.start_date)
@@ -788,11 +1239,19 @@ def main():
     if max_timestamp:
         save_last_processed_timestamp(max_timestamp)
 
-    print("\n🔍 Extracting entities and relationships...")
-    data = extract_entities_and_relationships(elements)
+    # -- CSV output (new) --
+    print("\n🔍 Extracting activity records to CSV...")
+    records = extract_activity_records(elements, owner=args.owner)
+    csv_path = get_default_csv_path()
+    written = append_records_csv(records, csv_path)
+    print(f"📊 Extracted {len(records)} records, {written} new appended to {csv_path}")
 
-    print_summary(data)
-    save_neo4j_data(data)
+    # -- Legacy JSON output --
+    if not args.csv_only:
+        print("\n🔍 Extracting entities and relationships (legacy JSON)...")
+        data = extract_entities_and_relationships(elements)
+        print_summary(data)
+        save_neo4j_data(data)
 
     print("\n🔍 Analyzing activity statistics...")
     stats = extract_statistics(elements)
@@ -800,7 +1259,9 @@ def main():
     save_statistics(stats)
 
     print("\n✅ Extraction complete!")
-    print("💡 Use the JSON file to import into Neo4j")
+    if not args.csv_only:
+        print("💡 Use the JSON file to import into Neo4j")
+    print(f"📁 Master CSV: {csv_path}")
 
 
 if __name__ == "__main__":
