@@ -92,7 +92,8 @@ def _extracted_to_markdown_cards(
         f"**Reviewing:** **{_escape_md(primary)}**",
         f"Resource: `{_escape_md(resource_name)}`",
         "",
-        "_Corrections replace the extracted nodes/relationships for this element and are used when exporting fixtures and re-running the pipeline._",
+        "_Corrections replace the extracted nodes/relationships for this element and are used when "
+        "exporting fixtures and re-running the pipeline._",
         "",
         "**Neo4j nodes and relationships**",
         "",
