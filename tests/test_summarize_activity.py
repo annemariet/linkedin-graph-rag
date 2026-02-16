@@ -1,13 +1,8 @@
 """Tests for summarize_activity module."""
 
 import json
-import tempfile
-from pathlib import Path
-
-import pytest
 
 from linkedin_api.summarize_activity import (
-    ActivityRecord,
     _parse_last,
     collect_activities,
     load_from_cache,
