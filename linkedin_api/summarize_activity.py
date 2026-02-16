@@ -25,6 +25,7 @@ from linkedin_api.extract_graph_data import (
     get_all_post_activities,
 )
 from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urls import get_urls_from_post_and_first_comment
 from linkedin_api.utils.urns import comment_urn_to_post_url, urn_to_post_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
@@ -262,8 +263,10 @@ def collect_activities(
             post_node = nodes_by_id.get(post_urn, {})
             post_props = post_node.get("properties", {})
             content = post_props.get("content", "")
-            urls = post_props.get("extracted_urls", [])
-            if content and not urls:
+            urls = get_urls_from_post_and_first_comment(
+                nodes_by_id, relationships, post_urn
+            )
+            if not urls and content:
                 urls = extract_urls_from_text(content)
             add_record(
                 post_urn,
@@ -288,8 +291,12 @@ def collect_activities(
             original_urn = repost_props.get("original_post_urn")
             target_urn = original_urn or to_urn
             content = repost_props.get("content", "")
-            urls = repost_props.get("extracted_urls", [])
-            if content and not urls:
+            urls = get_urls_from_post_and_first_comment(
+                nodes_by_id, relationships, target_urn
+            )
+            if not urls:
+                urls = repost_props.get("extracted_urls", [])
+            if not urls and content:
                 urls = extract_urls_from_text(content)
             ts = repost_props.get("timestamp")
             if not content and original_urn:
@@ -297,9 +304,13 @@ def collect_activities(
                 orig_props = orig_node.get("properties", {})
                 content = orig_props.get("content", "")
                 if not urls:
-                    urls = orig_props.get(
-                        "extracted_urls", []
-                    ) or extract_urls_from_text(content)
+                    urls = (
+                        get_urls_from_post_and_first_comment(
+                            nodes_by_id, relationships, original_urn
+                        )
+                        or orig_props.get("extracted_urls", [])
+                        or extract_urls_from_text(content)
+                    )
             add_record(target_urn, content, urls, "repost", ts)
 
     # Comments: (user)-[:CREATES]->(comment)-[:COMMENTS_ON]->(post)
