@@ -1,8 +1,6 @@
 """Tests for build_graph CSV loading (no Neo4j required -- tests conversion logic)."""
 
-import pytest
-
-from linkedin_api.activity_csv import ActivityRecord, ActivityType
+from linkedin_api.activity_csv import ActivityRecord
 from linkedin_api.build_graph import _records_to_nodes_and_rels
 from linkedin_api.graph_schema import PHASE_A_RELATIONSHIP_TYPES
 

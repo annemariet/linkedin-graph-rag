@@ -17,7 +17,6 @@ import os
 import tempfile
 
 import dotenv
-from neo4j import GraphDatabase
 
 from linkedin_api.build_graph import create_driver, get_neo4j_config
 from linkedin_api.graph_schema import get_pipeline_schema

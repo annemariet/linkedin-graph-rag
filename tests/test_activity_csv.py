@@ -1,6 +1,5 @@
 """Tests for activity_csv module -- CSV round-trip serialization."""
 
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -14,7 +13,6 @@ from linkedin_api.activity_csv import (
     filter_by_date,
     filter_by_type,
     get_data_dir,
-    get_default_csv_path,
     load_records_csv,
     records_to_csv_string,
 )
@@ -187,7 +185,7 @@ class TestRecordsToCsvString:
 
     def test_string_has_correct_row_count(self, sample_records):
         csv_str = records_to_csv_string(sample_records)
-        lines = [l for l in csv_str.strip().split("\n") if l]
+        lines = [line for line in csv_str.strip().split("\n") if line]
         assert len(lines) == 4  # header + 3 data rows
 
 

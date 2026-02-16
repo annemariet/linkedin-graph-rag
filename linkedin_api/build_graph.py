@@ -543,7 +543,6 @@ def load_graph_data(driver, json_file, incremental=True, database=None):
 
 if __name__ == "__main__":
     import argparse
-    import glob
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description="Build Neo4j graph from LinkedIn data")
