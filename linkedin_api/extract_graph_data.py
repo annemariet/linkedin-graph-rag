@@ -174,6 +174,28 @@ def _remove_reaction_relationship(relationships, actor, post_urn):
     return before_count - len(relationships)
 
 
+def _is_comment_like_activity(activity):
+    """Return True if activity looks like a comment (message + object, not a post share)."""
+    if not isinstance(activity, dict):
+        return False
+    has_message = bool(activity.get("message"))
+    has_object = bool(activity.get("object"))
+    if not has_message or not has_object:
+        return False
+    activity_id = activity.get("id", "")
+    if isinstance(activity_id, str) and (
+        activity_id.startswith("urn:li:share:")
+        or activity_id.startswith("urn:li:ugcPost:")
+    ):
+        return False
+    share_content = activity.get("specificContent", {}).get(
+        "com.linkedin.ugc.ShareContent", {}
+    )
+    if share_content:
+        return False
+    return True
+
+
 def _maybe_build_parent_comment_urn(post_urn, value):
     """Return a parent comment URN from a raw value when possible."""
     if not value:
@@ -310,15 +332,17 @@ def process_post(
 
     timestamp = activity.get("created", {}).get("time")
     actor = extract_actor(element, activity)
-    author = (
-        activity.get("author")
-        or activity.get("firstPublishedActor", {}).get("member", "")
-        or actor
-    )
-
     is_repost = activity.get("ugcOrigin") == "RESHARE" or bool(
         activity.get("responseContext", {}).get("parent")
     )
+    if is_repost:
+        author = actor
+    else:
+        author = (
+            activity.get("author")
+            or activity.get("firstPublishedActor", {}).get("member", "")
+            or actor
+        )
     post_type = "repost" if is_repost else "original"
 
     share_content = activity.get("specificContent", {}).get(
@@ -570,6 +594,18 @@ def extract_entities_and_relationships(elements):
         if RESOURCE_REACTIONS in resource_name:
             process_reaction(
                 element, activity, people, posts, relationships, skipped_by_reason
+            )
+        elif (
+            RESOURCE_POST in resource_name.lower() or RESOURCE_POSTS in resource_name
+        ) and _is_comment_like_activity(activity):
+            process_comment(
+                element,
+                activity,
+                people,
+                posts,
+                comments,
+                relationships,
+                skipped_by_reason,
             )
         elif RESOURCE_POST in resource_name.lower() or RESOURCE_POSTS in resource_name:
             process_post(

@@ -5,17 +5,21 @@ Loads elements on start, syncs to local SQLite, and lets you review one-by-one
 with Neo4j-style property cards, trace, validate/skip/incorrect, and correction editing.
 """
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 import gradio as gr
 
 from linkedin_api.enrich_profiles import (
+    _normalize_post_url,
     extract_author_profile_with_details,
+    fetch_post_page,
     get_thumbnail_path_for_url,
     is_author_enrichment_enabled,
+    parse_comment_author_from_html,
 )
 from linkedin_api.extract_resources import extract_urls_from_text
 from linkedin_api.extract_graph_data import get_all_post_activities
@@ -32,6 +36,7 @@ from linkedin_api.review_store import (
     STATUS_SKIPPED,
     STATUS_VALIDATED,
     export_fixtures,
+    get_item,
     get_work_queue,
     sync_elements,
     update_correction,
@@ -56,6 +61,25 @@ def _sanitize_for_json(obj: Any) -> Any:
         return {"_error": "Could not serialize raw element"}
 
 
+def _format_prop_value_for_cards(v: Any) -> str:
+    """Format a property value for display; URLs become clickable Markdown links."""
+    if isinstance(v, list):
+        parts = []
+        for x in v:
+            if isinstance(x, str) and x.startswith("http"):
+                parts.append(f"[{_escape_md(x)}]({x})")
+            else:
+                parts.append(_escape_md(str(x)))
+        return ", ".join(parts)
+    if isinstance(v, dict):
+        return _escape_md(
+            json.dumps(v)[:80] + ("..." if len(json.dumps(v)) > 80 else "")
+        )
+    if isinstance(v, str) and v.startswith("http"):
+        return f"[{_escape_md(v)}]({v})"
+    return _escape_md(str(v))
+
+
 def _extracted_to_markdown_cards(
     extracted: dict, author_info: str = None, resources_info: str = None
 ) -> str:
@@ -63,19 +87,24 @@ def _extracted_to_markdown_cards(
     nodes = extracted.get("nodes", [])
     relationships = extracted.get("relationships", [])
     primary = extracted.get("primary", "")
-    lines = [f"**Primary:** `{_escape_md(primary)}`", ""]
+    resource_name = extracted.get("resource_name", "")
+    lines = [
+        f"**Reviewing:** **{_escape_md(primary)}**",
+        f"Resource: `{_escape_md(resource_name)}`",
+        "",
+        "_Corrections replace the extracted nodes/relationships for this element and are used when exporting fixtures and re-running the pipeline._",
+        "",
+        "**Neo4j nodes and relationships**",
+        "",
+    ]
 
     for node in nodes:
         label = node.get("label", "Node")
         props = node.get("properties", {})
         lines.append(f"**({label})**")
         for k, v in sorted(props.items()):
-            val = v
-            if isinstance(v, list):
-                val = ", ".join(str(x) for x in v)
-            elif isinstance(v, dict):
-                val = json.dumps(v)[:80] + ("..." if len(json.dumps(v)) > 80 else "")
-            lines.append(f"  `{_escape_md(str(k))}`: {_escape_md(str(val))}")
+            val_str = _format_prop_value_for_cards(v)
+            lines.append(f"  `{_escape_md(str(k))}`: {val_str}")
         lines.append("")
 
     if relationships:
@@ -234,6 +263,59 @@ def _get_content_from_raw(raw: dict) -> str:
     if comment_text:
         return comment_text
     return ""
+
+
+def _get_comment_node_from_preview(preview: dict) -> Optional[Tuple[str, str, str]]:
+    """Return (comment_urn, url, text) for the first Comment node, or None."""
+    for node in preview.get("nodes", []):
+        if node.get("label") == "Comment":
+            props = node.get("properties") or {}
+            urn = props.get("urn") or node.get("id")
+            url = props.get("url") or ""
+            text = props.get("text") or ""
+            if urn and url:
+                return (urn, url, text)
+    return None
+
+
+def _synthetic_person_urn(profile_url: str) -> str:
+    """Stable URN for a person identified only by profile_url (e.g. from HTML)."""
+    h = hashlib.sha256(profile_url.encode()).hexdigest()[:16]
+    return f"urn:li:person:extracted_{h}"
+
+
+def _apply_comment_author_to_payload(
+    payload: dict, comment_urn: str, author_info: dict
+) -> dict:
+    """Add/update Person node and CREATES to Comment; remove old CREATES to this comment."""
+    payload = json.loads(json.dumps(payload, default=str))
+    nodes = list(payload.get("nodes", []))
+    relationships = list(payload.get("relationships", []))
+    person_urn = _synthetic_person_urn(author_info["profile_url"])
+    person_id = person_urn.split(":")[-1]
+    new_person = {
+        "id": person_urn,
+        "label": "Person",
+        "properties": {
+            "urn": person_urn,
+            "person_id": person_id,
+            "name": author_info["name"],
+            "profile_url": author_info["profile_url"],
+        },
+    }
+    if not any(n.get("id") == person_urn for n in nodes):
+        nodes.append(new_person)
+    relationships = [
+        r
+        for r in relationships
+        if not (r.get("type") == "CREATES" and r.get("to") == comment_urn)
+    ]
+    relationships.append(
+        {"type": "CREATES", "from": person_urn, "to": comment_urn, "properties": {}}
+    )
+    payload["nodes"] = nodes
+    payload["relationships"] = relationships
+    return payload
 
 
 def _format_fetch_from(epoch_ms: int, source: str) -> str:
@@ -840,6 +922,165 @@ def create_review_interface():
             logger.exception("Regenerate thumbnail failed")
             return None
 
+    def on_extract_comment_author(state, comment_author_state):
+        """Fetch post HTML, find comment by text, extract author. Store in comment_author_state."""
+        queue, index = _get_queue_index(state)
+        if not queue or index >= len(queue):
+            return None, "No item."
+        item = queue[index]
+        preview = item.get("corrected_json") or item.get("extracted_json") or {}
+        if preview.get("primary") != "comment":
+            return (
+                comment_author_state,
+                "Current item is not a comment (primary \u2260 comment).",
+            )
+        comment_node = _get_comment_node_from_preview(preview)
+        if not comment_node:
+            return comment_author_state, "No Comment node with url in extracted data."
+        comment_urn, url, text = comment_node
+        post_url = _normalize_post_url(url)
+        if not post_url:
+            return comment_author_state, "Could not normalize comment URL to post URL."
+        result = fetch_post_page(post_url, use_cache=True, save_to_cache=True)
+        if result.get("error") or result.get("skip_reason"):
+            return (
+                comment_author_state,
+                f"Fetch failed: {result.get('error') or result.get('skip_reason')}",
+            )
+        html = result.get("html")
+        if not html:
+            return comment_author_state, "No HTML returned."
+        author = parse_comment_author_from_html(html, text)
+        if not author:
+            return comment_author_state, "Could not find comment author in post HTML."
+        current = None
+        for r in preview.get("relationships", []):
+            if r.get("type") == "CREATES" and r.get("to") == comment_urn:
+                current = r.get("from")
+                break
+        msg = f"**Extracted author:** {author.get('name')} \u2014 {author.get('profile_url')}\n\n"
+        if current:
+            msg += f"Current CREATES from: `{current}`. Click **Apply comment author to correction** to replace."
+        else:
+            msg += "No existing author link. Click **Apply comment author to correction** to add."
+        new_state = {
+            "author_info": author,
+            "comment_urn": comment_urn,
+            "element_id": item["element_id"],
+        }
+        return new_state, msg
+
+    def _apply_comment_author_no_op(state, msg, corrected_json_str, notes):
+        """Build 12-tuple for apply_comment_author when we don't actually apply."""
+        queue, index = _get_queue_index(state)
+        if not queue or index >= len(queue):
+            return (
+                state,
+                msg,
+                "{}",
+                "_No items._",
+                "",
+                {},
+                "0 / 0",
+                "",
+                "No item.",
+                "No item.",
+                None,
+                None,
+            )
+        item = queue[index]
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            item, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes_out = render_item(
+            item, False, len(queue), index, author_text, resources_text
+        )
+        return (
+            state,
+            msg,
+            corrected_json_str or corr_str,
+            cards,
+            trace_md,
+            raw,
+            counter,
+            notes or notes_out,
+            author_text,
+            resources_text,
+            thumb_path,
+            None,
+        )
+
+    def on_apply_comment_author(state, corrected_json_str, notes, comment_author_state):
+        """Apply stored comment author to correction and save."""
+        if not comment_author_state or not isinstance(comment_author_state, dict):
+            return _apply_comment_author_no_op(
+                state,
+                "No extracted comment author. Click **Extract comment author from post** first.",
+                corrected_json_str,
+                notes,
+            )
+        queue, index = _get_queue_index(state)
+        if not queue or index >= len(queue):
+            return _apply_comment_author_no_op(
+                state, "No item.", corrected_json_str, notes
+            )
+        item = queue[index]
+        if item.get("element_id") != comment_author_state.get("element_id"):
+            return _apply_comment_author_no_op(
+                state,
+                "Item changed. Extract comment author again for the current item.",
+                corrected_json_str,
+                notes,
+            )
+        eid = item["element_id"]
+        author_info = comment_author_state.get("author_info")
+        comment_urn = comment_author_state.get("comment_urn")
+        if not author_info or not comment_urn:
+            return _apply_comment_author_no_op(
+                state, "Invalid stored state.", corrected_json_str, notes
+            )
+        try:
+            payload = (
+                json.loads(corrected_json_str)
+                if corrected_json_str.strip()
+                else item.get("extracted_json", {})
+            )
+        except json.JSONDecodeError:
+            return _apply_comment_author_no_op(
+                state, "Invalid correction JSON.", corrected_json_str, notes
+            )
+        new_payload = _apply_comment_author_to_payload(
+            payload, comment_urn, author_info
+        )
+        update_correction(
+            eid, corrected_json=new_payload, notes=notes or item.get("notes")
+        )
+        fresh = get_item(eid)
+        if fresh and queue:
+            new_queue = list(queue)
+            new_queue[index] = fresh
+            state = {**state, "queue": new_queue, "index": index}
+        author_text, resources_text, thumb_path = _enrichment_preview(
+            fresh or item, include_thumbnail=True
+        )
+        cards, trace_md, raw, _ej, counter, _cv, corr_str, notes_out = render_item(
+            fresh or item, False, len(queue), index, author_text, resources_text
+        )
+        return (
+            state,
+            "Comment author applied to correction.",
+            json.dumps(new_payload, indent=2, default=str),
+            cards,
+            trace_md,
+            raw,
+            counter,
+            notes or notes_out,
+            author_text,
+            resources_text,
+            thumb_path,
+            None,
+        )
+
     def on_export_fixtures():
         n = export_fixtures()
         return f"Exported {n} fixture(s) to outputs/review/fixtures/"
@@ -860,6 +1101,7 @@ def create_review_interface():
 
     with gr.Blocks(title="LinkedIn Extraction Review", theme=gr.themes.Soft()) as demo:
         review_state = gr.State(value=_review_state_default())
+        comment_author_state = gr.State(value=None)
         gr.Markdown(
             "# LinkedIn Extraction Review\n"
             "Review Portability API extraction item-by-item. Load data, then use "
@@ -926,6 +1168,13 @@ def create_review_interface():
                         "Extract resources (URLs from content)"
                     )
                     resources_out = gr.Textbox(label="URLs", lines=5)
+                with gr.Column(scale=1):
+                    extract_comment_author_btn = gr.Button(
+                        "Extract comment author from post"
+                    )
+                    apply_comment_author_btn = gr.Button(
+                        "Apply comment author to correction"
+                    )
 
         export_btn = gr.Button("Export fixtures")
         export_status = gr.Markdown(value="")
@@ -1079,6 +1328,29 @@ def create_review_interface():
             outputs=[thumbnail_out],
         )
 
+        extract_comment_author_btn.click(
+            fn=on_extract_comment_author,
+            inputs=[review_state, comment_author_state],
+            outputs=[comment_author_state, author_out],
+        )
+        apply_comment_author_btn.click(
+            fn=on_apply_comment_author,
+            inputs=[review_state, corrected_json_in, notes_in, comment_author_state],
+            outputs=[
+                review_state,
+                action_msg,
+                corrected_json_in,
+                cards_out,
+                trace_out,
+                raw_json_out,
+                counter_out,
+                notes_in,
+                author_out,
+                resources_out,
+                thumbnail_out,
+                comment_author_state,
+            ],
+        )
         export_btn.click(fn=on_export_fixtures, outputs=[export_status])
 
         show_json_toggle.change(
