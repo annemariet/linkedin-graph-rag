@@ -6,15 +6,16 @@ Supports:
 - Live: fetch from Portability API with --last 7d|14d|30d
 - Cache: load from outputs/neo4j_data_*.json with --from-cache
 
-Output: list of {post_urn, content, urls, interaction_type, timestamp}
-for use by summarization and linked-resource pipelines.
+Output: list of {post_urn, post_url, content, urls, interaction_type,
+reaction_type, comment_text, timestamp, created_at} for summarization
+and linked-resource pipelines.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
@@ -24,8 +25,25 @@ from linkedin_api.extract_graph_data import (
     get_all_post_activities,
 )
 from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urns import comment_urn_to_post_url, urn_to_post_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
+
+
+def _urn_to_url(urn: str) -> str:
+    """Resolve URN to LinkedIn URL (post or comment)."""
+    if urn.startswith("urn:li:comment:"):
+        return comment_urn_to_post_url(urn) or ""
+    return urn_to_post_url(urn) or ""
+
+
+def _format_timestamp(ts_ms: int | None) -> str:
+    """Format epoch ms to ISO string."""
+    if ts_ms is None:
+        return ""
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S%z"
+    )
 
 
 @dataclass
@@ -39,6 +57,8 @@ class ActivityRecord:
     timestamp: int | None
     comment_text: str = ""
     comment_urn: str = ""
+    reaction_type: str | None = None
+    post_url: str = ""
 
 
 def _parse_last(value: str) -> int | None:
@@ -205,8 +225,10 @@ def collect_activities(
         urls: list[str],
         interaction_type: str,
         timestamp: int | None,
+        *,
         comment_text: str = "",
         comment_urn: str = "",
+        reaction_type: str | None = None,
     ):
         key = (post_urn, interaction_type)
         if key in seen:
@@ -223,6 +245,8 @@ def collect_activities(
                 timestamp=timestamp,
                 comment_text=comment_text,
                 comment_urn=comment_urn,
+                reaction_type=reaction_type,
+                post_url=_urn_to_url(post_urn),
             )
         )
 
@@ -234,13 +258,21 @@ def collect_activities(
             post_urn = r["to"]
             props = r["properties"]
             ts = props.get("timestamp")
+            reaction_type = props.get("reaction_type")
             post_node = nodes_by_id.get(post_urn, {})
             post_props = post_node.get("properties", {})
             content = post_props.get("content", "")
             urls = post_props.get("extracted_urls", [])
             if content and not urls:
                 urls = extract_urls_from_text(content)
-            add_record(post_urn, content, urls, "reaction", ts)
+            add_record(
+                post_urn,
+                content,
+                urls,
+                "reaction",
+                ts,
+                reaction_type=reaction_type,
+            )
 
     # Reposts: (user)-[:REPOSTS]->(repost_share_post); original in original_post_urn
     if "repost" in types:
@@ -382,10 +414,14 @@ def main() -> int:
     out = [
         {
             "post_urn": r.post_urn,
+            "post_url": r.post_url,
             "content": r.content,
             "urls": r.urls,
             "interaction_type": r.interaction_type,
+            "reaction_type": r.reaction_type,
+            "comment_text": r.comment_text,
             "timestamp": r.timestamp,
+            "created_at": _format_timestamp(r.timestamp),
         }
         for r in records
     ]

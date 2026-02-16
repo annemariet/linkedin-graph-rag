@@ -84,7 +84,10 @@ class TestCollectActivities:
                     "type": "REACTS_TO",
                     "from": "urn:li:person:me",
                     "to": "urn:li:activity:123",
-                    "properties": {"timestamp": 1700000000000},
+                    "properties": {
+                        "timestamp": 1700000000000,
+                        "reaction_type": "INTEREST",
+                    },
                 },
             ],
         }
@@ -94,6 +97,8 @@ class TestCollectActivities:
         assert records[0].content == "Hello"
         assert records[0].urls == ["https://x.com"]
         assert records[0].interaction_type == "reaction"
+        assert records[0].reaction_type == "INTEREST"
+        assert records[0].post_url.startswith("https://www.linkedin.com")
 
     def test_filters_by_type(self):
         data = {
