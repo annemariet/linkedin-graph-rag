@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Phase 2: Enrich activities with post content via browser-use.
+Phase 2: Enrich activities with post content.
 
 Reads activities JSON (from summarize_activity). For each activity with post_url
-and empty content, visits the LinkedIn URL using browser-use (with Chrome profile
-for login) and extracts post body text. Populates content and urls for downstream
-summarization and linked-resource pipelines.
+and empty content, fetches the page: tries a simple HTTP request first; falls
+back to browser-use only on 403 (LinkedIn often blocks unauthenticated requests).
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ import asyncio
 import json
 from pathlib import Path
 
+import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.extract_resources import extract_urls_from_text
@@ -54,6 +54,31 @@ def _parse_content_from_html(html: str) -> str:
 def _is_comment_feed_url(url: str) -> bool:
     """True if URL targets a comment (not a post); skip for content extraction."""
     return bool(url and "urn:li:comment:" in url)
+
+
+def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
+    """
+    Try simple HTTP request. Returns (content, urls) if successful, None if
+    we need browser fallback (403, login wall, or empty content).
+    """
+    try:
+        resp = requests.get(url, timeout=10, allow_redirects=True)
+        if resp.status_code == 403:
+            return None
+        if resp.status_code != 200:
+            return None
+        content = _parse_content_from_html(resp.text)
+        if not content or len(content) < 50:
+            return None
+        # Login wall: title often contains "Sign In" or similar
+        soup = BeautifulSoup(resp.text, "html.parser")
+        title_elem = soup.find("title")
+        title = title_elem.get_text(strip=True) if title_elem else ""
+        if "sign in" in title.lower() or "login" in title.lower():
+            return None
+        return content, extract_urls_from_text(content)
+    except Exception:
+        return None
 
 
 async def _enrich_one_url(
@@ -111,14 +136,30 @@ async def _run_enrichment(
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
 ) -> int:
-    """Run enrichment for all items in one browser session."""
+    """Try requests first; use browser-use only on 403 or when requests fails."""
+    enriched_count = 0
+    needs_browser = []
+
+    for rec in to_enrich:
+        url = rec.get("post_url", "")
+        result = _fetch_with_requests(url)
+        if result:
+            content, urls = result
+            rec["content"] = content
+            rec["urls"] = urls
+            enriched_count += 1
+        else:
+            needs_browser.append(rec)
+
+    if not needs_browser:
+        return enriched_count
+
     from browser_use import BrowserSession
 
     browser = BrowserSession(**browser_kwargs)
     await browser.start()
-    enriched_count = 0
     try:
-        for rec in to_enrich:
+        for rec in needs_browser:
             url = rec.get("post_url", "")
             try:
                 content, urls = await _enrich_one_url(
