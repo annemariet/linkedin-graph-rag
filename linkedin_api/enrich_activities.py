@@ -63,8 +63,6 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
     """
     try:
         resp = requests.get(url, timeout=10, allow_redirects=True)
-        if resp.status_code == 403:
-            return None
         if resp.status_code != 200:
             return None
         content = _parse_content_from_html(resp.text)
