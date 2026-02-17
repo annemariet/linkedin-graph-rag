@@ -2,6 +2,10 @@
 """
 Enrich Post nodes with author profile information using post URLs from the Portability API.
 
+.. deprecated::
+    This module is superseded by ``enrich_graph.py`` which uses SimpleKGPipeline
+    for LLM-powered enrichment. This module is kept for backward compatibility.
+
 Extracts author name and profile URL from post HTML and stores them as properties
 on the Post nodes in Neo4j. Post URLs come from the Portability API (your changelog).
 Optional: can fetch once per URL and parse author + post content from the same HTML;
