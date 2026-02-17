@@ -63,6 +63,14 @@ uv run python -m linkedin_api.verify_indexing
 
 # Launch Gradio web interface
 uv run python -m linkedin_api.gradio_app
+
+# Period-based activity collection (Phase 1)
+uv run python -m linkedin_api.summarize_activity --from-cache -o activities.json
+uv run python -m linkedin_api.summarize_activity --last 7d -o activities.json
+
+# Enrich activities with post content via browser (Phase 2)
+uv run python -m linkedin_api.enrich_activities activities.json -o activities_enriched.json
+uv run python -m linkedin_api.enrich_activities activities.json --limit 5
 ```
 
 ### Testing
