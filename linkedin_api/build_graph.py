@@ -562,12 +562,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = get_neo4j_config()
+    database = config["database"]
     driver = create_driver(config)
 
     incremental = not args.full_rebuild
     if args.full_rebuild:
         print("⚠️  Full rebuild mode - will delete all data and recreate\n")
-        db_cleanup(driver, config["database"])
+        db_cleanup(driver, database)
     else:
         print(
             "✅ Incremental loading enabled by default "
@@ -578,7 +579,7 @@ if __name__ == "__main__":
         # Legacy JSON mode
         print(f"📂 Loading from JSON: {args.json_file}")
         load_graph_data(
-            driver, args.json_file, incremental=incremental, database=config["database"]
+            driver, args.json_file, incremental=incremental, database=database
         )
     else:
         # CSV mode (default)
@@ -591,7 +592,7 @@ if __name__ == "__main__":
             driver,
             csv_path=csv_path,
             incremental=incremental,
-            database=config["database"],
+            database=database,
         )
 
     driver.close()

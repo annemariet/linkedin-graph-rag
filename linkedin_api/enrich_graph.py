@@ -13,18 +13,34 @@ Usage:
 import argparse
 import asyncio
 import logging
-import os
-import tempfile
 
 import dotenv
 
 from linkedin_api.build_graph import create_driver, get_neo4j_config
 from linkedin_api.graph_schema import get_pipeline_schema
-from linkedin_api.llm_config import create_embedder, create_llm
+from linkedin_api.llm_config import create_llm
 
 dotenv.load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+class _NoOpEmbedder:
+    """Placeholder embedder for enrichment pipeline.
+
+    The enrichment pipeline only needs the LLM for entity extraction.
+    Real embeddings are handled separately by index_content.py.
+    Inherits from neo4j_graphrag's Embedder ABC to satisfy pydantic validation.
+    """
+
+    def __init__(self):
+        from neo4j_graphrag.embeddings.base import Embedder
+
+        # Register as virtual subclass so isinstance() checks pass
+        Embedder.register(type(self))
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.0]
 
 
 def create_kg_pipeline(driver, database):
@@ -40,7 +56,7 @@ def create_kg_pipeline(driver, database):
         llm=create_llm(),
         driver=driver,
         neo4j_database=database,
-        embedder=create_embedder(),
+        embedder=_NoOpEmbedder(),
         from_pdf=False,
         text_splitter=FixedSizeSplitter(chunk_size=500, chunk_overlap=100),
         entities=schema["entities"],
@@ -119,23 +135,13 @@ async def enrich_graph(driver, database, limit=None):
         print(f"  [{i}/{len(nodes)}] {urn[:60]}...")
 
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False, encoding="utf-8"
-            ) as f:
-                f.write(content)
-                temp_path = f.name
-
-            await pipeline.run_async(file_path=temp_path)
+            await pipeline.run_async(text=content)
             mark_as_enriched(driver, urn, database)
             success += 1
         except Exception as e:
+            print(f"Failed to enrich {urn}: {e}")
             logger.warning(f"Failed to enrich {urn}: {e}")
             failed += 1
-        finally:
-            try:
-                os.unlink(temp_path)
-            except OSError:
-                pass
 
     print(f"Enrichment complete: {success} succeeded, {failed} failed")
 
