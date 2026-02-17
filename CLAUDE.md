@@ -44,10 +44,6 @@ uv run python -m linkedin_api.build_graph
 uv run python -m linkedin_api.build_graph --json-file outputs/neo4j_data_*.json
 uv run python -m linkedin_api.build_graph --full-rebuild
 
-# Migrate existing Neo4j schema (rename relationships)
-uv run python -m linkedin_api.migrate_schema --dry-run
-uv run python -m linkedin_api.migrate_schema
-
 # Enrich graph with LLM-extracted entities (Phase B)
 uv run python -m linkedin_api.enrich_graph --limit 5
 
@@ -126,7 +122,6 @@ Single source of truth for the Neo4j graph schema:
 - `RELATIONSHIP_TYPES`: All relationship type names
 - `PATTERNS`: Valid (source, rel, target) triples
 - `PHASE_A_RELATIONSHIP_TYPES`: Structural relationships from API data
-- `RELATIONSHIP_RENAMES`: Old-to-new mapping for schema migration
 - `get_pipeline_schema()`: Returns schema dict for `SimpleKGPipeline`
 
 #### `linkedin_api/activity_csv.py`
@@ -175,11 +170,6 @@ Phase B: LLM-powered graph enrichment:
 - Processes posts/comments that haven't been enriched yet
 - Creates Technology, Concept, Resource, and other knowledge nodes
 - CLI: `uv run python -m linkedin_api.enrich_graph [--limit N]`
-
-#### `linkedin_api/migrate_schema.py`
-Schema migration for existing Neo4j databases:
-- Renames relationships: CREATES→IS_AUTHOR_OF, REACTS_TO→REACTED_TO, ON_POST→COMMENTS_ON
-- Supports `--dry-run` mode
 
 #### `linkedin_api/index_content.py`
 Indexes post/comment content for GraphRAG:
@@ -342,7 +332,6 @@ uv run python setup_token.py
 - Batched operations (500 nodes/relationships per batch)
 - Standard Cypher queries (no custom APOC procedures required for loading)
 - Vector indexes require Neo4j 5.0+ with vector search support
-- `migrate_schema.py` renames old relationships (CREATES→IS_AUTHOR_OF, etc.)
 
 ### GraphRAG Limitations
 - Content extraction from LinkedIn URLs requires public accessibility

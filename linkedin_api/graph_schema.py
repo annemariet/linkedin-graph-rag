@@ -151,14 +151,6 @@ PATTERNS = [
     ("Resource", "CITES", "Technology"),
 ]
 
-# -- Relationship renames (old -> new) for schema migration ----------------
-
-RELATIONSHIP_RENAMES = {
-    "CREATES": "IS_AUTHOR_OF",
-    "REACTS_TO": "REACTED_TO",
-    "ON_POST": "COMMENTS_ON",
-}
-
 # -- Helpers ---------------------------------------------------------------
 
 _NODE_LABELS = {nt["label"] for nt in NODE_TYPES}
