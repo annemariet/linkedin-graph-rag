@@ -71,7 +71,7 @@ class TestHasContent:
 class TestContentPath:
     def test_returns_path(self):
         path = content_path("urn:li:ugcPost:123")
-        assert path.suffix == ".txt"
+        assert path.suffix == ".md"
         assert "content" in str(path)
 
     def test_different_urns_different_paths(self):

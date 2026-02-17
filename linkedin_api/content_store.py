@@ -1,16 +1,17 @@
-"""File-based content storage for external post/comment text.
+"""File-based content storage for post/comment text (Markdown).
 
-Stores content of *other people's posts* that the user interacted with
-(reacted to, commented on).  The user's own content (posts they wrote,
-comments they wrote) lives in the CSV ``content`` column.
+Stores the full content of any post or comment by URN, including both
+the user's own content and other people's posts they interacted with.
+The user's own text is also in the CSV ``content`` column, but the
+content store is the canonical source for enrichment and indexing.
 
-Files are stored under ``get_data_dir() / "content/"`` and named by the
-SHA-256 hash of the activity URN.
+Files are stored under ``get_data_dir() / "content/"`` as Markdown,
+named by the SHA-256 hash of the activity URN.
 
 Content sourcing priority (handled by callers):
-1. Portability API text (when available for own content -- already in CSV)
-2. ``browser-use`` for JS-rendered LinkedIn pages
-3. ``requests`` + BeautifulSoup fallback
+1. Portability API text (available for own content at extraction time)
+2. ``requests`` + HTML-to-Markdown for public posts
+3. ``browser-use`` when login is required (e.g. private posts)
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ def _content_dir() -> Path:
 
 def _urn_to_filename(urn: str) -> str:
     """Derive a safe filename from an activity URN."""
-    return hashlib.sha256(urn.encode()).hexdigest() + ".txt"
+    return hashlib.sha256(urn.encode()).hexdigest() + ".md"
 
 
 def save_content(urn: str, text: str) -> Path:
