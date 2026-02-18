@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import warnings
 
 from linkedin_api.content_store import (
     list_posts_needing_summary,
@@ -161,6 +162,10 @@ def summarize_posts(
         n = _summarize_batch(batch, llm)
         total += n
         it.set_postfix(done=total)
+    if total == 0 and not quiet:
+        warnings.warn(
+            "No posts were summarized (LLM errors?). Check LLM_MODEL and API key."
+        )
     return total
 
 
@@ -183,7 +188,10 @@ def main() -> int:
         quiet=args.quiet,
     )
     if not args.quiet:
-        print(f"Summarized {n} posts.")
+        if n == 0:
+            print("Summarized 0 posts.")
+        else:
+            print(f"Summarized {n} posts.")
     return 0
 
 

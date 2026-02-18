@@ -128,7 +128,10 @@ def _run_phase3(args, enriched_path: Path | None = None):
         quiet=args.quiet,
     )
     if not args.quiet:
-        print(f"Summarized {n} posts")
+        if n == 0:
+            print("Summarized 0 posts.")
+        else:
+            print(f"Summarized {n} posts.")
     return n
 
 
