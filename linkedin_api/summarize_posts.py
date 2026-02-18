@@ -24,13 +24,22 @@ from linkedin_api.llm_config import create_llm
 
 BATCH_SIZE = 5
 
-_SYSTEM_PROMPT = """You are a summarizer for LinkedIn posts. For each post, output valid JSON only, no other text.
-Format: {"posts": [{"urn": "...", "summary": "1-2 sentences", "topics": ["topic1"], "technologies": ["tech1"],
-  "people": ["name1"], "category": "one of: product_announcement|paper|experiment|job_news|opinion|tutorial|other"}]}
-Categories: product_announcement (new lib/product), paper (academic/research), experiment (trial/benchmark),
-  job_news (hiring/career), opinion (hot take), tutorial (how-to), other."""
+_SYSTEM_PROMPT = """You extract structured metadata from LinkedIn posts. For each post provide:
+- summary: 1-2 sentence summary
+- topics: list of main topics/themes (e.g. ["AI", "careers"])
+- technologies: tools, frameworks, languages mentioned (e.g. ["Python", "PyTorch"])
+- people: named people or roles mentioned (e.g. ["Jane Doe", "CTO"])
+- category: the general category of the post (pick one like e.g. product_announcement, paper, experiment, job_news, opinion, tutorial, other...); try to not add too many categories.
 
-_USER_PROMPT_TEMPLATE = """Summarize each of these LinkedIn posts. Output JSON only.
+Example categories you can pick from: product_announcement (new lib/product), paper (academic/research),
+  experiment (trial/benchmark), job_news (hiring/career), opinion (hot take),
+  tutorial (how-to), other.
+Use empty arrays [] for topics/technologies/people when none apply.
+Output valid JSON only. Format: {"posts": [{"urn": "...", "summary": "...",
+  "topics": [], "technologies": [], "people": [], "category": "..."}]}"""
+
+_USER_PROMPT_TEMPLATE = """For each post below: write a 1-2 sentence summary and fill in
+topics, technologies, people, and category as relevant. Output JSON only.
 
 ---
 {posts}
