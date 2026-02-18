@@ -5,8 +5,14 @@ import pytest
 from linkedin_api.content_store import (
     content_path,
     has_content,
+    has_metadata,
     load_content,
+    load_metadata,
+    list_posts_needing_summary,
+    needs_summary,
     save_content,
+    save_metadata,
+    update_summary_metadata,
 )
 
 
@@ -78,3 +84,68 @@ class TestContentPath:
         p1 = content_path("urn:li:ugcPost:111")
         p2 = content_path("urn:li:ugcPost:222")
         assert p1 != p2
+
+
+class TestMetadata:
+    def test_save_and_load_metadata(self):
+        urn = "urn:li:ugcPost:456"
+        save_content(urn, "Content here")
+        save_metadata(
+            urn, summary="A summary", topics=["AI"], urls=["https://example.com"]
+        )
+        meta = load_metadata(urn)
+        assert meta["summary"] == "A summary"
+        assert meta["topics"] == ["AI"]
+        assert meta["urls"] == ["https://example.com"]
+
+    def test_update_preserves_urls(self):
+        urn = "urn:li:ugcPost:789"
+        save_content(urn, "Post content")
+        save_metadata(
+            urn, urls=["https://x.com"], post_url="https://linkedin.com/feed/..."
+        )
+        update_summary_metadata(urn, "Summary", ["topic1"], ["py"], ["Alice"], "paper")
+        meta = load_metadata(urn)
+        assert meta["summary"] == "Summary"
+        assert meta["urls"] == ["https://x.com"]
+        assert meta["post_url"] == "https://linkedin.com/feed/..."
+        assert "summarized_at" in meta
+
+
+class TestNeedsSummary:
+    def test_no_content(self):
+        assert needs_summary("urn:li:ugcPost:999") is False
+
+    def test_content_without_summary(self):
+        urn = "urn:li:ugcPost:999"
+        save_content(urn, "x" * 100)
+        assert needs_summary(urn) is True
+
+    def test_content_with_summary(self):
+        urn = "urn:li:ugcPost:999"
+        save_content(urn, "x" * 100)
+        save_metadata(urn, summary="Done")
+        assert needs_summary(urn) is False
+
+
+class TestListPostsNeedingSummary:
+    def test_filters_by_summary(self):
+        save_content("urn:li:ugcPost:a", "a" * 100)
+        save_content("urn:li:ugcPost:b", "b" * 100)
+        save_metadata("urn:li:ugcPost:b", summary="Done")
+        posts = list_posts_needing_summary()
+        assert len(posts) == 1
+        assert posts[0]["urn"] == "urn:li:ugcPost:a"
+        assert posts[0]["content"] == "a" * 100
+
+
+class TestDeduplication:
+    def test_same_urn_one_file(self):
+        """Multiple saves for same URN → one content file."""
+        post_urn = "urn:li:ugcPost:xyz"
+        content = "This is the post body."
+        save_content(post_urn, content)
+        save_content(post_urn, content)
+        assert load_content(post_urn) == content
+        content_dir = content_path(post_urn).parent
+        assert len(list(content_dir.glob("*.md"))) == 1
