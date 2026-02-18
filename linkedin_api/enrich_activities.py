@@ -4,7 +4,7 @@ Phase 2: Enrich activities with post content.
 
 Reads activities JSON (from summarize_activity). For each activity with post_url
 and empty content, fetches the page: tries a simple HTTP request first; falls
-back to browser-use only on 403 (LinkedIn often blocks unauthenticated requests).
+back to Playwright (Chrome with optional profile) on 403/login wall.
 """
 
 from __future__ import annotations
@@ -17,6 +17,12 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from linkedin_api.content_store import (
+    load_content,
+    load_metadata,
+    save_content,
+    save_metadata,
+)
 from linkedin_api.extract_resources import extract_urls_from_text
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
@@ -80,12 +86,18 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
 
 
 async def _enrich_one_url(
-    url: str, browser, *, wait_s: float = 3.5, debug_save_path: Path | None = None
+    url: str,
+    context,
+    *,
+    wait_s: float = 3.5,
+    debug_save_path: Path | None = None,
 ) -> tuple[str, list[str]]:
     """Visit URL, extract content and URLs. Caller owns browser lifecycle."""
+    page = None
     html = None
     try:
-        page = await browser.new_page(url)
+        page = await context.new_page()
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(wait_s)  # Let LinkedIn JS render post content
         html = await page.evaluate("() => document.documentElement.outerHTML")
     except Exception as e:
@@ -95,6 +107,9 @@ async def _enrich_one_url(
                 encoding="utf-8",
             )
         raise
+    finally:
+        if page:
+            await page.close()
     if debug_save_path and html is not None:
         debug_save_path.write_text(str(html), encoding="utf-8", errors="replace")
     if isinstance(html, str):
@@ -133,18 +148,39 @@ async def _run_enrichment(
     *,
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
+    progress: bool = True,
 ) -> int:
-    """Try requests first; use browser-use only on 403 or when requests fails."""
+    """Try requests first; use Playwright fallback on 403 or when requests fail."""
     enriched_count = 0
     needs_browser = []
 
-    for rec in to_enrich:
+    it = to_enrich
+    if progress:
+        from tqdm import tqdm
+
+        it = tqdm(to_enrich, desc="Enrich", unit="post")
+    for rec in it:
+        urn = rec.get("post_urn", "")
         url = rec.get("post_url", "")
+        if not urn or not url:
+            continue
+
+        # Use content store if we already have it
+        stored = load_content(urn)
+        if stored and len(stored) >= 50:
+            rec["content"] = stored
+            meta = load_metadata(urn)
+            rec["urls"] = list(meta.get("urls", [])) if meta else []
+            enriched_count += 1
+            continue
+
         result = _fetch_with_requests(url)
         if result:
             content, urls = result
             rec["content"] = content
             rec["urls"] = urls
+            save_content(urn, content)
+            save_metadata(urn, urls=urls, post_url=url)
             enriched_count += 1
         else:
             needs_browser.append(rec)
@@ -152,28 +188,63 @@ async def _run_enrichment(
     if not needs_browser:
         return enriched_count
 
-    from browser_use import BrowserSession
+    urls_to_visit = [
+        rec.get("post_url", "") for rec in needs_browser if rec.get("post_url")
+    ]
+    if progress:
+        print("\nURLs to visit with browser:")
+        for u in urls_to_visit:
+            print(f"  {u}")
+        reply = input("Continue? [Y/n]: ").strip().lower()
+        if reply and reply != "y":
+            return enriched_count
 
-    browser = BrowserSession(**browser_kwargs)
-    await browser.start()
-    try:
-        for rec in needs_browser:
-            url = rec.get("post_url", "")
-            try:
-                content, urls = await _enrich_one_url(
-                    url,
-                    browser,
-                    wait_s=wait_s,
-                    debug_save_path=debug_save_path,
-                )
-                if content:
-                    rec["content"] = content
-                    rec["urls"] = urls
-                    enriched_count += 1
-            except Exception as e:
-                rec["_enrich_error"] = str(e)
-    finally:
-        await browser.kill()
+    from playwright.async_api import async_playwright
+
+    if progress:
+        browser_it = tqdm(needs_browser, desc="Enrich (browser)", unit="post")
+    else:
+        browser_it = needs_browser
+
+    async with async_playwright() as p:
+        browser = None
+        if browser_kwargs:
+            context = await p.chromium.launch_persistent_context(
+                browser_kwargs["user_data_dir"],
+                headless=False,
+                channel="chrome",
+                args=[
+                    f"--profile-directory={browser_kwargs.get('profile_directory', 'Default')}"
+                ],
+            )
+        else:
+            browser = await p.chromium.launch(headless=False)
+            context = await browser.new_context()
+
+        try:
+            for rec in browser_it:
+                urn = rec.get("post_urn", "")
+                url = rec.get("post_url", "")
+                try:
+                    content, urls = await _enrich_one_url(
+                        url,
+                        context,
+                        wait_s=wait_s,
+                        debug_save_path=debug_save_path,
+                    )
+                    if content:
+                        rec["content"] = content
+                        rec["urls"] = urls
+                        save_content(urn, content)
+                        save_metadata(urn, urls=urls, post_url=url)
+                        enriched_count += 1
+                except Exception as e:
+                    rec["_enrich_error"] = str(e)
+        finally:
+            await context.close()
+            if browser:
+                await browser.close()
+
     return enriched_count
 
 
@@ -184,6 +255,7 @@ def enrich_activities(
     use_browser: bool = True,
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
+    progress: bool = True,
 ) -> tuple[list[dict], int]:
     """
     Enrich activities that have post_url but empty content.
@@ -208,6 +280,7 @@ def enrich_activities(
             browser_kwargs,
             wait_s=wait_s,
             debug_save_path=debug_save_path,
+            progress=progress,
         )
     )
     return activities, enriched_count
@@ -215,7 +288,7 @@ def enrich_activities(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Enrich activities with post content via browser-use."
+        description="Enrich activities with post content via Playwright.",
     )
     parser.add_argument(
         "input",

@@ -25,7 +25,7 @@ dependencies = [
     "neo4j==5.28.2",
     "neo4j-graphrag[google,openai]>=1.10.1",
     "gradio>=4.0.0",
-    "browser-use",
+    "playwright",
 ]
 
 [dependency-groups]
@@ -35,7 +35,6 @@ dev = [
     "flake8",
     "flask",
     "mypy",
-    "playwright",
     "pre-commit",
     "pytest",
     "pytest-cov",

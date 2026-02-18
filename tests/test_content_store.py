@@ -5,7 +5,6 @@ import pytest
 from linkedin_api.content_store import (
     content_path,
     has_content,
-    has_metadata,
     load_content,
     load_metadata,
     list_posts_needing_summary,

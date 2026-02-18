@@ -212,8 +212,6 @@ def fetch_changelog_data(
                     break
 
             if not next_link:
-                if verbose:
-                    print("✅ No more pages")
                 break
 
             start += batch_size
