@@ -24,8 +24,10 @@ from linkedin_api.llm_config import create_llm
 BATCH_SIZE = 5
 
 _SYSTEM_PROMPT = """You are a summarizer for LinkedIn posts. For each post, output valid JSON only, no other text.
-Format: {"posts": [{"urn": "...", "summary": "1-2 sentences", "topics": ["topic1"], "technologies": ["tech1"], "people": ["name1"], "category": "one of: product_announcement|paper|experiment|job_news|opinion|tutorial|other"}]}
-Categories: product_announcement (new lib/product), paper (academic/research), experiment (trial/benchmark), job_news (hiring/career), opinion (hot take), tutorial (how-to), other."""
+Format: {"posts": [{"urn": "...", "summary": "1-2 sentences", "topics": ["topic1"], "technologies": ["tech1"],
+  "people": ["name1"], "category": "one of: product_announcement|paper|experiment|job_news|opinion|tutorial|other"}]}
+Categories: product_announcement (new lib/product), paper (academic/research), experiment (trial/benchmark),
+  job_news (hiring/career), opinion (hot take), tutorial (how-to), other."""
 
 _USER_PROMPT_TEMPLATE = """Summarize each of these LinkedIn posts. Output JSON only.
 
