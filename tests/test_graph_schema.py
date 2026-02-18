@@ -5,7 +5,6 @@ from linkedin_api.graph_schema import (
     RELATIONSHIP_TYPES,
     PATTERNS,
     PHASE_A_RELATIONSHIP_TYPES,
-    RELATIONSHIP_RENAMES,
     get_node_labels,
     get_pipeline_schema,
 )
@@ -84,21 +83,6 @@ class TestPatterns:
         used = {rel for _, rel, _ in PATTERNS}
         for rt in RELATIONSHIP_TYPES:
             assert rt in used, f"Relationship type {rt!r} not used in any pattern"
-
-
-class TestRelationshipRenames:
-    def test_old_names_not_in_current_types(self):
-        """Old relationship names should not appear in the current schema."""
-        for old_name in RELATIONSHIP_RENAMES:
-            assert (
-                old_name not in RELATIONSHIP_TYPES
-            ), f"Old name {old_name!r} still in RELATIONSHIP_TYPES"
-
-    def test_new_names_in_current_types(self):
-        for new_name in RELATIONSHIP_RENAMES.values():
-            assert (
-                new_name in RELATIONSHIP_TYPES
-            ), f"Rename target {new_name!r} not in RELATIONSHIP_TYPES"
 
 
 class TestGetPipelineSchema:

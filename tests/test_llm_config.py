@@ -1,6 +1,8 @@
-"""Tests for llm_config module (import and config parsing only)."""
+"""Tests for llm_config module (import, config parsing, key resolution)."""
 
 import pytest
+
+from linkedin_api.llm_config import _resolve_api_key
 
 
 def test_create_llm_unknown_provider(monkeypatch):
@@ -21,3 +23,39 @@ def test_create_embedder_unknown_provider(monkeypatch):
 
 def test_module_importable():
     from linkedin_api.llm_config import create_llm, create_embedder  # noqa: F401
+
+
+class TestResolveApiKey:
+    def test_llm_api_key_env_var(self, monkeypatch):
+        monkeypatch.setenv("LLM_API_KEY", "sk-test-123")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        key, source = _resolve_api_key(quiet=True)
+        assert key == "sk-test-123"
+        assert "LLM_API_KEY" in source
+
+    def test_openai_api_key_fallback(self, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-456")
+        # Mock keyring to return None so we fall through to OPENAI_API_KEY
+        import linkedin_api.llm_config as mod
+
+        monkeypatch.setattr(mod, "_KEYRING_SERVICE", "__test_nonexistent__")
+        key, source = _resolve_api_key(quiet=True)
+        assert key == "sk-openai-456"
+        assert "OPENAI_API_KEY" in source
+
+    def test_no_key_returns_none(self, monkeypatch):
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        import linkedin_api.llm_config as mod
+
+        monkeypatch.setattr(mod, "_KEYRING_SERVICE", "__test_nonexistent__")
+        key, source = _resolve_api_key(quiet=True)
+        assert key is None
+        assert source is None
+
+    def test_llm_api_key_takes_priority_over_openai(self, monkeypatch):
+        monkeypatch.setenv("LLM_API_KEY", "sk-llm")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        key, _ = _resolve_api_key(quiet=True)
+        assert key == "sk-llm"

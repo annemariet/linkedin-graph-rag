@@ -151,14 +151,6 @@ PATTERNS = [
     ("Resource", "CITES", "Technology"),
 ]
 
-# -- Relationship renames (old -> new) for schema migration ----------------
-
-RELATIONSHIP_RENAMES = {
-    "CREATES": "IS_AUTHOR_OF",
-    "REACTS_TO": "REACTED_TO",
-    "ON_POST": "COMMENTS_ON",
-}
-
 # -- Helpers ---------------------------------------------------------------
 
 _NODE_LABELS = {nt["label"] for nt in NODE_TYPES}
@@ -177,13 +169,17 @@ def get_pipeline_schema() -> dict:
     """
     entities = []
     for nt in NODE_TYPES:
-        entry = {
+        entry: dict = {
             "label": nt["label"],
             "description": nt.get("description", ""),
         }
         props = nt.get("properties")
         if props:
-            entry["properties"] = props
+            # SimpleKGPipeline only accepts str values in property dicts;
+            # strip out non-str keys like "required" (bool).
+            entry["properties"] = [
+                {k: v for k, v in p.items() if isinstance(v, str)} for p in props
+            ]
         entities.append(entry)
 
     relations = []
