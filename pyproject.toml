@@ -26,6 +26,7 @@ dependencies = [
     "neo4j-graphrag[google,openai]>=1.10.1",
     "gradio>=4.0.0",
     "playwright",
+    "browser-use",
 ]
 
 [dependency-groups]

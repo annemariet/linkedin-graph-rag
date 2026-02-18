@@ -71,6 +71,8 @@ uv run python -m linkedin_api.summarize_activity --last 7d -o activities.json
 # Enrich activities with post content via browser (Phase 2)
 uv run python -m linkedin_api.enrich_activities activities.json -o activities_enriched.json
 uv run python -m linkedin_api.enrich_activities activities.json --limit 5
+
+# Uses browser-use with your Chrome profile. Close Chrome before running.
 ```
 
 ### Testing
