@@ -174,6 +174,16 @@ async def _run_enrichment(
     if not needs_browser:
         return enriched_count
 
+    urls_to_visit = [
+        rec.get("post_url", "") for rec in needs_browser if rec.get("post_url")
+    ]
+    print("\nURLs to visit with browser:")
+    for u in urls_to_visit:
+        print(f"  {u}")
+    reply = input("Continue? [Y/n]: ").strip().lower()
+    if reply and reply != "y":
+        return enriched_count
+
     from browser_use import BrowserSession
 
     browser = BrowserSession(**browser_kwargs)
