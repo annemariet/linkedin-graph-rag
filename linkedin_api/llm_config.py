@@ -136,15 +136,26 @@ def create_llm(quiet=False):
             return _create_ollama_llm(quiet=quiet, is_fallback=True)
 
         base_url = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL)
+        model = os.getenv("LLM_MODEL", "gpt-4o")
+        # Mammouth uses its own model IDs; raw Gemini names (e.g. gemini-2.5-flash-lite) often fail
+        if MAMMOUTH_BASE_URL in (base_url or "").split("?")[0] and model.startswith(
+            "gemini-2.5"
+        ):
+            if not quiet:
+                warnings.warn(
+                    f"LLM_MODEL={model!r} may be invalid for Mammouth. "
+                    "Using gpt-4o. Set LLM_MODEL to a model from GET /v1/models if needed.",
+                    stacklevel=2,
+                )
+            model = "gpt-4o"
 
         from neo4j_graphrag.llm import OpenAILLM
 
         if not quiet:
-            model = os.getenv("LLM_MODEL", "gpt-4o")
             print(f"  LLM: OpenAI-compatible ({model} via {base_url})")
 
         return OpenAILLM(
-            model_name=os.getenv("LLM_MODEL", "gpt-4o"),
+            model_name=model,
             model_params={
                 "temperature": 0,
                 "response_format": {"type": "json_object"},
