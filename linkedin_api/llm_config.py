@@ -5,7 +5,7 @@ Supports OpenAI-compatible (including Mammouth), Ollama, and VertexAI providers.
 
 API key resolution order (for OpenAI-compatible providers):
 1. ``LLM_API_KEY`` environment variable
-2. macOS Keychain: ``keyring.get_password("MAMMOUTH_API_KEY", "browser-use")``
+2. macOS Keychain: ``keyring.get_password("agent-fleet-rts", "mammouth_api_key")``
 3. ``OPENAI_API_KEY`` environment variable
 4. If none found: automatic fallback to Ollama
 
@@ -28,10 +28,10 @@ import warnings
 MAMMOUTH_BASE_URL = "https://api.mammouth.ai/v1"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
-# Keyring service/account matching .env.example:
-#   keyring set MAMMOUTH_API_KEY browser-use
-_KEYRING_SERVICE = "MAMMOUTH_API_KEY"
-_KEYRING_ACCOUNT = "browser-use"
+# Keyring service/account matching agent-fleet-rts manage_keys.py convention:
+#   uv run backend/src/scripts/manage_keys.py set mammouth_api_key
+_KEYRING_SERVICE = "agent-fleet-rts"
+_KEYRING_ACCOUNT = "mammouth_api_key"
 
 
 def _resolve_api_key(quiet=False):
@@ -47,7 +47,7 @@ def _resolve_api_key(quiet=False):
         return key, "LLM_API_KEY env var"
 
     # 2. macOS Keychain (Mammouth)
-    #    Store with: uv run python -c "import keyring; keyring.set_password('MAMMOUTH_API_KEY', 'default', 'your-key')"
+    #    Store with: uv run backend/src/scripts/manage_keys.py set mammouth_api_key  (from agent-fleet-rts)
     try:
         import keyring
 
@@ -58,7 +58,7 @@ def _resolve_api_key(quiet=False):
                     f"  Using Mammouth API key from keyring "
                     f"(service={_KEYRING_SERVICE!r}, account={_KEYRING_ACCOUNT!r})"
                 )
-            return key, "macOS Keychain (MAMMOUTH_API_KEY)"
+            return key, "macOS Keychain (agent-fleet-rts/mammouth_api_key)"
     except Exception as exc:
         if not quiet:
             warnings.warn(f"Keyring lookup failed: {exc}", stacklevel=3)
@@ -129,7 +129,7 @@ def create_llm(quiet=False):
             print(
                 "  No OpenAI-compatible API key found. Tried:\n"
                 "    1. LLM_API_KEY env var\n"
-                "    2. macOS Keychain (MAMMOUTH_API_KEY / browser-use)\n"
+                "    2. macOS Keychain (agent-fleet-rts / mammouth_api_key)\n"
                 "    3. OPENAI_API_KEY env var\n"
                 "  Falling back to Ollama..."
             )
