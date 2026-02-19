@@ -373,7 +373,7 @@ def create_pipeline_interface():
             lines=12,
             max_lines=24,
             interactive=False,
-            placeholder="Click Run pipeline to start.",
+            visible=False,
         )
         gr.Markdown(
             "---\n**Report** — Summarize your activity with the LLM (uses summarized posts from the pipeline)."
@@ -396,11 +396,12 @@ def create_pipeline_interface():
                 lim_int = int(lim) if lim not in (None, "", float("nan")) else None
             except (TypeError, ValueError):
                 lim_int = None
-            yield from run_pipeline_ui_streaming(
+            for chunk in run_pipeline_ui_streaming(
                 last=last,
                 from_cache=from_cache,
                 limit=lim_int,
-            )
+            ):
+                yield gr.update(value=chunk, visible=True)
 
         run_btn.click(
             fn=run,
