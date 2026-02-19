@@ -154,7 +154,7 @@ def load_metadata(urn: str) -> dict[str, Any] | None:
 
 def has_metadata(urn: str) -> bool:
     """True if metadata exists for urn."""
-    return urn and _meta_path(urn).exists()
+    return bool(urn) and _meta_path(urn).exists()
 
 
 def needs_summary(urn: str) -> bool:
@@ -167,10 +167,26 @@ def needs_summary(urn: str) -> bool:
     return not (meta.get("summary") or "").strip()
 
 
+def _load_registry() -> dict[str, str]:
+    """Load stem -> urn registry once. Returns {} if missing."""
+    registry_path = _content_dir() / "_urn_registry.json"
+    if not registry_path.exists():
+        return {}
+    return json.loads(registry_path.read_text(encoding="utf-8"))
+
+
+def _stem_to_urn(stem: str, registry: dict[str, str] | None = None) -> str | None:
+    """Reverse lookup: stem -> urn via registry. Pass registry to avoid re-read."""
+    if registry is not None:
+        return registry.get(stem)
+    return _load_registry().get(stem)
+
+
 def list_posts_needing_summary(limit: int | None = None) -> list[dict[str, Any]]:
     """URNs with content (≥50 chars) but no summary. Returns [{urn, content}, ...]."""
     out: list[dict[str, Any]] = []
     content_dir = _content_dir()
+    registry = _load_registry()
     for path in sorted(content_dir.glob("*.md")):
         stem = path.stem
         content = path.read_text(encoding="utf-8")
@@ -181,21 +197,12 @@ def list_posts_needing_summary(limit: int | None = None) -> list[dict[str, Any]]
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             if (meta.get("summary") or "").strip():
                 continue
-        urn = _stem_to_urn(stem)
+        urn = registry.get(stem)
         if urn:
             out.append({"urn": urn, "content": content})
         if limit and len(out) >= limit:
             break
     return out
-
-
-def _stem_to_urn(stem: str) -> str | None:
-    """Reverse lookup: stem -> urn via registry."""
-    registry_path = _content_dir() / "_urn_registry.json"
-    if not registry_path.exists():
-        return None
-    reg = json.loads(registry_path.read_text(encoding="utf-8"))
-    return reg.get(stem)
 
 
 def _register_urn(urn: str) -> None:

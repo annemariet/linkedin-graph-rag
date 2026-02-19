@@ -113,15 +113,15 @@ class TestMetadata:
 
 class TestNeedsSummary:
     def test_no_content(self):
-        assert needs_summary("urn:li:ugcPost:999") is False
+        assert needs_summary("urn:li:ugcPost:no_content") is False
 
     def test_content_without_summary(self):
-        urn = "urn:li:ugcPost:999"
+        urn = "urn:li:ugcPost:needs_summary"
         save_content(urn, "x" * 100)
         assert needs_summary(urn) is True
 
     def test_content_with_summary(self):
-        urn = "urn:li:ugcPost:999"
+        urn = "urn:li:ugcPost:has_summary"
         save_content(urn, "x" * 100)
         save_metadata(urn, summary="Done")
         assert needs_summary(urn) is False

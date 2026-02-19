@@ -45,6 +45,7 @@ def _run_phase1(args) -> Path:
     if start_ms is None:
         raise ValueError(f"Invalid --last '{last}'; use e.g. 7d, 14d, 30d")
     end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    types_set = {t.strip() for t in args.types.split(",") if t.strip()}
     if args.from_cache:
         cache_start, cache_end = start_ms, end_ms
 
@@ -55,10 +56,8 @@ def _run_phase1(args) -> Path:
         if not args.quiet:
             print(f"Loaded {len(data['nodes'])} nodes from cache")
     else:
-        types_set = {t.strip() for t in args.types.split(",") if t.strip()}
         data = collect_from_live(last, types_set, verbose=not args.quiet)
 
-    types_set = {t.strip() for t in args.types.split(",") if t.strip()}
     records = collect_activities(
         data, types=types_set, start_ms=start_ms, end_ms=end_ms
     )
@@ -97,7 +96,7 @@ def _run_phase2(activities_path: Path, args) -> Path:
             limit=args.limit,
             use_browser=True,
             wait_s=args.wait,
-            progress=not args.quiet,
+            confirm=not args.yes,
         )
         if not args.quiet:
             print(f"Enriched {count} activities")
@@ -162,6 +161,9 @@ def main() -> int:
     parser.add_argument("--wait", type=float, default=3.5, help="Page load wait (s)")
     parser.add_argument("--batch-size", type=int, default=5, help="Phase 3 batch size")
     parser.add_argument("-q", "--quiet", action="store_true")
+    parser.add_argument(
+        "-y", "--yes", action="store_true", help="Skip browser confirmation prompt"
+    )
     args = parser.parse_args()
 
     if not args.last and not args.from_cache:

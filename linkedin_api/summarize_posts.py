@@ -13,6 +13,7 @@ import argparse
 import json
 import re
 import warnings
+from pathlib import Path
 
 from linkedin_api.content_store import (
     list_posts_needing_summary,
@@ -29,7 +30,7 @@ _SYSTEM_PROMPT = """You extract structured metadata from LinkedIn posts. For eac
 - topics: list of main topics/themes (e.g. ["AI", "careers"])
 - technologies: tools, frameworks, languages mentioned (e.g. ["Python", "PyTorch"])
 - people: named people or roles mentioned (e.g. ["Jane Doe", "CTO"])
-- category: the general category of the post (pick one like e.g. product_announcement, paper, experiment, job_news, opinion, tutorial, other...); try to not add too many categories.
+- category: one of product_announcement, paper, experiment, job_news, opinion, tutorial, other.
 
 Example categories you can pick from: product_announcement (new lib/product), paper (academic/research),
   experiment (trial/benchmark), job_news (hiring/career), opinion (hot take),
@@ -97,7 +98,8 @@ def _parse_llm_response(text: str, urns: list[str]) -> list[dict]:
 
 def _summarize_batch(posts: list[dict], llm) -> int:
     """Summarize one batch. Returns count updated."""
-    prompt = _USER_PROMPT_TEMPLATE.format(posts=_build_prompt_batch(posts))
+    user_prompt = _USER_PROMPT_TEMPLATE.format(posts=_build_prompt_batch(posts))
+    prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
     urns = [p["urn"] for p in posts]
     try:
         response = llm.invoke(prompt)
@@ -148,8 +150,6 @@ def summarize_posts(
     quiet: bool = False,
 ) -> int:
     """Summarize posts. Returns count summarized."""
-    from pathlib import Path
-
     if from_json:
         p = Path(from_json)
         if p.exists():

@@ -4,7 +4,9 @@ Phase 2: Enrich activities with post content.
 
 Reads activities JSON (from summarize_activity). For each activity with post_url
 and empty content, fetches the page: tries a simple HTTP request first; falls
-back to browser-use only on 403 (LinkedIn often blocks unauthenticated requests).
+back to browser on 403/login wall. Tries CDP connect (browser-use then Playwright)
+to existing Chrome (--remote-debugging-port=9222); else Playwright launches
+dedicated profile.
 """
 
 from __future__ import annotations
@@ -12,11 +14,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 
+from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import (
     load_content,
     load_metadata,
@@ -88,7 +92,7 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
 async def _enrich_one_url(
     url: str, browser, *, wait_s: float = 3.5, debug_save_path: Path | None = None
 ) -> tuple[str, list[str]]:
-    """Visit URL, extract content and URLs. Caller owns browser lifecycle."""
+    """Visit URL with browser-use BrowserSession. Caller owns lifecycle."""
     html = None
     try:
         page = await browser.new_page(url)
@@ -101,6 +105,40 @@ async def _enrich_one_url(
                 encoding="utf-8",
             )
         raise
+    if debug_save_path and html is not None:
+        debug_save_path.write_text(str(html), encoding="utf-8", errors="replace")
+    if isinstance(html, str):
+        content = _parse_content_from_html(html)
+        urls = extract_urls_from_text(content)
+        return content, urls
+    return "", []
+
+
+async def _enrich_one_url_playwright(
+    url: str,
+    context,
+    *,
+    wait_s: float = 3.5,
+    debug_save_path: Path | None = None,
+) -> tuple[str, list[str]]:
+    """Visit URL with Playwright context. Caller owns lifecycle."""
+    page = None
+    html = None
+    try:
+        page = await context.new_page()
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(wait_s)
+        html = await page.evaluate("() => document.documentElement.outerHTML")
+    except Exception as e:
+        if debug_save_path:
+            debug_save_path.write_text(
+                f"<!-- Error: {e} -->\n<!-- URL: {url} -->",
+                encoding="utf-8",
+            )
+        raise
+    finally:
+        if page:
+            await page.close()
     if debug_save_path and html is not None:
         debug_save_path.write_text(str(html), encoding="utf-8", errors="replace")
     if isinstance(html, str):
@@ -139,6 +177,7 @@ async def _run_enrichment(
     *,
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
+    confirm: bool = True,
 ) -> int:
     """Try requests first; use store when available; browser-use as last resort."""
     enriched_count = 0
@@ -180,37 +219,102 @@ async def _run_enrichment(
     print("\nURLs to visit with browser:")
     for u in urls_to_visit:
         print(f"  {u}")
-    reply = input("Continue? [Y/n]: ").strip().lower()
-    if reply and reply != "y":
+    if confirm:
+        reply = input("Continue? [Y/n]: ").strip().lower()
+        if reply and reply != "y":
+            return enriched_count
+
+    cdp_url = os.environ.get("CHROME_DEBUG_PORT", "http://localhost:9222")
+    if not cdp_url.startswith("http"):
+        cdp_url = f"http://localhost:{cdp_url}"
+
+    # 1) Try browser-use only when Chrome is already in debug mode (cdp_url works).
+    #    browser-use launch is fragile (Chrome 136+, CDP init); we use Playwright for launch.
+    browser = None
+    try:
+        from browser_use import BrowserSession
+
+        browser = BrowserSession(cdp_url=cdp_url)
+        await asyncio.wait_for(browser.start(), timeout=6.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
+
+    if browser is not None:
+        try:
+            for rec in needs_browser:
+                urn = rec.get("post_urn", "")
+                url = rec.get("post_url", "")
+                if not urn or not url:
+                    continue
+                try:
+                    content, urls = await _enrich_one_url(
+                        url,
+                        browser,
+                        wait_s=wait_s,
+                        debug_save_path=debug_save_path,
+                    )
+                    if content:
+                        rec["content"] = content
+                        rec["urls"] = urls
+                        save_content(urn, content)
+                        save_metadata(urn, urls=urls, post_url=url)
+                        enriched_count += 1
+                except Exception as e:
+                    rec["_enrich_error"] = str(e)
+        finally:
+            await browser.kill()
         return enriched_count
 
-    from browser_use import BrowserSession
+    # 2) Fallback: Playwright (CDP connect or launch dedicated profile)
+    from playwright.async_api import async_playwright
 
-    browser = BrowserSession(**browser_kwargs)
-    await browser.start()
-    try:
-        for rec in needs_browser:
-            urn = rec.get("post_urn", "")
-            url = rec.get("post_url", "")
-            if not urn or not url:
-                continue
-            try:
-                content, urls = await _enrich_one_url(
-                    url,
-                    browser,
-                    wait_s=wait_s,
-                    debug_save_path=debug_save_path,
-                )
-                if content:
-                    rec["content"] = content
-                    rec["urls"] = urls
-                    save_content(urn, content)
-                    save_metadata(urn, urls=urls, post_url=url)
-                    enriched_count += 1
-            except Exception as e:
-                rec["_enrich_error"] = str(e)
-    finally:
-        await browser.kill()
+    async with async_playwright() as p:
+        owns_context = False
+        try:
+            browser = await p.chromium.connect_over_cdp(cdp_url, timeout=4000)
+            context = (
+                browser.contexts[0] if browser.contexts else await browser.new_context()
+            )
+            print("Connected to existing Chrome (remote debugging).")
+        except Exception:
+            print(
+                "Chrome not in debug mode; launching dedicated profile. "
+                "For your profile: start Chrome with --remote-debugging-port=9222"
+            )
+            profile_dir = get_data_dir() / "browser_profile"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            context = await p.chromium.launch_persistent_context(
+                str(profile_dir),
+                headless=False,
+                channel="chrome",
+            )
+            owns_context = True
+
+        try:
+            for rec in needs_browser:
+                urn = rec.get("post_urn", "")
+                url = rec.get("post_url", "")
+                if not urn or not url:
+                    continue
+                try:
+                    content, urls = await _enrich_one_url_playwright(
+                        url,
+                        context,
+                        wait_s=wait_s,
+                        debug_save_path=debug_save_path,
+                    )
+                    if content:
+                        rec["content"] = content
+                        rec["urls"] = urls
+                        save_content(urn, content)
+                        save_metadata(urn, urls=urls, post_url=url)
+                        enriched_count += 1
+                except Exception as e:
+                    rec["_enrich_error"] = str(e)
+        finally:
+            if owns_context:
+                await context.close()
+
     return enriched_count
 
 
@@ -221,7 +325,7 @@ def enrich_activities(
     use_browser: bool = True,
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
-    progress: bool = True,
+    confirm: bool = True,
 ) -> tuple[list[dict], int]:
     """
     Enrich activities that have post_url but empty content.
@@ -246,6 +350,7 @@ def enrich_activities(
             browser_kwargs,
             wait_s=wait_s,
             debug_save_path=debug_save_path,
+            confirm=confirm,
         )
     )
     return activities, enriched_count
@@ -253,7 +358,7 @@ def enrich_activities(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Enrich activities with post content via browser-use.",
+        description="Enrich activities with post content (browser-use or Playwright).",
     )
     parser.add_argument(
         "input",
