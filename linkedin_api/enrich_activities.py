@@ -151,11 +151,12 @@ async def _enrich_one_url_playwright(
 async def _run_enrichment(
     to_enrich: list[dict],
     *,
+    use_browser: bool = True,
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
     confirm: bool = True,
 ) -> int:
-    """Try requests first; use store when available; browser-use as last resort."""
+    """Try requests first; use store when available; browser as last resort if use_browser."""
     enriched_count = 0
     needs_browser: list[dict] = []
 
@@ -187,6 +188,8 @@ async def _run_enrichment(
             needs_browser.append(rec)
 
     if not needs_browser:
+        return enriched_count
+    if not use_browser:
         return enriched_count
 
     urls_to_visit = [
@@ -322,6 +325,7 @@ def enrich_activities(
     enriched_count = asyncio.run(
         _run_enrichment(
             to_enrich,
+            use_browser=use_browser,
             wait_s=wait_s,
             debug_save_path=debug_save_path,
             confirm=confirm,
@@ -354,7 +358,7 @@ def main() -> int:
     parser.add_argument(
         "--no-browser",
         action="store_true",
-        help="Skip enrichment (dry run)",
+        help="Skip browser step (only HTTP and store)",
     )
     parser.add_argument(
         "--debug",
@@ -386,7 +390,7 @@ def main() -> int:
     enriched, count = enrich_activities(
         activities,
         limit=args.limit,
-        use_browser=True,
+        use_browser=not args.no_browser,
         wait_s=args.wait,
         debug_save_path=debug_path,
     )
