@@ -352,7 +352,10 @@ def get_database_stats(services: GraphRAGServices) -> str:
 
 def create_pipeline_interface():
     """Pipeline tab: run collect → enrich → summarize with options."""
-    with gr.Blocks(title="Pipeline") as block:
+    with gr.Blocks(
+        title="Pipeline",
+        css="#report-output { min-height: 24em; overflow-y: auto; }",
+    ) as block:
         gr.Markdown(
             "# Pipeline\nRun collect → enrich → summarize. Progress appears below."
         )
@@ -376,13 +379,10 @@ def create_pipeline_interface():
             "---\n**Report** — Summarize your activity with the LLM (uses summarized posts from the pipeline)."
         )
         report_btn = gr.Button("Generate report", variant="secondary")
-        report_output = gr.Textbox(
+        report_output = gr.Markdown(
             value="Click **Generate report** to get a global summary.",
             label="Report",
-            lines=16,
-            max_lines=32,
-            interactive=False,
-            autoscroll=True,
+            elem_id="report-output",
         )
 
         def run(last: str, from_cache: bool, lim):
