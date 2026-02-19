@@ -19,8 +19,9 @@ from neo4j_graphrag.generation.graphrag import GraphRAG
 if TYPE_CHECKING:
     from neo4j import Driver
 
-from linkedin_api.llm_config import create_embedder, create_llm
+from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import list_summarized_metadata
+from linkedin_api.llm_config import create_embedder, create_llm
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -128,6 +129,41 @@ def _report_signature() -> tuple[int, tuple[str, ...]] | None:
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
     return (len(all_metas), tuple((m.get("summarized_at") or "") for m in metas))
+
+
+_REPORT_CACHE_FILE = "report_cache.json"
+
+
+def _load_report_cache() -> tuple[str, tuple[int, tuple[str, ...]]] | None:
+    """Load cached report from disk. Returns (report, signature) or None."""
+    path = get_data_dir() / _REPORT_CACHE_FILE
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        n = data.get("n", 0)
+        at = tuple(data.get("summarized_at", []))
+        report = data.get("report", "")
+        if not report:
+            return None
+        return (report, (n, at))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...]]) -> None:
+    """Persist report and signature to disk so cache survives page refresh."""
+    path = get_data_dir() / _REPORT_CACHE_FILE
+    try:
+        path.write_text(
+            json.dumps(
+                {"n": sig[0], "summarized_at": list(sig[1]), "report": report},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
 def generate_activity_report() -> str:
@@ -424,13 +460,21 @@ def create_pipeline_interface():
             logger.info("Generate report clicked")
             yield "🔄 Generating report…", gr.update(interactive=False), cache
             sig = _report_signature()
-            if cache is not None and cache[1] == sig:
+            # Check disk first (survives refresh), then in-session state
+            disk = _load_report_cache()
+            if disk is not None and disk[1] == sig:
+                result = disk[0]
+                logger.info("Report cache hit (disk), reusing previous report")
+                cache = (result, sig)
+            elif cache is not None and cache[1] == sig:
                 result = cache[0]
-                logger.info("Report cache hit, reusing previous report")
+                logger.info("Report cache hit (session), reusing previous report")
             else:
                 try:
                     result = generate_activity_report()
                     cache = (result, sig)
+                    if sig is not None:
+                        _save_report_cache(result, sig)
                 except Exception as e:
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
