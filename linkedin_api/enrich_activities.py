@@ -148,32 +148,8 @@ async def _enrich_one_url_playwright(
     return "", []
 
 
-def _get_chrome_profile_kwargs() -> dict:
-    """Return browser kwargs for Chrome profile (LinkedIn login)."""
-    import os
-    import platform
-
-    system = platform.system()
-    if system == "Darwin":
-        data_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome")
-        executable = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    elif system == "Linux":
-        data_dir = os.path.expanduser("~/.config/google-chrome")
-        executable = "/usr/bin/google-chrome"
-    else:
-        return {}
-    if Path(data_dir).exists() and Path(executable).exists():
-        return {
-            "executable_path": executable,
-            "user_data_dir": data_dir,
-            "profile_directory": "Default",
-        }
-    return {}
-
-
 async def _run_enrichment(
     to_enrich: list[dict],
-    browser_kwargs: dict,
     *,
     wait_s: float = 3.5,
     debug_save_path: Path | None = None,
@@ -343,11 +319,9 @@ def enrich_activities(
     if not to_enrich:
         return activities, 0
 
-    browser_kwargs = _get_chrome_profile_kwargs() if use_browser else {}
     enriched_count = asyncio.run(
         _run_enrichment(
             to_enrich,
-            browser_kwargs,
             wait_s=wait_s,
             debug_save_path=debug_save_path,
             confirm=confirm,
