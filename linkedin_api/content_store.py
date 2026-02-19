@@ -175,6 +175,33 @@ def _load_registry() -> dict[str, str]:
     return json.loads(registry_path.read_text(encoding="utf-8"))
 
 
+def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
+    """All posts that have a non-empty summary. Returns list of metadata dicts."""
+    out: list[dict[str, Any]] = []
+    content_dir = _content_dir()
+    for path in sorted(content_dir.glob("*.meta.json")):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+            if not (meta.get("summary") or "").strip():
+                continue
+            out.append(
+                {
+                    "summary": (meta.get("summary") or "").strip(),
+                    "topics": meta.get("topics") or [],
+                    "technologies": meta.get("technologies") or [],
+                    "people": meta.get("people") or [],
+                    "category": meta.get("category") or "",
+                    "summarized_at": meta.get("summarized_at") or "",
+                    "post_url": meta.get("post_url") or "",
+                }
+            )
+            if limit and len(out) >= limit:
+                break
+        except (json.JSONDecodeError, OSError):
+            continue
+    return out
+
+
 def list_posts_needing_summary(limit: int | None = None) -> list[dict[str, Any]]:
     """URNs with content (≥50 chars) but no summary. Returns [{urn, content}, ...]."""
     out: list[dict[str, Any]] = []
