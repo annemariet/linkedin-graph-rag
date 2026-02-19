@@ -89,21 +89,9 @@ def _run_phase1(args) -> Path:
 def _run_phase2(activities_path: Path, args) -> Path:
     """Phase 2: enrich. Returns path to enriched JSON."""
     activities = json.loads(activities_path.read_text())
-
-    if not args.no_browser:
-        enriched, count = enrich_activities(
-            activities,
-            limit=args.limit,
-            use_browser=True,
-            wait_s=args.wait,
-            confirm=not args.yes,
-        )
-        if not args.quiet:
-            print(f"Enriched {count} activities")
-    else:
-        enriched = activities
-        if not args.quiet:
-            print("Skipped enrichment (--no-browser)")
+    enriched, count = enrich_activities(activities, limit=args.limit)
+    if not args.quiet:
+        print(f"Enriched {count} activities")
 
     out_path = Path(args.enriched_output) if args.enriched_output else DEFAULT_ENRICHED
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,15 +143,8 @@ def main() -> int:
         help="Load enriched JSON into store first (for history backfill)",
     )
     parser.add_argument("--limit", type=int, help="Limit posts per phase")
-    parser.add_argument(
-        "--no-browser", action="store_true", help="Skip Phase 2 enrichment"
-    )
-    parser.add_argument("--wait", type=float, default=3.5, help="Page load wait (s)")
     parser.add_argument("--batch-size", type=int, default=5, help="Phase 3 batch size")
     parser.add_argument("-q", "--quiet", action="store_true")
-    parser.add_argument(
-        "-y", "--yes", action="store_true", help="Skip browser confirmation prompt"
-    )
     args = parser.parse_args()
 
     if not args.last and not args.from_cache:

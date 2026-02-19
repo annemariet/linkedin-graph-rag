@@ -11,8 +11,7 @@ named by the SHA-256 hash of the activity URN.
 Content sourcing priority (handled by callers):
 1. Portability API text (available for own content at extraction time)
 2. ``requests`` + HTML-to-Markdown for public posts
-3. Browser via CDP when login is required (Chrome must be started with
-   ``--remote-debugging-port=9222``; we do not launch a browser)
+(URLs requiring login are not enriched.)
 
 Phase 3 metadata (summary, topics, etc.) stored as ``{hash}.meta.json`` sidecar.
 """
@@ -174,13 +173,6 @@ def _load_registry() -> dict[str, str]:
     if not registry_path.exists():
         return {}
     return json.loads(registry_path.read_text(encoding="utf-8"))
-
-
-def _stem_to_urn(stem: str, registry: dict[str, str] | None = None) -> str | None:
-    """Reverse lookup: stem -> urn via registry. Pass registry to avoid re-read."""
-    if registry is not None:
-        return registry.get(stem)
-    return _load_registry().get(stem)
 
 
 def list_posts_needing_summary(limit: int | None = None) -> list[dict[str, Any]]:

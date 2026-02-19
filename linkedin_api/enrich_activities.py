@@ -10,7 +10,6 @@ need login are skipped with an error.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 from pathlib import Path
 
@@ -80,15 +79,8 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
         return None
 
 
-async def _run_enrichment(
-    to_enrich: list[dict],
-    *,
-    use_browser: bool = True,
-    wait_s: float = 3.5,
-    debug_save_path: Path | None = None,
-    confirm: bool = True,
-) -> int:
-    """Try requests first; use store when available; browser as last resort if use_browser."""
+def _run_enrichment(to_enrich: list[dict]) -> int:
+    """Try store first, then HTTP. URLs needing login get _enrich_error."""
     enriched_count = 0
     needs_browser: list[dict] = []
 
@@ -119,24 +111,6 @@ async def _run_enrichment(
         else:
             needs_browser.append(rec)
 
-    if not needs_browser:
-        return enriched_count
-    if not use_browser:
-        return enriched_count
-
-    urls_to_visit = [
-        rec.get("post_url", "") for rec in needs_browser if rec.get("post_url")
-    ]
-    print("\nURLs to visit with browser:")
-    for u in urls_to_visit:
-        print(f"  {u}")
-    if confirm:
-        reply = input("Continue? [Y/n]: ").strip().lower()
-        if reply and reply != "y":
-            return enriched_count
-
-    # No browser path: we do not try CDP or launch; warn and skip.
-    print("Skipping browser enrichment (no browser path).")
     for rec in needs_browser:
         rec["_enrich_error"] = "Browser required; not implemented"
     return enriched_count
@@ -146,10 +120,6 @@ def enrich_activities(
     activities: list[dict],
     *,
     limit: int | None = None,
-    use_browser: bool = True,
-    wait_s: float = 3.5,
-    debug_save_path: Path | None = None,
-    confirm: bool = True,
 ) -> tuple[list[dict], int]:
     """
     Enrich activities that have post_url but empty content.
@@ -167,15 +137,7 @@ def enrich_activities(
     if not to_enrich:
         return activities, 0
 
-    enriched_count = asyncio.run(
-        _run_enrichment(
-            to_enrich,
-            use_browser=use_browser,
-            wait_s=wait_s,
-            debug_save_path=debug_save_path,
-            confirm=confirm,
-        )
-    )
+    enriched_count = _run_enrichment(to_enrich)
     return activities, enriched_count
 
 
@@ -200,52 +162,16 @@ def main() -> int:
         type=int,
         help="Max number of posts to enrich (for testing)",
     )
-    parser.add_argument(
-        "--no-browser",
-        action="store_true",
-        help="Skip browser step (only HTTP and store)",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Save last fetched HTML to outputs/debug_enrich_last.html for inspection",
-    )
-    parser.add_argument(
-        "--wait",
-        type=float,
-        default=3.5,
-        metavar="SECONDS",
-        help="Seconds to wait for page load (default: 3.5)",
-    )
     args = parser.parse_args()
     if not args.input or not args.input.exists():
         parser.error("Input file required")
     activities = json.loads(args.input.read_text())
-    if args.no_browser:
-        print(f"Loaded {len(activities)} activities (dry run, no enrichment)")
-        out_path = args.output or args.input.with_name(
-            args.input.stem + "_enriched" + args.input.suffix
-        )
-        out_path.write_text(json.dumps(activities, indent=2))
-        return 0
-    debug_path = None
-    if args.debug:
-        debug_path = OUTPUT_DIR / "debug_enrich_last.html"
-        debug_path.parent.mkdir(parents=True, exist_ok=True)
-    enriched, count = enrich_activities(
-        activities,
-        limit=args.limit,
-        use_browser=not args.no_browser,
-        wait_s=args.wait,
-        debug_save_path=debug_path,
-    )
+    enriched, count = enrich_activities(activities, limit=args.limit)
     out_path = args.output or args.input.with_name(
         args.input.stem + "_enriched" + args.input.suffix
     )
     out_path.write_text(json.dumps(enriched, indent=2))
     print(f"Enriched {count} activities, wrote {out_path}")
-    if args.debug and debug_path:
-        print(f"Debug: last page HTML → {debug_path}")
     return 0
 
 
