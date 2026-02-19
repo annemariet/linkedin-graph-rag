@@ -114,11 +114,18 @@ def _ensure_ollama_running(base_url=None):
     return False
 
 
-def create_llm(quiet=False):
+def create_llm(quiet=False, json_mode=True):
     """Create LLM instance based on LLM_PROVIDER env var.
 
     If provider is ``openai`` but no API key is found, falls back to Ollama
     automatically (starting the server if needed).
+
+    Args:
+        quiet: Suppress log output.
+        json_mode: If True (default), set response_format to json_object for JSON
+            output (e.g. summarize_posts). If False, no response_format so the LLM
+            can return plain text (e.g. report generation). Some providers (e.g.
+            Mammouth) require the prompt to mention "json" when json_mode is True.
     """
     provider = os.getenv("LLM_PROVIDER", "openai")
 
@@ -154,12 +161,12 @@ def create_llm(quiet=False):
         if not quiet:
             print(f"  LLM: OpenAI-compatible ({model} via {base_url})")
 
+        model_params = {"temperature": 0}
+        if json_mode:
+            model_params["response_format"] = {"type": "json_object"}
         return OpenAILLM(
             model_name=model,
-            model_params={
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-            },
+            model_params=model_params,
             api_key=api_key,
             base_url=base_url,
         )
