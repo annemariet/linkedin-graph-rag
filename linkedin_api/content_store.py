@@ -11,7 +11,8 @@ named by the SHA-256 hash of the activity URN.
 Content sourcing priority (handled by callers):
 1. Portability API text (available for own content at extraction time)
 2. ``requests`` + HTML-to-Markdown for public posts
-3. Playwright (Chrome) when login is required (e.g. private posts)
+3. Browser via CDP when login is required (Chrome must be started with
+   ``--remote-debugging-port=9222``; we do not launch a browser)
 
 Phase 3 metadata (summary, topics, etc.) stored as ``{hash}.meta.json`` sidecar.
 """
