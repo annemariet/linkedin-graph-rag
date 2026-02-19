@@ -120,6 +120,16 @@ def _format_other_section(metas: list[dict]) -> str:
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
+def _report_signature() -> tuple[int, tuple[str, ...]] | None:
+    """Signature of the post set used for the report. None if no posts. Used for cache invalidation."""
+    all_metas = list_summarized_metadata()
+    if not all_metas:
+        return None
+    all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+    metas = all_metas[:REPORT_MAX_POSTS]
+    return (len(all_metas), tuple((m.get("summarized_at") or "") for m in metas))
+
+
 def generate_activity_report() -> str:
     """Build report by category. Batches by char limit per category; 'other' is summaries + links only."""
     setup_gcp_credentials()
@@ -384,6 +394,7 @@ def create_pipeline_interface():
             label="Report",
             elem_id="report-output",
         )
+        report_cache_state = gr.State(value=None)  # (report_text, signature) or None
 
         def run(last: str, from_cache: bool, lim):
             logger.info(
@@ -409,20 +420,27 @@ def create_pipeline_interface():
             outputs=log_output,
         )
 
-        def do_report():
+        def do_report(cache):
             logger.info("Generate report clicked")
-            yield "🔄 Generating report…", gr.update(interactive=False)
-            try:
-                result = generate_activity_report()
-            except Exception as e:
-                logger.exception("Report generation failed")
-                result = _report_error_message(e)
-            yield result, gr.update(interactive=True)
+            yield "🔄 Generating report…", gr.update(interactive=False), cache
+            sig = _report_signature()
+            if cache is not None and cache[1] == sig:
+                result = cache[0]
+                logger.info("Report cache hit, reusing previous report")
+            else:
+                try:
+                    result = generate_activity_report()
+                    cache = (result, sig)
+                except Exception as e:
+                    logger.exception("Report generation failed")
+                    result = _report_error_message(e)
+                    cache = None
+            yield result, gr.update(interactive=True), cache
 
         report_btn.click(
             fn=do_report,
-            inputs=[],
-            outputs=[report_output, report_btn],
+            inputs=[report_cache_state],
+            outputs=[report_output, report_btn, report_cache_state],
         )
     return block
 
