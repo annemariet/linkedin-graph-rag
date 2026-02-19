@@ -99,10 +99,9 @@ def _parse_llm_response(text: str, urns: list[str]) -> list[dict]:
 def _summarize_batch(posts: list[dict], llm) -> int:
     """Summarize one batch. Returns count updated."""
     user_prompt = _USER_PROMPT_TEMPLATE.format(posts=_build_prompt_batch(posts))
-    prompt = f"{_SYSTEM_PROMPT}\n\n{user_prompt}"
     urns = [p["urn"] for p in posts]
     try:
-        response = llm.invoke(prompt)
+        response = llm.invoke(user_prompt, system_instruction=_SYSTEM_PROMPT)
         content = response.content if hasattr(response, "content") else str(response)
         parsed = _parse_llm_response(content, urns)
         for p in parsed:
