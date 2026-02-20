@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from linkedin_api.enrich_activities import enrich_activities
 from linkedin_api.summarize_activity import (
@@ -120,6 +123,117 @@ def _run_phase3(args, enriched_path: Path | None = None):
         else:
             print(f"Summarized {n} posts.")
     return n
+
+
+def run_pipeline_ui(
+    last: str = "7d",
+    from_cache: bool = False,
+    limit: int | None = None,
+    batch_size: int = 5,
+    seed_json: str | None = None,
+) -> tuple[bool, str]:
+    """
+    Run the MVP pipeline with given options; capture stdout and return (success, log).
+
+    For use from Gradio or other UIs. Does not call sys.exit.
+    """
+    args = SimpleNamespace(
+        last=last,
+        from_cache=from_cache,
+        types="reaction,repost,comment",
+        output=None,
+        enriched_output=None,
+        seed_json=seed_json,
+        limit=limit,
+        batch_size=batch_size,
+        quiet=False,
+    )
+    if not args.last and not args.from_cache:
+        args.from_cache = True
+        args.last = "30d"
+    out = StringIO()
+    old_stdout = sys.stdout
+    try:
+        sys.stdout = out
+        activities_path = _run_phase1(args)
+        enriched_path = _run_phase2(activities_path, args)
+        _run_phase3(args, enriched_path)
+        return True, out.getvalue()
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 1
+        return code == 0, out.getvalue()
+    except Exception as e:
+        print(f"Error: {e}", file=out)
+        return False, out.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+
+def run_pipeline_ui_streaming(
+    last: str = "7d",
+    from_cache: bool = False,
+    limit: int | None = None,
+    batch_size: int = 5,
+    seed_json: str | None = None,
+):
+    """
+    Generator that runs the MVP pipeline and yields accumulated log after each phase.
+
+    For use from Gradio or other UIs that support streaming output.
+    Yields: str (accumulated log so far). Final yield may be prefixed with "✅ Done.\n\n" or "❌ Failed.\n\n".
+    """
+    args = SimpleNamespace(
+        last=last,
+        from_cache=from_cache,
+        types="reaction,repost,comment",
+        output=None,
+        enriched_output=None,
+        seed_json=seed_json,
+        limit=limit,
+        batch_size=batch_size,
+        quiet=False,
+    )
+    if not args.last and not args.from_cache:
+        args.from_cache = True
+        args.last = "30d"
+    acc: list[str] = []
+    old_stdout = sys.stdout
+
+    def flush() -> str:
+        return "\n".join(acc)
+
+    try:
+        acc.append(
+            f"Starting pipeline (period={args.last}, from_cache={args.from_cache}, limit={args.limit})…"
+        )
+        yield flush()
+
+        out = StringIO()
+        sys.stdout = out
+        activities_path = _run_phase1(args)
+        acc.append(out.getvalue().strip())
+        yield flush()
+
+        out = StringIO()
+        sys.stdout = out
+        enriched_path = _run_phase2(activities_path, args)
+        acc.append(out.getvalue().strip())
+        yield flush()
+
+        out = StringIO()
+        sys.stdout = out
+        _run_phase3(args, enriched_path)
+        acc.append(out.getvalue().strip())
+        yield "✅ Done.\n\n" + flush()
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 1
+        acc.append(f"Exited with code {code}")
+        yield "❌ Failed.\n\n" + flush()
+    except Exception as e:
+        acc.append(f"Error: {e}")
+        yield "❌ Failed.\n\n" + flush()
+    finally:
+        sys.stdout = old_stdout
 
 
 def main() -> int:
