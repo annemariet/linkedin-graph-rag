@@ -33,7 +33,7 @@ DEFAULT_ACTIVITIES = OUTPUT_DIR / "activities.json"
 DEFAULT_ENRICHED = OUTPUT_DIR / "activities_enriched.json"
 
 
-def _run_phase1(args) -> tuple[Path, int]:
+def _collect_activities(args) -> tuple[Path, int]:
     """Collect activities from changelog (or cache). Returns (path to activities JSON, count)."""
     from datetime import datetime, timezone
 
@@ -89,7 +89,7 @@ def _run_phase1(args) -> tuple[Path, int]:
     return out_path, len(records)
 
 
-def _run_phase2(activities_path: Path, args) -> tuple[Path, int]:
+def _enrich_activities(activities_path: Path, args) -> tuple[Path, int]:
     """Enrich activities with content. Returns (path to enriched JSON, count)."""
     activities = json.loads(activities_path.read_text())
     enriched, count = enrich_activities(activities, limit=args.limit)
@@ -104,7 +104,7 @@ def _run_phase2(activities_path: Path, args) -> tuple[Path, int]:
     return out_path, count
 
 
-def _run_phase3(args, enriched_path: Path | None = None):
+def _summarize_posts(args, enriched_path: Path | None = None):
     """Summarize posts in store that lack a summary (via LLM)."""
     if args.seed_json:
         p = Path(args.seed_json)
@@ -155,9 +155,9 @@ def run_pipeline_ui(
     old_stdout = sys.stdout
     try:
         sys.stdout = out
-        activities_path, _ = _run_phase1(args)
-        enriched_path, _ = _run_phase2(activities_path, args)
-        _run_phase3(args, enriched_path)
+        activities_path, _ = _collect_activities(args)
+        enriched_path, _ = _enrich_activities(activities_path, args)
+        _summarize_posts(args, enriched_path)
         return True, out.getvalue()
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else 1
@@ -204,11 +204,11 @@ def run_pipeline_ui_streaming(
 
     try:
         yield ui("Starting pipeline…")
-        activities_path, n1 = _run_phase1(args)
+        activities_path, n1 = _collect_activities(args)
         yield ui(f"Collected {n1} activities.")
-        enriched_path, n2 = _run_phase2(activities_path, args)
+        enriched_path, n2 = _enrich_activities(activities_path, args)
         yield ui(f"Enriched {n2} activities.")
-        n3 = _run_phase3(args, enriched_path)
+        n3 = _summarize_posts(args, enriched_path)
         yield ui(f"Summarized {n3} posts.")
         yield ui("✅ Done.")
     except SystemExit as e:
@@ -250,9 +250,9 @@ def main() -> int:
             print("Using --from-cache --last 30d (default)")
 
     try:
-        activities_path, _ = _run_phase1(args)
-        enriched_path, _ = _run_phase2(activities_path, args)
-        _run_phase3(args, enriched_path)
+        activities_path, _ = _collect_activities(args)
+        enriched_path, _ = _enrich_activities(activities_path, args)
+        _summarize_posts(args, enriched_path)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
     except Exception as e:
