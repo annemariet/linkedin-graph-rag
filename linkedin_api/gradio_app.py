@@ -413,7 +413,7 @@ def create_pipeline_interface():
             )
             from_cache = gr.Checkbox(value=False, label="From cache (neo4j_data)")
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
-        run_btn = gr.Button("Run pipeline & report", variant="primary")
+        run_btn = gr.Button("Get latest news report", variant="primary")
         log_output = gr.Textbox(
             label="Log",
             lines=6,
@@ -422,7 +422,7 @@ def create_pipeline_interface():
             visible=True,
         )
         report_output = gr.Markdown(
-            value="Run **Run pipeline & report** to refresh data and get a summary.",
+            value="Click **Get latest news report** to refresh data and get a summary.",
             label="Report",
             elem_id="report-output",
         )
@@ -450,13 +450,16 @@ def create_pipeline_interface():
                 ):
                     log_text = chunk
                     if "Collected" in chunk:
-                        progress(0.25, desc="Enriching…")
+                        progress(1, desc="Fetched.")
+                        progress(0, desc="Enriching…")
                     elif "Enriched" in chunk:
-                        progress(0.5, desc="Summarizing…")
+                        progress(1, desc="Enriched.")
+                        progress(0, desc="Summarizing…")
                     elif "Summarized" in chunk:
-                        progress(0.65, desc="Summarizing…")
+                        progress(1, desc="Summarized.")
+                        progress(0, desc="Pipeline done.")
                     elif "✅ Done" in chunk:
-                        progress(0.75, desc="Pipeline done.")
+                        progress(1, desc="Pipeline done.")
                     elif chunk.strip().startswith("❌"):
                         progress(1, desc="Failed")
                         yield log_text, gr.update(), cache
@@ -469,7 +472,7 @@ def create_pipeline_interface():
                 yield f"{log_text}\n\n❌ Failed: {err_msg}", gr.update(), cache
                 return
 
-            progress(0.85, desc="Generating report…")
+            progress(0, desc="Generating report…")
             sig = _report_signature()
             disk = _load_report_cache()
             if disk is not None and disk[1] == sig:
@@ -489,7 +492,7 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
-            progress(1, desc="Done")
+            progress(1, desc="Done.")
             yield log_text, result, cache
 
         run_btn.click(
