@@ -2,13 +2,13 @@
 """
 Collect activities (reactions, reposts, comments) for period-based summarization.
 
-Supports:
-- Live: fetch from Portability API with --last 7d|14d|30d
-- Cache: load from outputs/neo4j_data_*.json with --from-cache
+- Fetch: Uses changelog cache. Fetches only new items from the API since last run,
+  merges with cache, persists.
+- Skip fetch: Use only cached data (no API call).
+- Legacy: load_from_cache() reads outputs/neo4j_data_*.json for backward compatibility.
 
-Output: list of {post_urn, post_url, content, urls, interaction_type,
-reaction_type, comment_text, timestamp, created_at} for summarization
-and linked-resource pipelines.
+Output: list of {post_urn, post_url, content, urls, interaction_type, ...} for
+summarization and linked-resource pipelines.
 """
 
 from __future__ import annotations
@@ -20,11 +20,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
+from linkedin_api.changelog_cache import (
+    load_changelog_cache,
+    merge_extracted,
+    save_changelog_cache,
+)
 from linkedin_api.extract_graph_data import (
     extract_entities_and_relationships,
     get_all_post_activities,
 )
 from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.changelog import get_max_processed_at
 from linkedin_api.utils.urns import comment_urn_to_post_url, urn_to_post_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
@@ -167,17 +173,53 @@ def collect_from_live(
     last: str,
     types: set[str],
     verbose: bool = True,
+    skip_fetch: bool = False,
 ) -> dict:
     """
-    Fetch from API and extract entities. Returns same structure as load_from_cache.
+    Fetch from API (only new since last run), merge with cache, return extraction data.
+
+    When skip_fetch is True, uses only cached data (no API call). Otherwise fetches
+    only elements since last_fetched_ms, merges with cache, and persists.
     """
-    start_time = _parse_last(last)
-    if start_time is None:
+    period_start = _parse_last(last)
+    if period_start is None:
         raise ValueError(f"Invalid --last value; use e.g. 7d, 14d, 30d")
-    elements = get_all_post_activities(start_time=start_time, verbose=verbose)
+    cache = load_changelog_cache()
+
+    if skip_fetch:
+        if not cache:
+            if verbose:
+                print('No changelog cache found. Run without "Skip fetch" first.')
+            return {"nodes": [], "relationships": []}
+        return {"nodes": cache["nodes"], "relationships": cache["relationships"]}
+
+    fetch_start = cache["last_fetched_ms"] if cache else period_start
+    if verbose and cache:
+        print(
+            f"Fetching new items since last run (cache has {len(cache['nodes'])} nodes)..."
+        )
+    elements = get_all_post_activities(start_time=fetch_start, verbose=verbose)
+
+    if not elements:
+        if cache:
+            return {"nodes": cache["nodes"], "relationships": cache["relationships"]}
+        return {"nodes": [], "relationships": []}
+
     data = extract_entities_and_relationships(elements)
-    rels = _normalize_relationships(data)
-    return {"nodes": data["nodes"], "relationships": rels}
+    new_rels = _normalize_relationships(data)
+    new_last = get_max_processed_at(elements)
+    if new_last is None and cache:
+        new_last = cache.get("last_fetched_ms", 0)
+    elif new_last is None:
+        new_last = period_start
+    merged = merge_extracted(
+        cache,
+        data["nodes"],
+        data["relationships"],
+        new_last,
+    )
+    save_changelog_cache(merged)
+    return {"nodes": merged["nodes"], "relationships": merged["relationships"]}
 
 
 def _infer_user_actor(
