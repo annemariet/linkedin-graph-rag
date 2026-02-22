@@ -411,7 +411,11 @@ def create_pipeline_interface():
                 value="7d",
                 label="Period",
             )
-            from_cache = gr.Checkbox(value=False, label="From cache (neo4j_data)")
+            from_cache = gr.Checkbox(
+                value=False,
+                label="Skip fetch (use cached data only)",
+                info="No LinkedIn API call; use only previously fetched data.",
+            )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
         run_btn = gr.Button("Run pipeline", variant="primary")
         log_output = gr.Textbox(
