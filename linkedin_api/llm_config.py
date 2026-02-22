@@ -9,6 +9,9 @@ API key resolution order (for OpenAI-compatible providers):
 3. ``OPENAI_API_KEY`` environment variable
 4. If none found: automatic fallback to Ollama
 
+When using Mammouth/OpenAI: rate limits (429) are retried with 1s delay; budget
+errors (400, quota exceeded) trigger fallback to Ollama.
+
 Environment variables:
 
   LLM_PROVIDER        openai | ollama | vertexai   (default: openai)
@@ -114,6 +117,75 @@ def _ensure_ollama_running(base_url=None):
     return False
 
 
+def _is_rate_limit(exc: BaseException) -> bool:
+    """True if error is rate limit (429) — retry with delay."""
+    msg = str(exc).lower()
+    if any(x in msg for x in ("429", "rate limit", "too many requests")):
+        return True
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    if hasattr(exc, "response") and exc.response is not None:
+        return getattr(exc.response, "status_code", None) == 429
+    return False
+
+
+def _is_budget_error(exc: BaseException) -> bool:
+    """True if error suggests budget/quota exhausted — fallback to Ollama."""
+    msg = str(exc).lower()
+    if any(x in msg for x in ("400", "bad request", "quota", "budget", "exceeded")):
+        return True
+    if getattr(exc, "status_code", None) in (400, 402):
+        return True
+    if hasattr(exc, "response") and exc.response is not None:
+        return getattr(exc.response, "status_code", None) in (400, 402)
+    return False
+
+
+class _FallbackLLM:
+    """Wraps primary LLM: retries on rate limit, falls back to Ollama on budget errors."""
+
+    def __init__(self, primary, quiet=False):
+        self._primary = primary
+        self._quiet = quiet
+        self._fallback_llm = None
+
+    def _get_fallback(self):
+        if self._fallback_llm is None:
+            if not self._quiet:
+                print("  API budget exceeded, falling back to Ollama...")
+            self._fallback_llm = _create_ollama_llm(quiet=self._quiet, is_fallback=True)
+        return self._fallback_llm
+
+    def invoke(self, input: str, message_history=None, system_instruction=None):
+        last_exc = None
+        for attempt in range(4):  # 1 initial + 3 retries for rate limit
+            try:
+                return self._primary.invoke(
+                    input,
+                    message_history=message_history,
+                    system_instruction=system_instruction,
+                )
+            except Exception as e:
+                last_exc = e
+                if _is_rate_limit(e) and attempt < 3:
+                    if not self._quiet:
+                        print("  Rate limited, retrying in 1s...")
+                    time.sleep(1)
+                    continue
+                if _is_budget_error(e) or (_is_rate_limit(e) and attempt >= 3):
+                    fallback = self._get_fallback()
+                    return fallback.invoke(
+                        input,
+                        message_history=message_history,
+                        system_instruction=system_instruction,
+                    )
+                raise
+        raise last_exc
+
+    def __getattr__(self, name):
+        return getattr(self._primary, name)
+
+
 def create_llm(quiet=False, json_mode=True):
     """Create LLM instance based on LLM_PROVIDER env var.
 
@@ -164,12 +236,13 @@ def create_llm(quiet=False, json_mode=True):
         model_params = {"temperature": 0}
         if json_mode:
             model_params["response_format"] = {"type": "json_object"}
-        return OpenAILLM(
+        primary = OpenAILLM(
             model_name=model,
             model_params=model_params,
             api_key=api_key,
             base_url=base_url,
         )
+        return _FallbackLLM(primary, quiet=quiet)
     elif provider == "ollama":
         return _create_ollama_llm(quiet=quiet)
     elif provider == "vertexai":
