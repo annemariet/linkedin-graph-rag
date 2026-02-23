@@ -27,7 +27,6 @@ from linkedin_api.summarize_activity import (
     _format_timestamp,
     collect_activities,
     collect_from_live,
-    load_from_cache,
 )
 from linkedin_api.summarize_posts import (
     load_from_json_and_save,
@@ -46,27 +45,21 @@ def _collect_activities(args) -> tuple[Path, int]:
 
     from linkedin_api.summarize_activity import _parse_last
 
-    start_ms = None
-    end_ms = None
-    cache_start = None
-    cache_end = None
     last = args.last or "30d"
     start_ms = _parse_last(last)
     if start_ms is None:
         raise ValueError(f"Invalid --last '{last}'; use e.g. 7d, 14d, 30d")
     end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     types_set = {t.strip() for t in args.types.split(",") if t.strip()}
-    if args.from_cache:
-        cache_start, cache_end = start_ms, end_ms
 
-    if args.from_cache:
-        data = load_from_cache(start_ms=cache_start, end_ms=cache_end)
-        if not data["nodes"]:
-            raise SystemExit("No cached neo4j_data_*.json found. Run extraction first.")
-        if not args.quiet:
-            print(f"Loaded {len(data['nodes'])} nodes from cache")
-    else:
-        data = collect_from_live(last, types_set, verbose=not args.quiet)
+    data = collect_from_live(
+        last,
+        types_set,
+        verbose=not args.quiet,
+        skip_fetch=args.from_cache,
+    )
+    if not data["nodes"] and args.from_cache:
+        raise SystemExit('No changelog cache found. Run without "Skip fetch" first.')
 
     records = collect_activities(
         data, types=types_set, start_ms=start_ms, end_ms=end_ms
@@ -303,7 +296,10 @@ def main() -> int:
     )
     parser.add_argument("--last", metavar="Nd", help="Period: 7d, 14d, 30d")
     parser.add_argument(
-        "--from-cache", action="store_true", help="Use cached neo4j_data"
+        "--skip-fetch",
+        action="store_true",
+        dest="from_cache",
+        help="Use only cached changelog data (no API fetch)",
     )
     parser.add_argument(
         "--types",
@@ -326,7 +322,7 @@ def main() -> int:
         args.from_cache = True
         args.last = "30d"
         if not args.quiet:
-            print("Using --from-cache --last 30d (default)")
+            print("Using --skip-fetch --last 30d (default)")
 
     try:
         activities_path, _ = _collect_activities(args)
