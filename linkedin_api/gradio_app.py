@@ -107,8 +107,8 @@ def _summarize_batch(llm, metas: list[dict], category_label: str) -> str:
         "You are a news reporter specializing in technology and AI. Analyze the following "
         "LinkedIn post summaries and write a news report. Be precise, avoid high-level "
         "generalities, focus on news most likely to interest a specialized audience. "
-        "Highlight main themes, recurring topics, and patterns; link to original posts "
-        "that best exemplify the news for follow-up."
+        "Highlight main themes, recurring topics, and patterns as relevant; "
+        "link to original posts that best exemplify the news for follow-up."
     )
     prompt = f"Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
     response = llm.invoke(prompt, system_instruction=system)
