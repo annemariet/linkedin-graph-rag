@@ -49,6 +49,7 @@ REPORT_CATEGORIES = (
     "paper",
     "experiment",
     "job_news",
+    "events",
     "other",
 )
 CATEGORY_LABELS = {
@@ -58,6 +59,7 @@ CATEGORY_LABELS = {
     "paper": "Papers & research",
     "experiment": "Experiments & benchmarks",
     "job_news": "Job & career",
+    "events": "Events & conferences",
     "other": "Other (uncategorized — review to improve categorization)",
 }
 
@@ -75,6 +77,8 @@ def _format_post_for_prompt(m: dict) -> str:
         parts.append(f"  Topics: {', '.join(m['topics'])}")
     if m.get("technologies"):
         parts.append(f"  Tech: {', '.join(m['technologies'])}")
+    if m.get("post_url"):
+        parts.append(f"  [Original post]({m['post_url']})")
     return "\n".join(parts)
 
 
@@ -100,8 +104,16 @@ def _summarize_batch(llm, metas: list[dict], category_label: str) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
     block = "\n\n".join(_format_post_for_prompt(m) for m in metas)
     system = (
-        "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
-        "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
+        "You are a news reporter specializing in technology and AI. Analyze the following "
+        "LinkedIn post summaries and write a news report. Be brief but precise, avoid high-level "
+        "generalities, focus on news most likely to interest a specialized audience. "
+        "Highlight main themes, recurring topics, and patterns as relevant; "
+        "link to original posts as the sources of the news in the text."
+        "How to link example: "
+        "'[GLM-5 is now available on Ollama](https://www.linkedin.com/feed/update/urn:li:ugcPost:7427440416012095488)."
+        " This upgrade allows (complete with relevant reasoning).'"
+        "You don't have to be exhaustive, but you should cover the most important news."
+        " Keep the report in english even though the posts may be in other languages."
     )
     prompt = f"Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
     response = llm.invoke(prompt, system_instruction=system)
