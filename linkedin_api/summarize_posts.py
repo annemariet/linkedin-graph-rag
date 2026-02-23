@@ -32,9 +32,8 @@ _SYSTEM_PROMPT = """You extract structured metadata from LinkedIn posts. For eac
 - people: named people or roles mentioned (e.g. ["Jane Doe", "CTO"])
 - category: one of product_announcement, paper, experiment, job_news, opinion, tutorial, other.
 
-Example categories you can pick from: product_announcement (new lib/product), paper (academic/research),
-  experiment (trial/benchmark), job_news (hiring/career), opinion (hot take),
-  tutorial (how-to), other.
+Example categories: product_announcement, paper, experiment, job_news, opinion,
+  tutorial, events (conferences, workshops, meetups, hackathons), other.
 Use empty arrays [] for topics/technologies/people when none apply.
 Output valid JSON only. Format: {"posts": [{"urn": "...", "summary": "...",
   "topics": [], "technologies": [], "people": [], "category": "..."}]}"""

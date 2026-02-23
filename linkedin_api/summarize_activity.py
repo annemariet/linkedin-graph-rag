@@ -206,7 +206,6 @@ def collect_from_live(
         return {"nodes": [], "relationships": []}
 
     data = extract_entities_and_relationships(elements)
-    new_rels = _normalize_relationships(data)
     new_last = get_max_processed_at(elements)
     if new_last is None and cache:
         new_last = cache.get("last_fetched_ms", 0)
