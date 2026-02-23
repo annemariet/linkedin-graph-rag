@@ -19,21 +19,28 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
-from linkedin_api.enrich_activities import enrich_activities
+from linkedin_api.enrich_activities import (
+    enrich_activities,
+    enrich_activities_streaming,
+)
 from linkedin_api.summarize_activity import (
     _format_timestamp,
     collect_activities,
     collect_from_live,
 )
-from linkedin_api.summarize_posts import load_from_json_and_save, summarize_posts
+from linkedin_api.summarize_posts import (
+    load_from_json_and_save,
+    summarize_posts,
+    summarize_posts_streaming,
+)
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 DEFAULT_ACTIVITIES = OUTPUT_DIR / "activities.json"
 DEFAULT_ENRICHED = OUTPUT_DIR / "activities_enriched.json"
 
 
-def _run_phase1(args) -> Path:
-    """Phase 1: collect activities (changelog cache; fetch new or skip fetch). Returns path to activities JSON."""
+def _collect_activities(args) -> tuple[Path, int]:
+    """Collect activities from changelog (or cache). Returns (path to activities JSON, count)."""
     from datetime import datetime, timezone
 
     from linkedin_api.summarize_activity import _parse_last
@@ -79,11 +86,11 @@ def _run_phase1(args) -> Path:
     out_path.write_text(json.dumps(out, indent=2))
     if not args.quiet:
         print(f"Wrote {out_path}")
-    return out_path
+    return out_path, len(records)
 
 
-def _run_phase2(activities_path: Path, args) -> Path:
-    """Phase 2: enrich. Returns path to enriched JSON."""
+def _enrich_activities(activities_path: Path, args) -> tuple[Path, int]:
+    """Enrich activities with content. Returns (path to enriched JSON, count)."""
     activities = json.loads(activities_path.read_text())
     enriched, count = enrich_activities(activities, limit=args.limit)
     if not args.quiet:
@@ -94,11 +101,11 @@ def _run_phase2(activities_path: Path, args) -> Path:
     out_path.write_text(json.dumps(enriched, indent=2))
     if not args.quiet:
         print(f"Wrote {out_path}")
-    return out_path
+    return out_path, count
 
 
-def _run_phase3(args, enriched_path: Path | None = None):
-    """Phase 3: summarize all posts in store needing summary."""
+def _summarize_posts(args, enriched_path: Path | None = None):
+    """Summarize posts in store that lack a summary (via LLM)."""
     if args.seed_json:
         p = Path(args.seed_json)
         if p.exists():
@@ -116,6 +123,49 @@ def _run_phase3(args, enriched_path: Path | None = None):
         else:
             print(f"Summarized {n} posts.")
     return n
+
+
+def _enrich_activities_streaming(activities_path: Path, args):
+    """
+    Generator variant of _enrich_activities.
+    Yields (done, total) per activity. Returns (out_path, count) via StopIteration.
+    """
+    activities = json.loads(activities_path.read_text())
+    gen = enrich_activities_streaming(activities, limit=args.limit)
+    enriched = activities
+    count = 0
+    try:
+        while True:
+            yield next(gen)
+    except StopIteration as e:
+        enriched, count = e.value
+    out_path = Path(args.enriched_output) if args.enriched_output else DEFAULT_ENRICHED
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(enriched, indent=2))
+    return out_path, count
+
+
+def _summarize_posts_streaming(args, enriched_path: Path | None = None):
+    """
+    Generator variant of _summarize_posts.
+    Yields (batches_done, total_batches) per batch. Returns total via StopIteration.
+    """
+    if args.seed_json:
+        p = Path(args.seed_json)
+        if p.exists():
+            n = load_from_json_and_save(p)
+            if not args.quiet:
+                print(f"Seeded store from {p}: {n} posts")
+    gen = summarize_posts_streaming(
+        limit=args.limit,
+        batch_size=args.batch_size,
+        quiet=args.quiet,
+    )
+    try:
+        while True:
+            yield next(gen)
+    except StopIteration as e:
+        return e.value or 0
 
 
 def run_pipeline_ui(
@@ -148,9 +198,9 @@ def run_pipeline_ui(
     old_stdout = sys.stdout
     try:
         sys.stdout = out
-        activities_path = _run_phase1(args)
-        enriched_path = _run_phase2(activities_path, args)
-        _run_phase3(args, enriched_path)
+        activities_path, _ = _collect_activities(args)
+        enriched_path, _ = _enrich_activities(activities_path, args)
+        _summarize_posts(args, enriched_path)
         return True, out.getvalue()
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else 1
@@ -170,10 +220,10 @@ def run_pipeline_ui_streaming(
     seed_json: str | None = None,
 ):
     """
-    Generator that runs the MVP pipeline and yields accumulated log after each phase.
+    Generator that runs the MVP pipeline and yields user-friendly progress for the UI.
 
-    For use from Gradio or other UIs that support streaming output.
-    Yields: str (accumulated log so far). Final yield may be prefixed with "✅ Done.\n\n" or "❌ Failed.\n\n".
+    Full technical output goes to the terminal (stdout). Yields only short progress
+    lines so the UI stays readable.
     """
     args = SimpleNamespace(
         last=last,
@@ -189,44 +239,55 @@ def run_pipeline_ui_streaming(
     if not args.last and not args.from_cache:
         args.from_cache = True
         args.last = "30d"
-    acc: list[str] = []
-    old_stdout = sys.stdout
+    lines: list[str] = []
 
-    def flush() -> str:
-        return "\n".join(acc)
+    def _snapshot() -> str:
+        return "\n".join(lines)
+
+    def _add(msg: str) -> str:
+        lines.append(msg)
+        return _snapshot()
 
     try:
-        acc.append(
-            f"Starting pipeline (period={args.last}, from_cache={args.from_cache}, limit={args.limit})…"
-        )
-        yield flush()
+        yield _add("Starting pipeline…")
+        activities_path, n1 = _collect_activities(args)
+        yield _add(f"Collected {n1} activities.")
 
-        out = StringIO()
-        sys.stdout = out
-        activities_path = _run_phase1(args)
-        acc.append(out.getvalue().strip())
-        yield flush()
+        # Enrich with per-activity progress (placeholder updated in-place)
+        enriched_path = DEFAULT_ENRICHED
+        n2 = 0
+        lines.append("Enriching…")
+        gen = _enrich_activities_streaming(activities_path, args)
+        try:
+            while True:
+                done, total = next(gen)
+                lines[-1] = f"Enriching {done}/{total}…"
+                yield _snapshot()
+        except StopIteration as e:
+            enriched_path, n2 = e.value
+        lines[-1] = f"Enriched {n2} activities."
+        yield _snapshot()
 
-        out = StringIO()
-        sys.stdout = out
-        enriched_path = _run_phase2(activities_path, args)
-        acc.append(out.getvalue().strip())
-        yield flush()
+        # Summarize with per-batch progress (placeholder updated in-place)
+        n3 = 0
+        lines.append("Summarizing…")
+        gen = _summarize_posts_streaming(args, enriched_path)
+        try:
+            while True:
+                batches_done, total_batches = next(gen)
+                lines[-1] = f"Summarizing batch {batches_done}/{total_batches}…"
+                yield _snapshot()
+        except StopIteration as e:
+            n3 = e.value or 0
+        lines[-1] = f"Summarized {n3} posts."
+        yield _snapshot()
 
-        out = StringIO()
-        sys.stdout = out
-        _run_phase3(args, enriched_path)
-        acc.append(out.getvalue().strip())
-        yield "✅ Done.\n\n" + flush()
+        yield _add("✅ Done.")
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else 1
-        acc.append(f"Exited with code {code}")
-        yield "❌ Failed.\n\n" + flush()
+        yield _add(f"❌ Failed (exit {code}).")
     except Exception as e:
-        acc.append(f"Error: {e}")
-        yield "❌ Failed.\n\n" + flush()
-    finally:
-        sys.stdout = old_stdout
+        yield _add(f"❌ Failed: {e}")
 
 
 def main() -> int:
@@ -264,9 +325,9 @@ def main() -> int:
             print("Using --skip-fetch --last 30d (default)")
 
     try:
-        activities_path = _run_phase1(args)
-        enriched_path = _run_phase2(activities_path, args)
-        _run_phase3(args, enriched_path)
+        activities_path, _ = _collect_activities(args)
+        enriched_path, _ = _enrich_activities(activities_path, args)
+        _summarize_posts(args, enriched_path)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
     except Exception as e:

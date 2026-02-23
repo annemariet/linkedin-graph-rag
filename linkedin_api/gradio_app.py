@@ -397,13 +397,13 @@ def get_database_stats(services: GraphRAGServices) -> str:
 
 
 def create_pipeline_interface():
-    """Pipeline tab: run collect → enrich → summarize with options."""
+    """Pipeline tab: single button runs collect → enrich → summarize → report; progress bars and caches."""
     with gr.Blocks(
         title="Pipeline",
         css="#report-output { min-height: 24em; overflow-y: auto; }",
     ) as block:
         gr.Markdown(
-            "# Pipeline\nRun collect → enrich → summarize. Progress appears below."
+            "# Pipeline\nOne run: fetch/enrich/summarize (using caches when possible), then generate report."
         )
         with gr.Row():
             period = gr.Dropdown(
@@ -417,28 +417,24 @@ def create_pipeline_interface():
                 info="No LinkedIn API call; use only previously fetched data.",
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
-        run_btn = gr.Button("Run pipeline", variant="primary")
+        run_btn = gr.Button("Get latest news report", variant="primary")
         log_output = gr.Textbox(
             label="Log",
-            lines=12,
-            max_lines=24,
+            lines=6,
+            max_lines=12,
             interactive=False,
-            visible=False,
+            visible=True,
         )
-        gr.Markdown(
-            "---\n**Report** — Summarize your activity with the LLM (uses summarized posts from the pipeline)."
-        )
-        report_btn = gr.Button("Generate report", variant="secondary")
         report_output = gr.Markdown(
-            value="Click **Generate report** to get a global summary.",
+            value="Click **Get latest news report** to refresh data and get a summary.",
             label="Report",
             elem_id="report-output",
         )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
 
-        def run(last: str, from_cache: bool, lim):
+        def run_all(last: str, from_cache: bool, lim, cache, progress=gr.Progress()):
             logger.info(
-                "Pipeline run started: last=%s from_cache=%s limit=%s",
+                "Pipeline & report started: last=%s from_cache=%s limit=%s",
                 last,
                 from_cache,
                 lim,
@@ -447,48 +443,90 @@ def create_pipeline_interface():
                 lim_int = int(lim) if lim not in (None, "", float("nan")) else None
             except (TypeError, ValueError):
                 lim_int = None
-            for chunk in run_pipeline_ui_streaming(
-                last=last,
-                from_cache=from_cache,
-                limit=lim_int,
-            ):
-                yield gr.update(value=chunk, visible=True)
 
-        run_btn.click(
-            fn=run,
-            inputs=[period, from_cache, limit],
-            outputs=log_output,
-        )
+            progress(0, desc="Fetching…")
+            log_text = ""
+            try:
+                for chunk in run_pipeline_ui_streaming(
+                    last=last,
+                    from_cache=from_cache,
+                    limit=lim_int,
+                ):
+                    log_text = chunk
+                    last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
+                    if last.startswith("Enriching ") and "/" in last:
+                        try:
+                            nums = (
+                                last.removeprefix("Enriching ").rstrip("…").split("/")
+                            )
+                            done, total = int(nums[0]), int(nums[1])
+                            if total > 0:
+                                progress(0.2 + 0.2 * done / total, desc=last)
+                        except Exception:
+                            pass
+                    elif last.startswith("Summarizing batch ") and "/" in last:
+                        try:
+                            nums = (
+                                last.removeprefix("Summarizing batch ")
+                                .rstrip("…")
+                                .split("/")
+                            )
+                            done, total = int(nums[0]), int(nums[1])
+                            if total > 0:
+                                progress(0.4 + 0.2 * done / total, desc=last)
+                        except Exception:
+                            pass
+                    elif "Collected" in last:
+                        progress(0.2, desc="Enriching…")
+                    elif "Enriched" in last:
+                        progress(0.4, desc="Summarizing…")
+                    elif "Summarized" in last:
+                        progress(0.6, desc="Finishing up…")
+                    elif "✅ Done" in last:
+                        progress(0.75, desc="Generating report…")
+                    elif last.startswith("❌"):
+                        progress(1, desc="Failed")
+                        yield log_text, gr.update(
+                            value="⚠️ Pipeline failed. See log above."
+                        ), cache
+                        return
+                    yield log_text, gr.update(), cache
+            except Exception as e:
+                logger.exception("Pipeline failed")
+                err_msg = str(e)[:200]
+                progress(1, desc="Failed")
+                yield f"{log_text}\n\n❌ Failed: {err_msg}", gr.update(
+                    value="⚠️ Pipeline failed. See log above."
+                ), cache
+                return
 
-        def do_report(cache):
-            logger.info("Generate report clicked")
-            yield "🔄 Generating report…", gr.update(interactive=False), cache
+            progress(0.75, desc="Generating report…")
             sig = _report_signature()
-            # Check disk first (survives refresh), then in-session state
             disk = _load_report_cache()
             if disk is not None and disk[1] == sig:
                 result = disk[0]
-                logger.info("Report cache hit (disk), reusing previous report")
+                logger.info("Report cache hit (disk)")
                 cache = (result, sig)
             elif cache is not None and cache[1] == sig:
                 result = cache[0]
-                logger.info("Report cache hit (session), reusing previous report")
+                logger.info("Report cache hit (session)")
             else:
                 try:
                     result = generate_activity_report()
-                    cache = (result, sig)
+                    cache = (result, sig) if sig else None
                     if sig is not None:
                         _save_report_cache(result, sig)
                 except Exception as e:
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
-            yield result, gr.update(interactive=True), cache
+            progress(1, desc="Done.")
+            yield log_text, result, cache
 
-        report_btn.click(
-            fn=do_report,
-            inputs=[report_cache_state],
-            outputs=[report_output, report_btn, report_cache_state],
+        run_btn.click(
+            fn=run_all,
+            inputs=[period, from_cache, limit, report_cache_state],
+            outputs=[log_output, report_output, report_cache_state],
         )
     return block
 
