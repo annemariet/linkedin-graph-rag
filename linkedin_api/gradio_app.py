@@ -450,29 +450,30 @@ def create_pipeline_interface():
                 ):
                     log_text = chunk
                     if "Collected" in chunk:
-                        progress(1, desc="Fetched.")
-                        progress(0, desc="Enriching…")
+                        progress(0.2, desc="Enriching…")
                     elif "Enriched" in chunk:
-                        progress(1, desc="Enriched.")
-                        progress(0, desc="Summarizing…")
+                        progress(0.4, desc="Summarizing…")
                     elif "Summarized" in chunk:
-                        progress(1, desc="Summarized.")
-                        progress(0, desc="Pipeline done.")
+                        progress(0.6, desc="Finishing up…")
                     elif "✅ Done" in chunk:
-                        progress(1, desc="Pipeline done.")
+                        progress(0.75, desc="Generating report…")
                     elif chunk.strip().startswith("❌"):
                         progress(1, desc="Failed")
-                        yield log_text, gr.update(), cache
+                        yield log_text, gr.update(
+                            value="⚠️ Pipeline failed. See log above."
+                        ), cache
                         return
                     yield log_text, gr.update(), cache
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
                 progress(1, desc="Failed")
-                yield f"{log_text}\n\n❌ Failed: {err_msg}", gr.update(), cache
+                yield f"{log_text}\n\n❌ Failed: {err_msg}", gr.update(
+                    value="⚠️ Pipeline failed. See log above."
+                ), cache
                 return
 
-            progress(0, desc="Generating report…")
+            progress(0.75, desc="Generating report…")
             sig = _report_signature()
             disk = _load_report_cache()
             if disk is not None and disk[1] == sig:
