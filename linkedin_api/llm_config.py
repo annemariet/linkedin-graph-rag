@@ -148,6 +148,7 @@ class _FallbackLLM:
         self._primary = primary
         self._quiet = quiet
         self._fallback_llm = None
+        self._budget_exhausted = False
 
     def _get_fallback(self):
         if self._fallback_llm is None:
@@ -157,6 +158,13 @@ class _FallbackLLM:
         return self._fallback_llm
 
     def invoke(self, input: str, message_history=None, system_instruction=None):
+        if self._budget_exhausted:
+            return self._get_fallback().invoke(
+                input,
+                message_history=message_history,
+                system_instruction=system_instruction,
+            )
+
         last_exc = None
         for attempt in range(4):  # 1 initial + 3 retries for rate limit
             try:
@@ -172,6 +180,8 @@ class _FallbackLLM:
                         print("  Rate limited, retrying in 1s...")
                     time.sleep(1)
                     continue
+                if _is_budget_error(e):
+                    self._budget_exhausted = True
                 if _is_budget_error(e) or (_is_rate_limit(e) and attempt >= 3):
                     fallback = self._get_fallback()
                     return fallback.invoke(
