@@ -177,6 +177,31 @@ def summarize_posts(
     return total
 
 
+def summarize_posts_streaming(
+    *,
+    limit: int | None = None,
+    batch_size: int = BATCH_SIZE,
+    quiet: bool = False,
+):
+    """
+    Generator variant of summarize_posts.
+    Yields (batches_done, total_batches) after each batch.
+    Returns total posts summarized via StopIteration.value.
+    """
+    posts = list_posts_needing_summary(limit=limit)
+    if not posts:
+        return 0
+    llm = create_llm(quiet=quiet)
+    batches = [posts[i : i + batch_size] for i in range(0, len(posts), batch_size)]
+    total_batches = len(batches)
+    total = 0
+    for i, batch in enumerate(batches):
+        n = _summarize_batch(batch, llm)
+        total += n
+        yield i + 1, total_batches
+    return total
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize posts via LLM (Phase 3).")
     parser.add_argument(

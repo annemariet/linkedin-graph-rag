@@ -19,14 +19,21 @@ from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
-from linkedin_api.enrich_activities import enrich_activities
+from linkedin_api.enrich_activities import (
+    enrich_activities,
+    enrich_activities_streaming,
+)
 from linkedin_api.summarize_activity import (
     _format_timestamp,
     collect_activities,
     collect_from_live,
     load_from_cache,
 )
-from linkedin_api.summarize_posts import load_from_json_and_save, summarize_posts
+from linkedin_api.summarize_posts import (
+    load_from_json_and_save,
+    summarize_posts,
+    summarize_posts_streaming,
+)
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 DEFAULT_ACTIVITIES = OUTPUT_DIR / "activities.json"
@@ -125,6 +132,49 @@ def _summarize_posts(args, enriched_path: Path | None = None):
     return n
 
 
+def _enrich_activities_streaming(activities_path: Path, args):
+    """
+    Generator variant of _enrich_activities.
+    Yields (done, total) per activity. Returns (out_path, count) via StopIteration.
+    """
+    activities = json.loads(activities_path.read_text())
+    gen = enrich_activities_streaming(activities, limit=args.limit)
+    enriched = activities
+    count = 0
+    try:
+        while True:
+            yield next(gen)
+    except StopIteration as e:
+        enriched, count = e.value
+    out_path = Path(args.enriched_output) if args.enriched_output else DEFAULT_ENRICHED
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(enriched, indent=2))
+    return out_path, count
+
+
+def _summarize_posts_streaming(args, enriched_path: Path | None = None):
+    """
+    Generator variant of _summarize_posts.
+    Yields (batches_done, total_batches) per batch. Returns total via StopIteration.
+    """
+    if args.seed_json:
+        p = Path(args.seed_json)
+        if p.exists():
+            n = load_from_json_and_save(p)
+            if not args.quiet:
+                print(f"Seeded store from {p}: {n} posts")
+    gen = summarize_posts_streaming(
+        limit=args.limit,
+        batch_size=args.batch_size,
+        quiet=args.quiet,
+    )
+    try:
+        while True:
+            yield next(gen)
+    except StopIteration as e:
+        return e.value or 0
+
+
 def run_pipeline_ui(
     last: str = "7d",
     from_cache: bool = False,
@@ -198,24 +248,53 @@ def run_pipeline_ui_streaming(
         args.last = "30d"
     lines: list[str] = []
 
-    def ui(msg: str) -> str:
-        lines.append(msg)
+    def _snapshot() -> str:
         return "\n".join(lines)
 
+    def _add(msg: str) -> str:
+        lines.append(msg)
+        return _snapshot()
+
     try:
-        yield ui("Starting pipeline…")
+        yield _add("Starting pipeline…")
         activities_path, n1 = _collect_activities(args)
-        yield ui(f"Collected {n1} activities.")
-        enriched_path, n2 = _enrich_activities(activities_path, args)
-        yield ui(f"Enriched {n2} activities.")
-        n3 = _summarize_posts(args, enriched_path)
-        yield ui(f"Summarized {n3} posts.")
-        yield ui("✅ Done.")
+        yield _add(f"Collected {n1} activities.")
+
+        # Enrich with per-activity progress (placeholder updated in-place)
+        enriched_path = DEFAULT_ENRICHED
+        n2 = 0
+        lines.append("Enriching…")
+        gen = _enrich_activities_streaming(activities_path, args)
+        try:
+            while True:
+                done, total = next(gen)
+                lines[-1] = f"Enriching {done}/{total}…"
+                yield _snapshot()
+        except StopIteration as e:
+            enriched_path, n2 = e.value
+        lines[-1] = f"Enriched {n2} activities."
+        yield _snapshot()
+
+        # Summarize with per-batch progress (placeholder updated in-place)
+        n3 = 0
+        lines.append("Summarizing…")
+        gen = _summarize_posts_streaming(args, enriched_path)
+        try:
+            while True:
+                batches_done, total_batches = next(gen)
+                lines[-1] = f"Summarizing batch {batches_done}/{total_batches}…"
+                yield _snapshot()
+        except StopIteration as e:
+            n3 = e.value or 0
+        lines[-1] = f"Summarized {n3} posts."
+        yield _snapshot()
+
+        yield _add("✅ Done.")
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else 1
-        yield ui(f"❌ Failed (exit {code}).")
+        yield _add(f"❌ Failed (exit {code}).")
     except Exception as e:
-        yield ui(f"❌ Failed: {e}")
+        yield _add(f"❌ Failed: {e}")
 
 
 def main() -> int:

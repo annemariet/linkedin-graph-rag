@@ -449,15 +449,38 @@ def create_pipeline_interface():
                     limit=lim_int,
                 ):
                     log_text = chunk
-                    if "Collected" in chunk:
+                    last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
+                    if last.startswith("Enriching ") and "/" in last:
+                        try:
+                            nums = (
+                                last.removeprefix("Enriching ").rstrip("…").split("/")
+                            )
+                            done, total = int(nums[0]), int(nums[1])
+                            if total > 0:
+                                progress(0.2 + 0.2 * done / total, desc=last)
+                        except Exception:
+                            pass
+                    elif last.startswith("Summarizing batch ") and "/" in last:
+                        try:
+                            nums = (
+                                last.removeprefix("Summarizing batch ")
+                                .rstrip("…")
+                                .split("/")
+                            )
+                            done, total = int(nums[0]), int(nums[1])
+                            if total > 0:
+                                progress(0.4 + 0.2 * done / total, desc=last)
+                        except Exception:
+                            pass
+                    elif "Collected" in last:
                         progress(0.2, desc="Enriching…")
-                    elif "Enriched" in chunk:
+                    elif "Enriched" in last:
                         progress(0.4, desc="Summarizing…")
-                    elif "Summarized" in chunk:
+                    elif "Summarized" in last:
                         progress(0.6, desc="Finishing up…")
-                    elif "✅ Done" in chunk:
+                    elif "✅ Done" in last:
                         progress(0.75, desc="Generating report…")
-                    elif chunk.strip().startswith("❌"):
+                    elif last.startswith("❌"):
                         progress(1, desc="Failed")
                         yield log_text, gr.update(
                             value="⚠️ Pipeline failed. See log above."

@@ -79,37 +79,40 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
         return None
 
 
-def _run_enrichment(to_enrich: list[dict]) -> int:
-    """Try store first, then HTTP. URLs needing login get _enrich_error."""
+def _run_enrichment(to_enrich: list[dict]):
+    """
+    Generator: try store first, then HTTP, for each record.
+    Yields (done, total) after each item. Returns enriched_count via StopIteration.
+    URLs needing login get _enrich_error set on the record.
+    """
+    total = len(to_enrich)
     enriched_count = 0
     needs_browser: list[dict] = []
 
-    for rec in to_enrich:
+    for i, rec in enumerate(to_enrich):
         urn = rec.get("post_urn", "")
         url = rec.get("post_url", "")
-        if not urn or not url:
-            continue
-
-        # 1) Prefer existing content in the store
-        stored = load_content(urn)
-        if stored and len(stored) >= 50:
-            rec["content"] = stored
-            meta = load_metadata(urn)
-            rec["urls"] = list(meta.get("urls", [])) if meta else []
-            enriched_count += 1
-            continue
-
-        # 2) Try simple HTTP fetch
-        result = _fetch_with_requests(url)
-        if result:
-            content, urls = result
-            rec["content"] = content
-            rec["urls"] = urls
-            save_content(urn, content)
-            save_metadata(urn, urls=urls, post_url=url)
-            enriched_count += 1
-        else:
-            needs_browser.append(rec)
+        if urn and url:
+            # 1) Prefer existing content in the store
+            stored = load_content(urn)
+            if stored and len(stored) >= 50:
+                rec["content"] = stored
+                meta = load_metadata(urn)
+                rec["urls"] = list(meta.get("urls", [])) if meta else []
+                enriched_count += 1
+            else:
+                # 2) Try simple HTTP fetch
+                result = _fetch_with_requests(url)
+                if result:
+                    content, urls = result
+                    rec["content"] = content
+                    rec["urls"] = urls
+                    save_content(urn, content)
+                    save_metadata(urn, urls=urls, post_url=url)
+                    enriched_count += 1
+                else:
+                    needs_browser.append(rec)
+        yield i + 1, total
 
     for rec in needs_browser:
         rec["_enrich_error"] = "Browser required; not implemented"
@@ -137,8 +140,42 @@ def enrich_activities(
     if not to_enrich:
         return activities, 0
 
-    enriched_count = _run_enrichment(to_enrich)
-    return activities, enriched_count
+    gen = _run_enrichment(to_enrich)
+    try:
+        while True:
+            next(gen)
+    except StopIteration as e:
+        return activities, e.value
+
+
+def enrich_activities_streaming(
+    activities: list[dict],
+    *,
+    limit: int | None = None,
+):
+    """
+    Generator variant of enrich_activities.
+    Yields (done, total) after each activity processed.
+    Returns (activities, count_enriched) via StopIteration.value.
+    """
+    to_enrich = [
+        a
+        for a in activities
+        if a.get("post_url")
+        and not a.get("content")
+        and not _is_comment_feed_url(a.get("post_url", ""))
+    ]
+    if limit:
+        to_enrich = to_enrich[:limit]
+    if not to_enrich:
+        return activities, 0
+
+    gen = _run_enrichment(to_enrich)
+    try:
+        while True:
+            yield next(gen)
+    except StopIteration as e:
+        return activities, e.value
 
 
 def main() -> int:
