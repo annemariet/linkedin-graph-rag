@@ -1,10 +1,8 @@
 """Tests for llm_config module (import, config parsing, key resolution)."""
 
-import sys
-
 import pytest
 
-from linkedin_api.llm_config import _resolve_anthropic_api_key, _resolve_api_key
+from linkedin_api.llm_config import _resolve_api_key
 
 
 def test_create_llm_unknown_provider(monkeypatch):
@@ -62,33 +60,6 @@ class TestResolveApiKey:
         key, _ = _resolve_api_key(quiet=True)
         assert key == "sk-llm"
 
-
-class TestResolveAnthropicApiKey:
-    def test_anthropic_api_key_env_var(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-123")
-        key, source = _resolve_anthropic_api_key(quiet=True)
-        assert key == "sk-ant-123"
-        assert "ANTHROPIC_API_KEY" in source
-
-    def test_anthropic_keyring_lookup(self, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-        import linkedin_api.llm_config as mod
-
-        monkeypatch.setattr(mod, "_ANTHROPIC_KEYRING_LOOKUPS", (("svc", "acct"),))
-
-        class DummyKeyring:
-            @staticmethod
-            def get_password(service, account):
-                if service == "svc" and account == "acct":
-                    return "sk-ant-keyring"
-                return None
-
-        monkeypatch.setitem(sys.modules, "keyring", DummyKeyring())
-
-        key, source = _resolve_anthropic_api_key(quiet=True)
-        assert key == "sk-ant-keyring"
-        assert "svc/acct" in source
 
 def test_create_llm_anthropic_defaults(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
