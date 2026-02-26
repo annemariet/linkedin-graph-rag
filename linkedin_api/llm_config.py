@@ -13,7 +13,7 @@ API key resolution order (for OpenAI-compatible providers):
 API key resolution order (for Anthropic provider):
 1. ``ANTHROPIC_API_KEY`` environment variable
 2. macOS Keychain (tries common service/account pairs, including
-   ``("agent-fleet-rts", "Anthropic")``)
+   ``("agent-fleet-rts", "Anthropic")`` and ``("agent-fleet-rts", "anthropic")``)
 
 Environment variables:
 
@@ -41,6 +41,7 @@ _KEYRING_SERVICE = "agent-fleet-rts"
 _KEYRING_ACCOUNT = "mammouth_api_key"
 _ANTHROPIC_KEYRING_LOOKUPS = (
     ("agent-fleet-rts", "Anthropic"),
+    ("agent-fleet-rts", "anthropic"),
     ("agent-fleet-rts", "anthropic_api_key"),
     ("Anthropic", "Anthropic"),
 )
@@ -231,7 +232,8 @@ def create_llm(quiet=False, json_mode=True):
             raise RuntimeError(
                 "No Anthropic API key found. Tried:\n"
                 "  1. ANTHROPIC_API_KEY env var\n"
-                "  2. macOS Keychain (agent-fleet-rts/Anthropic)\n"
+                "  2. macOS Keychain (agent-fleet-rts/Anthropic, "
+                "agent-fleet-rts/anthropic)\n"
                 "Set ANTHROPIC_API_KEY or add keyring entry."
             )
 

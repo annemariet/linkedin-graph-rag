@@ -289,7 +289,7 @@ For VertexAI provider:
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 VERTEX_PROJECT=your-gcp-project
-VERTEX_LOCATION=[REDACTED]
+VERTEX_LOCATION=[REDACTED] # pragma: allowlist secret
 ```
 
 Data directory:

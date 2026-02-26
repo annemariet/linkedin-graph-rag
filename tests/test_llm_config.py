@@ -90,6 +90,22 @@ class TestResolveAnthropicApiKey:
         assert key == "sk-ant-keyring"
         assert "svc/acct" in source
 
+    def test_anthropic_keyring_lowercase_account_supported(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        class DummyKeyring:
+            @staticmethod
+            def get_password(service, account):
+                if service == "agent-fleet-rts" and account == "anthropic":
+                    return "sk-ant-lowercase"
+                return None
+
+        monkeypatch.setitem(sys.modules, "keyring", DummyKeyring())
+
+        key, source = _resolve_anthropic_api_key(quiet=True)
+        assert key == "sk-ant-lowercase"
+        assert "agent-fleet-rts/anthropic" in source
+
 
 def test_create_llm_anthropic_defaults(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
