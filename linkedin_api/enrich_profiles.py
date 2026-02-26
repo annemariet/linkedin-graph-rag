@@ -45,7 +45,7 @@ def is_author_enrichment_enabled() -> bool:
 
 
 # Dir for caching fetched HTML (optional): outputs/review/cache/
-_CACHE_DIR: Optional[Path] = None
+_CACHE_DIR: Path | bool | None = None
 
 
 def _post_html_cache_dir() -> Optional[Path]:
@@ -58,7 +58,7 @@ def _post_html_cache_dir() -> Optional[Path]:
             _CACHE_DIR = d
         except OSError:
             _CACHE_DIR = False
-    return _CACHE_DIR if _CACHE_DIR else None
+    return _CACHE_DIR if isinstance(_CACHE_DIR, Path) else None
 
 
 def _url_to_cache_key(url: str) -> str:
@@ -76,7 +76,7 @@ def _create_preview_html(html_path: Path) -> Optional[Path]:
         # Extract post content (same logic as _parse_content_from_soup)
         content_text = []
         og = soup.find("meta", property="og:description")
-        og_content = og.get("content") if og and og.get("content") else None
+        og_content = str(og.get("content")) if og and og.get("content") else None
         if og_content:
             content_text.append(og_content)
 
@@ -276,12 +276,12 @@ def _is_private_post_url(url: str) -> bool:
 def _parse_author_from_soup(soup: BeautifulSoup) -> Optional[Dict[str, str]]:
     """Extract author name and profile_url from parsed post HTML."""
     for link in soup.find_all("a", href=True):
-        href = link["href"]
+        href = str(link["href"])
         if "/in/" not in href or (
             "feed-actor-name" not in href and "actor-name" not in href
         ):
             continue
-        profile_url = link["href"].split("?")[0]
+        profile_url = str(link["href"]).split("?")[0]
         profile_url = re.sub(
             r"https?://[a-z]{2}\.linkedin\.com",
             "https://www.linkedin.com",
@@ -350,14 +350,14 @@ def parse_comment_author_from_html(
     for elem in soup.find_all(True):
         if snippet[:50] in elem.get_text():
             for link in elem.find_all("a", href=True):
-                if "/in/" in link.get("href", ""):
+                if "/in/" in str(link.get("href", "")):
                     author = _normalize_profile_link(link)
                     if author:
                         return author
             parent = elem.parent
             while parent and parent.name:
                 for link in parent.find_all("a", href=True):
-                    if "/in/" in link.get("href", ""):
+                    if "/in/" in str(link.get("href", "")):
                         author = _normalize_profile_link(link)
                         if author:
                             return author
@@ -378,7 +378,7 @@ def _parse_content_from_soup(soup: BeautifulSoup) -> str:
         return "\n".join(content_text)
     og = soup.find("meta", property="og:description")
     if og and og.get("content"):
-        content_text.append(og["content"])
+        content_text.append(str(og["content"]))
     title = soup.find("title")
     if title:
         t = title.get_text(strip=True)
@@ -401,7 +401,7 @@ def fetch_post_page(
         dict with: url_tried, normalized_url, status_code, html (raw), content (parsed text),
         author (dict or None), error, skip_reason. If from cache, status_code may be None.
     """
-    out = {
+    out: Dict[str, Any] = {
         "url_tried": url or "",
         "normalized_url": None,
         "status_code": None,
@@ -499,7 +499,7 @@ def extract_author_profile(url: str) -> Optional[Dict[str, str]]:
         profile_links = soup.find_all("a", href=True)
 
         for link in profile_links:
-            href = link["href"]
+            href = str(link["href"])
             # Look for profile links with actor-name tracking (indicates author)
             # Skip image links (actor-image) as they don't contain text
             if "/in/" in href and ("feed-actor-name" in href or "actor-name" in href):

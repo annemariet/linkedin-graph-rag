@@ -71,7 +71,7 @@ def fetch_post_content_from_url(url: str) -> Optional[str]:
         if not content_text:
             og_description = soup.find("meta", property="og:description")
             if og_description:
-                content_text.append(og_description.get("content", ""))
+                content_text.append(str(og_description.get("content", "")))
 
             # Try title as fallback
             title = soup.find("title")
@@ -180,7 +180,7 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
                 return {"domain": domain, "type": resource_type}
 
         # Determine resource type based on domain and path patterns
-        resource_type = None
+        resource_type = None  # type: ignore[assignment]
 
         # Video platforms
         if any(
@@ -334,7 +334,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
 
             # Check if we got redirected via HTTP (some lnkd.in URLs redirect directly)
             if response.url != url and "lnkd.in" not in response.url:
-                return response.url
+                return str(response.url)
 
             # LinkedIn shows intermediate page - parse HTML for final URL
             soup = BeautifulSoup(response.text, "html.parser")
@@ -342,7 +342,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             # Pattern 1: Look for meta tags with the final URL
             meta_refresh = soup.find("meta", attrs={"http-equiv": "refresh"})
             if meta_refresh and meta_refresh.get("content"):
-                content = meta_refresh["content"]
+                content = str(meta_refresh["content"])
                 # Extract URL from refresh meta tag: "0;url=https://..."
                 url_match = re.search(r"url=(https?://[^\s]+)", content, re.IGNORECASE)
                 if url_match:
@@ -390,12 +390,12 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
 
             # Return the first external URL found (should be the final destination)
             if external_urls:
-                return external_urls[0]
+                return str(external_urls[0])
 
             # Pattern 3: Look for links in the page
             links = soup.find_all("a", href=True)
             for link in links:
-                href = link.get("href", "")
+                href = str(link.get("href", ""))
                 if (
                     href.startswith("http")
                     and "linkedin.com" not in href
@@ -405,7 +405,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
 
             # If HTTP redirect worked, use that
             if response.url != url:
-                return response.url
+                return str(response.url)
 
         except Exception:
             # Log error for debugging but continue
@@ -423,7 +423,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             allow_redirects=True,
             headers=headers,
         )
-        final_url = response.url
+        final_url = str(response.url)
         if final_url != url:
             return final_url
     except Exception:
@@ -438,7 +438,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             stream=True,
             headers=headers,
         )
-        final_url = response.url
+        final_url = str(response.url)
         if final_url != url:
             return final_url
     except Exception:
@@ -479,12 +479,12 @@ def extract_title_from_url(url: str) -> Optional[str]:
         # Try Open Graph title
         og_title = soup.find("meta", property="og:title")
         if og_title and og_title.get("content"):
-            return og_title["content"].strip()
+            return str(og_title["content"]).strip()
 
         # Try Twitter Card title
         twitter_title = soup.find("meta", attrs={"name": "twitter:title"})
         if twitter_title and twitter_title.get("content"):
-            return twitter_title["content"].strip()
+            return str(twitter_title["content"]).strip()
 
         return None
     except Exception:
@@ -597,7 +597,7 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
     """
     import json
 
-    resources = {"posts": {}, "comments": {}}
+    resources: Dict[str, Dict[str, List[str]]] = {"posts": {}, "comments": {}}
 
     with open(json_file, "r") as f:
         data = json.load(f)

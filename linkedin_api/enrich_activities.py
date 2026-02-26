@@ -47,7 +47,7 @@ def _parse_content_from_html(html: str) -> str:
         return "\n".join(content_text)
     og = soup.find("meta", property="og:description")
     if og and og.get("content"):
-        content_text.append(og["content"])
+        content_text.append(str(og["content"]))
     title = soup.find("title")
     if title:
         t = title.get_text(strip=True)
