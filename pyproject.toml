@@ -65,8 +65,10 @@ extend-exclude = '''
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q --strict-markers --strict-config"
+pythonpath = ["."]
 testpaths = [
     "tests",
+    "linkedin_api/tests",
 ]
 python_files = [
     "test_*.py",
