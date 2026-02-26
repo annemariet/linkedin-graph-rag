@@ -25,7 +25,7 @@ def get_access_token(
     token: Optional[str] = None
 
     try:
-        token = keyring.get_password(token_var, os.getenv(account_var))
+        token = keyring.get_password(token_var, os.getenv(account_var, ""))
     except Exception as e:
         warnings.warn(
             f"Failed to retrieve token from keyring: {e}. "

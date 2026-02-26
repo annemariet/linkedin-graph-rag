@@ -68,6 +68,7 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
             ".svg": "image",
         }
 
+        resource_type: Optional[str]
         for ext, resource_type in file_extensions.items():
             if ext in url_lower:
                 return {"domain": domain, "type": resource_type}
@@ -143,7 +144,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             if meta_refresh and meta_refresh.get("content"):
                 url_match = re.search(
                     r"url=(https?://[^\s]+)",
-                    meta_refresh["content"],
+                    str(meta_refresh["content"]),
                     re.IGNORECASE,
                 )
                 if url_match:

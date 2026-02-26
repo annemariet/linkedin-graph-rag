@@ -81,7 +81,7 @@ def _format_prop_value_for_cards(v: Any) -> str:
 
 
 def _extracted_to_markdown_cards(
-    extracted: dict, author_info: str = None, resources_info: str = None
+    extracted: dict, author_info: str | None = None, resources_info: str | None = None
 ) -> str:
     """Render extracted nodes and relationships as Neo4j-style Markdown property cards."""
     nodes = extracted.get("nodes", [])
@@ -171,7 +171,7 @@ def _get_post_url_from_extracted(extracted: dict) -> Optional[str]:
     """Get first Post node URL from extracted for enrichment preview."""
     for node in extracted.get("nodes", []):
         if node.get("label") == "Post":
-            url = (node.get("properties") or {}).get("url")
+            url: str | None = (node.get("properties") or {}).get("url")
             if url:
                 return url
     return None
@@ -182,9 +182,9 @@ def _get_content_from_extracted(extracted: dict) -> str:
     for node in extracted.get("nodes", []):
         props = node.get("properties") or {}
         if node.get("label") == "Post" and props.get("content"):
-            return props.get("content", "")
+            return str(props.get("content", ""))
         if node.get("label") == "Comment" and props.get("text"):
-            return props.get("text", "")
+            return str(props.get("text", ""))
     return ""
 
 
@@ -257,10 +257,10 @@ def _get_content_from_raw(raw: dict) -> str:
     share = (activity.get("specificContent") or {}).get(
         "com.linkedin.ugc.ShareContent", {}
     )
-    commentary = (share.get("shareCommentary") or {}).get("text", "")
+    commentary: str = (share.get("shareCommentary") or {}).get("text", "")
     if commentary:
         return commentary
-    comment_text = (activity.get("message") or {}).get("text", "")
+    comment_text: str = (activity.get("message") or {}).get("text", "")
     if comment_text:
         return comment_text
     return ""
@@ -396,8 +396,8 @@ def render_item(
     show_extracted_json: bool,
     queue_len: int = 0,
     idx: int = 0,
-    author_info: str = None,
-    resources_info: str = None,
+    author_info: str | None = None,
+    resources_info: str | None = None,
 ) -> tuple:
     """
     Return (cards_md, trace_md, raw_json, extracted_json_str, counter, correction_visible, corrected_json_str, notes).

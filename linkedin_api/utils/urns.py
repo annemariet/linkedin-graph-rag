@@ -111,7 +111,7 @@ def extract_parent_post_urn_from_comment(comment_urn: str) -> Optional[str]:
     if not parsed or not parsed["parent_urn"]:
         return None
 
-    parent_urn = parsed["parent_urn"]
+    parent_urn: str = parsed["parent_urn"]
     # Only return if it's a post-like URN (activity, ugcPost, share)
     if any(
         parent_urn.startswith(f"urn:li:{pt}:")

@@ -1,5 +1,7 @@
 """Tests for activity_utils module."""
 
+from typing import Any
+
 from linkedin_api.utils.activities import (
     extract_element_fields,
     determine_post_type,
@@ -122,7 +124,7 @@ class TestExtractReactionType:
         assert reaction_type == "LIKE"
 
     def test_defaults_to_unknown(self):
-        activity = {}
+        activity: dict[str, Any] = {}
 
         reaction_type = extract_reaction_type(activity)
 
@@ -140,7 +142,7 @@ class TestExtractTimestamp:
         assert timestamp == 1609459200000
 
     def test_handles_missing_timestamp(self):
-        activity = {}
+        activity: dict[str, Any] = {}
 
         timestamp = extract_timestamp(activity)
 

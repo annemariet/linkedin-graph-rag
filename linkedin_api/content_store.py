@@ -149,7 +149,8 @@ def load_metadata(urn: str) -> dict[str, Any] | None:
     path = _meta_path(urn)
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return data
 
 
 def has_metadata(urn: str) -> bool:
@@ -172,7 +173,8 @@ def _load_registry() -> dict[str, str]:
     registry_path = _content_dir() / "_urn_registry.json"
     if not registry_path.exists():
         return {}
-    return json.loads(registry_path.read_text(encoding="utf-8"))
+    data: dict[str, str] = json.loads(registry_path.read_text(encoding="utf-8"))
+    return data
 
 
 def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:

@@ -161,7 +161,7 @@ def create_llm(quiet=False, json_mode=True):
         if not quiet:
             print(f"  LLM: OpenAI-compatible ({model} via {base_url})")
 
-        model_params = {"temperature": 0}
+        model_params: dict[str, object] = {"temperature": 0}
         if json_mode:
             model_params["response_format"] = {"type": "json_object"}
         return OpenAILLM(
@@ -254,7 +254,7 @@ def create_embedder(quiet=False):
 def _create_ollama_embedder(quiet=False, is_fallback=False):
     """Create an Ollama embedder, starting the server if needed."""
     base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_URL)
-    # When falling back from OpenAI, ignore EMBEDDING_MODEL (e.g. "gemini-embedding-001")
+    # When falling back from OpenAI, ignore EMBEDDING_MODEL (e.g. "[REDACTED]")
     model = (
         OLLAMA_DEFAULT_EMBEDDING_MODEL
         if is_fallback

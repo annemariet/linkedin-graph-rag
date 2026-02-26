@@ -20,7 +20,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
@@ -36,7 +36,8 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE") or "neo4j"
 def load_extraction_json(path: Path) -> dict:
     """Load neo4j_data JSON (nodes have id, labels, properties; rels have startNode, endNode, type)."""
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        data: dict[str, Any] = json.load(f)
+        return data
 
 
 def build_reposter_map(data: dict) -> dict:
@@ -164,8 +165,8 @@ def main():
                     candidates.append(git_outputs)
         except Exception:
             pass
-        files = []
-        checked = []
+        files: list[Path] = []
+        checked: list[str] = []
         for candidate in candidates:
             if candidate.exists():
                 checked.append(str(candidate))

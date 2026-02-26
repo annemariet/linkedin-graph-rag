@@ -252,9 +252,9 @@ def setup_gcp_credentials() -> str | None:
                 json.dump(creds_data, f)
             os.chmod(creds_path, 0o600)
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
-            project_id = creds_data.get("project_id")
+            project_id: str | None = creds_data.get("project_id")
             logger.info(f"Loaded GCP credentials to {creds_path} (0600)")
-            return project_id
+            return str(project_id) if project_id else None
         except (OSError, json.JSONDecodeError) as e:
             try:
                 os.unlink(creds_path)
@@ -298,7 +298,7 @@ def initialize_services() -> GraphRAGServices:
                 import vertexai
 
                 vertex_project = resolve_vertex_project(project_id)
-                vertex_location = os.getenv("VERTEX_LOCATION", "europe-west9")
+                vertex_location = os.getenv("VERTEX_LOCATION", "[REDACTED]")
                 vertexai.init(project=vertex_project, location=vertex_location)
             except ImportError:
                 pass

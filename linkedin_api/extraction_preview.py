@@ -6,6 +6,7 @@ and returns the delta (nodes + relationships) plus a trace of JSON paths used.
 """
 
 from collections import defaultdict
+from typing import Any
 
 from linkedin_api.extract_graph_data import (
     RESOURCE_COMMENTS,
@@ -35,12 +36,12 @@ def extract_element_preview(element: dict) -> dict:
         { "extracted": { "nodes": [...], "relationships": [...], "primary": ... }, "trace": [...] }
         primary is the main entity type for this element ("reaction", "post", "comment", "instant_repost").
     """
-    people = {}
-    posts = {}
-    comments = {}
-    relationships = []
-    skipped_by_reason = defaultdict(int)
-    trace = []
+    people: dict[str, Any] = {}
+    posts: dict[str, Any] = {}
+    comments: dict[str, Any] = {}
+    relationships: list[dict[str, Any]] = []
+    skipped_by_reason: dict[str, int] = defaultdict(int)
+    trace: list[Any] = []
 
     resource_name = element.get("resourceName", "")
     activity = element.get("activity", {})
@@ -107,7 +108,7 @@ def extract_element_preview(element: dict) -> dict:
     else:
         primary = "unknown"
 
-    nodes = []
+    nodes: list[Any] = []
     nodes.extend(people.values())
     nodes.extend(posts.values())
     nodes.extend(comments.values())

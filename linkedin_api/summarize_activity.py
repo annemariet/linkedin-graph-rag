@@ -227,7 +227,7 @@ def _infer_user_actor(
     """Infer the current user's URN from REACTS_TO (actor is always the user)."""
     for r in relationships:
         if r["type"] == "REACTS_TO":
-            actor = r["from"]
+            actor: str = r["from"]
             if actor and actor.startswith("urn:li:person:"):
                 return actor
     return None
@@ -264,7 +264,7 @@ def collect_activities(
         post_urn: str,
         content: str,
         urls: list[str],
-        interaction_type: str,
+        interaction_type: Literal["reaction", "repost", "comment"],
         timestamp: int | None,
         *,
         comment_text: str = "",

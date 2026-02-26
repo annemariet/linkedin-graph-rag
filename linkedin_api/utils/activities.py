@@ -105,7 +105,7 @@ def extract_reaction_type(activity: Dict) -> str:
     Returns:
         The reaction type (e.g., 'LIKE', 'CELEBRATE') or 'UNKNOWN'
     """
-    return activity.get("reactionType", "UNKNOWN")
+    return str(activity.get("reactionType", "UNKNOWN"))
 
 
 def extract_timestamp(
@@ -125,7 +125,7 @@ def extract_timestamp(
     if not isinstance(created, dict):
         return None
 
-    timestamp = created.get("time")
+    timestamp: Optional[int] = created.get("time")
     if timestamp is None:
         return None
 
