@@ -59,3 +59,27 @@ class TestResolveApiKey:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
         key, _ = _resolve_api_key(quiet=True)
         assert key == "sk-llm"
+
+
+def test_create_llm_anthropic_defaults(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xyz")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    class DummyAnthropicLLM:
+        def __init__(self, model_name, model_params=None, **kwargs):
+            self.model_name = model_name
+            self.model_params = model_params
+            self.kwargs = kwargs
+
+    import neo4j_graphrag.llm as llm_module
+
+    monkeypatch.setattr(llm_module, "AnthropicLLM", DummyAnthropicLLM)
+
+    from linkedin_api.llm_config import create_llm
+
+    llm = create_llm(quiet=True)
+    assert isinstance(llm, DummyAnthropicLLM)
+    assert llm.model_name == "claude-sonnet-4-5"
+    assert llm.model_params == {"temperature": 0}
+    assert llm.kwargs["api_key"] == "sk-ant-xyz"

@@ -142,7 +142,7 @@ Activity record model and CSV serialization:
 
 #### `linkedin_api/llm_config.py`
 Configurable LLM/embedder factory:
-- `create_llm()`: Returns LLM instance (OpenAI, Ollama, or VertexAI based on `LLM_PROVIDER`)
+- `create_llm()`: Returns LLM instance (OpenAI, Ollama, VertexAI, or Anthropic based on `LLM_PROVIDER`)
 - `create_embedder()`: Returns embedder instance (based on `EMBEDDING_PROVIDER`)
 - Supports custom base URLs (e.g., Mammouth) via `LLM_BASE_URL`
 
@@ -274,10 +274,11 @@ NEO4J_DATABASE=neo4j  # Default
 
 LLM/Embedder configuration (used by enrichment, indexing, and query):
 ```bash
-LLM_PROVIDER=openai              # openai | ollama | vertexai
+LLM_PROVIDER=openai              # openai | ollama | vertexai | anthropic
 LLM_MODEL=gpt-4o                 # Model name
 LLM_BASE_URL=                    # Custom base URL (e.g., Mammouth endpoint; omit for standard OpenAI)
 LLM_API_KEY=                     # API key (for OpenAI-compatible providers)
+ANTHROPIC_API_KEY=               # API key (for Anthropic provider)
 EMBEDDING_PROVIDER=openai        # openai | ollama | vertexai
 EMBEDDING_MODEL=text-embedding-ada-002
 OLLAMA_BASE_URL=http://localhost:11434
@@ -288,7 +289,7 @@ For VertexAI provider:
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
 VERTEX_PROJECT=your-gcp-project
-VERTEX_LOCATION=europe-west9
+VERTEX_LOCATION=[REDACTED] # pragma: allowlist secret
 ```
 
 Data directory:
