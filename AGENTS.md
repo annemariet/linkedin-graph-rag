@@ -27,7 +27,7 @@ All commands use `uv run` as the project manages dependencies with `uv`. See `CL
 
 ### Gotchas
 
-- **mypy errors are pre-existing** and non-blocking per project convention. `black` and `flake8` must pass clean.
+- **mypy must pass clean** (`uv run mypy linkedin_api`). All three linters (`black`, `flake8`, `mypy`) must pass before committing.
 - **`pytest.ini`** exists alongside `pyproject.toml` config — pytest warns about ignoring `pyproject.toml` config in favour of `pytest.ini`. Tests still run fine.
 - **`uv` must be on PATH**: install with `curl -LsSf https://astral.sh/uv/install.sh | sh` and ensure `$HOME/.local/bin` is on PATH.
 - **Commits**: Use conventional commits with gitmoji (see `CLAUDE.md`).
