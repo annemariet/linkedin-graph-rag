@@ -9,9 +9,11 @@ Used by:
 - query_graphrag.py (retrieval queries)
 """
 
+from typing import Any
+
 # -- Node types ----------------------------------------------------------
 
-NODE_TYPES = [
+NODE_TYPES: list[dict[str, Any]] = [
     {
         "label": "Person",
         "description": "A LinkedIn member identified by URN.",
@@ -100,7 +102,7 @@ NODE_TYPES = [
 
 # -- Relationship types ---------------------------------------------------
 
-RELATIONSHIP_TYPES = [
+RELATIONSHIP_TYPES: list[str] = [
     "IS_AUTHOR_OF",
     "REACTED_TO",
     "COMMENTS_ON",
@@ -116,7 +118,7 @@ RELATIONSHIP_TYPES = [
 ]
 
 # Phase A relationships: structural graph from CSV (build_graph.py)
-PHASE_A_RELATIONSHIP_TYPES = [
+PHASE_A_RELATIONSHIP_TYPES: list[str] = [
     "IS_AUTHOR_OF",
     "REACTED_TO",
     "COMMENTS_ON",
@@ -125,7 +127,7 @@ PHASE_A_RELATIONSHIP_TYPES = [
 
 # -- Allowed triple patterns ----------------------------------------------
 
-PATTERNS = [
+PATTERNS: list[tuple[str, str, str]] = [
     # Structural (Phase A -- from CSV)
     ("Person", "IS_AUTHOR_OF", "Post"),
     ("Person", "IS_AUTHOR_OF", "Comment"),

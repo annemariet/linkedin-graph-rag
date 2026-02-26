@@ -40,6 +40,8 @@ dev = [
     "pytest-cov",
     "responses",
     "twine",
+    "types-requests>=2.32.4.20260107",
+    "types-tqdm>=4.67.3.20260205",
 ]
 
 [tool.black]
@@ -120,3 +122,7 @@ check_untyped_defs = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "linkedin_api.dns_utils"
+ignore_missing_imports = true

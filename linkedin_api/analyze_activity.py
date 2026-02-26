@@ -21,7 +21,7 @@ import os
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from linkedin_api.utils.changelog import fetch_changelog_data
 from linkedin_api.utils.summaries import print_resource_summary, summarize_resources
 
@@ -63,7 +63,7 @@ def extract_statistics(elements):
 
     resource_types, method_types, resource_examples = summarize_resources(elements)
 
-    stats = {
+    stats: dict[str, Any] = {
         "messages": {"sent": 0, "received": 0, "total": 0},
         "invites": {"sent": 0, "received": 0, "total": 0},
         "reactions": Counter(),
