@@ -74,11 +74,11 @@ def get_max_processed_at(elements: List[dict]) -> Optional[int]:
     Returns:
         Maximum processedAt timestamp in epoch milliseconds, or None if no valid timestamps found.
     """
-    timestamps: list[int] = []
-    for elem in elements:
-        val = elem.get("processedAt")
-        if isinstance(val, int):
-            timestamps.append(val)
+    timestamps = [
+        val
+        for elem in elements
+        if isinstance((val := elem.get("processedAt")), int)
+    ]
     return max(timestamps) if timestamps else None
 
 
