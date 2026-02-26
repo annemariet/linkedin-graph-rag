@@ -65,7 +65,7 @@ def find_vector_index(driver, preferred_name: str) -> Optional[str]:
 
                 # Auto-select if only one exists
                 if len(indexes) == 1:
-                    selected = indexes[0].get("name")
+                    selected: str | None = str(indexes[0].get("name", ""))
                     print(f"   ✅ Auto-selecting '{selected}' (only available index)")
                     return selected
                 else:
@@ -80,14 +80,14 @@ def find_vector_index(driver, preferred_name: str) -> Optional[str]:
                             print(
                                 f"   ✅ Auto-selecting '{idx_name}' (looks like content index)"
                             )
-                            return idx_name
+                            return str(idx_name)
 
                     # Fall back to first available
-                    selected = indexes[0].get("name")
+                    fallback: str | None = str(indexes[0].get("name", ""))
                     print(
-                        f"   ⚠️  Auto-selecting '{selected}' (first available, may not be correct)"
+                        f"   ⚠️  Auto-selecting '{fallback}' (first available, may not be correct)"
                     )
-                    return selected
+                    return fallback
             else:
                 print(f"   ❌ No vector indexes found in database")
                 return None
@@ -244,12 +244,14 @@ def query_graphrag(query_text: str, use_cypher: bool = False, top_k: int = 5):
         # Debug: Check if chunks exist and have embeddings
         print(f"\n🔍 Verifying chunks in database...")
         with driver.session(database=NEO4J_DATABASE) as session:
-            chunk_count = session.run(
+            _chunk_rec = session.run(
                 "MATCH (c:Chunk) RETURN count(c) as count"
-            ).single()["count"]
-            chunk_with_embedding = session.run(
+            ).single()
+            chunk_count = _chunk_rec["count"] if _chunk_rec else 0
+            _emb_rec = session.run(
                 "MATCH (c:Chunk) WHERE c.embedding IS NOT NULL RETURN count(c) as count"
-            ).single()["count"]
+            ).single()
+            chunk_with_embedding = _emb_rec["count"] if _emb_rec else 0
             print(f"   Total Chunk nodes: {chunk_count}")
             print(f"   Chunks with embeddings: {chunk_with_embedding}")
 

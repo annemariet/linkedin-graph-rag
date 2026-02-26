@@ -16,6 +16,8 @@ import logging
 
 import dotenv
 
+from neo4j_graphrag.embeddings.base import Embedder as _NoOpEmbedderBase
+
 from linkedin_api.build_graph import create_driver, get_neo4j_config
 from linkedin_api.graph_schema import get_pipeline_schema
 from linkedin_api.llm_config import create_llm
@@ -25,19 +27,13 @@ dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-class _NoOpEmbedder:
+class _NoOpEmbedder(_NoOpEmbedderBase):
     """Placeholder embedder for enrichment pipeline.
 
     The enrichment pipeline only needs the LLM for entity extraction.
     Real embeddings are handled separately by index_content.py.
-    Inherits from neo4j_graphrag's Embedder ABC to satisfy pydantic validation.
+    Inherits from neo4j_graphrag's Embedder ABC to satisfy type checking.
     """
-
-    def __init__(self):
-        from neo4j_graphrag.embeddings.base import Embedder
-
-        # Register as virtual subclass so isinstance() checks pass
-        Embedder.register(type(self))
 
     def embed_query(self, text: str) -> list[float]:
         return [0.0]

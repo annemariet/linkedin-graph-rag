@@ -101,7 +101,7 @@ def extract_post_content(url: str) -> Optional[str]:
         if not content_text:
             og_description = soup.find("meta", property="og:description")
             if og_description:
-                content_text.append(og_description.get("content", ""))
+                content_text.append(str(og_description.get("content", "")))
 
             # Try title as fallback
             title = soup.find("title")
@@ -248,7 +248,8 @@ def store_embeddings_batch(tx, embeddings_data: List[Dict]) -> int:
     RETURN count(c) as updated
     """
     result = tx.run(query, data=embeddings_data)
-    return result.single()["updated"]
+    record = result.single()
+    return int(record["updated"]) if record else 0
 
 
 def index_content_for_graphrag(

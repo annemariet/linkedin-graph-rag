@@ -19,7 +19,7 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from linkedin_api.activity_csv import (
     ActivityRecord,
@@ -585,11 +585,11 @@ def extract_entities_and_relationships(elements):
     Returns:
         dict with 'nodes' and 'relationships' lists for Neo4j import
     """
-    people = {}
-    posts = {}
-    comments = {}
-    relationships = []
-    skipped_by_reason = defaultdict(int)
+    people: dict[str, Any] = {}
+    posts: dict[str, Any] = {}
+    comments: dict[str, Any] = {}
+    relationships: list[dict[str, Any]] = []
+    skipped_by_reason: dict[str, int] = defaultdict(int)
 
     resource_counts, method_counts, resource_examples = summarize_resources(elements)
 
@@ -634,7 +634,7 @@ def extract_entities_and_relationships(elements):
                 element, activity, people, posts, relationships, skipped_by_reason
             )
 
-    nodes = []
+    nodes: list[Any] = []
     nodes.extend(people.values())
     nodes.extend(posts.values())
     nodes.extend(comments.values())
@@ -679,7 +679,7 @@ def print_summary(data):
     print(f"\n🔗 RELATIONSHIPS:")
     print(f"   Total: {stats['relationships']}")
 
-    rel_types = defaultdict(int)
+    rel_types: dict[str, int] = defaultdict(int)
     for rel in data["relationships"]:
         rel_types[rel["type"]] += 1
 

@@ -212,7 +212,7 @@ def migrate_all_comments(driver, dry_run: bool = False):
         print("🔍 DRY RUN - No changes will be made\n")
         for comment in comments:
             new_urn = build_comment_urn(comment["parent_urn"], comment["comment_id"])
-            comment_url = comment_urn_to_post_url(new_urn) or ""
+            comment_url = (comment_urn_to_post_url(new_urn) or "") if new_urn else ""
             print(f"   Would migrate:")
             print(f"     Old URN: {comment['old_urn']}")
             print(f"     New URN: {new_urn}")
