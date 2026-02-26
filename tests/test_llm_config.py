@@ -1,8 +1,10 @@
 """Tests for llm_config module (import, config parsing, key resolution)."""
 
+import sys
+
 import pytest
 
-from linkedin_api.llm_config import _resolve_api_key
+from linkedin_api.llm_config import _resolve_anthropic_api_key, _resolve_api_key
 
 
 def test_create_llm_unknown_provider(monkeypatch):
@@ -59,3 +61,55 @@ class TestResolveApiKey:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
         key, _ = _resolve_api_key(quiet=True)
         assert key == "sk-llm"
+
+
+class TestResolveAnthropicApiKey:
+    def test_anthropic_api_key_env_var(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-123")
+        key, source = _resolve_anthropic_api_key(quiet=True)
+        assert key == "sk-ant-123"
+        assert "ANTHROPIC_API_KEY" in source
+
+    def test_anthropic_keyring_lookup(self, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        import linkedin_api.llm_config as mod
+
+        monkeypatch.setattr(mod, "_ANTHROPIC_KEYRING_LOOKUPS", (("svc", "acct"),))
+
+        class DummyKeyring:
+            @staticmethod
+            def get_password(service, account):
+                if service == "svc" and account == "acct":
+                    return "sk-ant-keyring"
+                return None
+
+        monkeypatch.setitem(sys.modules, "keyring", DummyKeyring())
+
+        key, source = _resolve_anthropic_api_key(quiet=True)
+        assert key == "sk-ant-keyring"
+        assert "svc/acct" in source
+
+
+def test_create_llm_anthropic_defaults(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xyz")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    class DummyAnthropicLLM:
+        def __init__(self, model_name, model_params=None, **kwargs):
+            self.model_name = model_name
+            self.model_params = model_params
+            self.kwargs = kwargs
+
+    import neo4j_graphrag.llm as llm_module
+
+    monkeypatch.setattr(llm_module, "AnthropicLLM", DummyAnthropicLLM)
+
+    from linkedin_api.llm_config import create_llm
+
+    llm = create_llm(quiet=True)
+    assert isinstance(llm, DummyAnthropicLLM)
+    assert llm.model_name == "claude-sonnet-4-5"
+    assert llm.model_params == {"temperature": 0}
+    assert llm.kwargs["api_key"] == "sk-ant-xyz"

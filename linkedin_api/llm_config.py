@@ -1,7 +1,8 @@
 """
 Configurable LLM and embedder factory.
 
-Supports OpenAI-compatible (including Mammouth), Ollama, and VertexAI providers.
+Supports OpenAI-compatible (including Mammouth), Ollama, VertexAI, and Anthropic
+providers.
 
 API key resolution order (for OpenAI-compatible providers):
 1. ``LLM_API_KEY`` environment variable
@@ -9,12 +10,18 @@ API key resolution order (for OpenAI-compatible providers):
 3. ``OPENAI_API_KEY`` environment variable
 4. If none found: automatic fallback to Ollama
 
+API key resolution order (for Anthropic provider):
+1. ``ANTHROPIC_API_KEY`` environment variable
+2. macOS Keychain (tries common service/account pairs, including
+   ``("agent-fleet-rts", "Anthropic")``)
+
 Environment variables:
 
-  LLM_PROVIDER        openai | ollama | vertexai   (default: openai)
+  LLM_PROVIDER         openai | ollama | vertexai | anthropic (default: openai)
   LLM_MODEL           Model name                   (default: gpt-4o)
   LLM_BASE_URL        Custom base URL               (default: https://api.mammouth.ai/v1)
   LLM_API_KEY         API key (for OpenAI-compatible providers)
+  ANTHROPIC_API_KEY   API key for Anthropic provider
   EMBEDDING_PROVIDER   openai | ollama | vertexai   (default: openai)
   EMBEDDING_MODEL      Embedding model name         (default: text-embedding-ada-002)
   OLLAMA_BASE_URL      Ollama server URL            (default: http://localhost:11434)
@@ -32,6 +39,11 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434"
 #   uv run backend/src/scripts/manage_keys.py set mammouth_api_key
 _KEYRING_SERVICE = "agent-fleet-rts"
 _KEYRING_ACCOUNT = "mammouth_api_key"
+_ANTHROPIC_KEYRING_LOOKUPS = (
+    ("agent-fleet-rts", "Anthropic"),
+    ("agent-fleet-rts", "anthropic_api_key"),
+    ("Anthropic", "Anthropic"),
+)
 
 
 def _resolve_api_key(quiet=False):
@@ -69,6 +81,38 @@ def _resolve_api_key(quiet=False):
         if not quiet:
             print("  Using API key from OPENAI_API_KEY env var")
         return key, "OPENAI_API_KEY env var"
+
+    return None, None
+
+
+def _resolve_anthropic_api_key(quiet=False):
+    """Try to find an Anthropic API key.
+
+    Returns (api_key, source_description) or (None, None).
+    """
+    # 1. Explicit env var
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if key:
+        if not quiet:
+            print("  Using API key from ANTHROPIC_API_KEY env var")
+        return key, "ANTHROPIC_API_KEY env var"
+
+    # 2. macOS Keychain (try common service/account conventions)
+    try:
+        import keyring
+
+        for service, account in _ANTHROPIC_KEYRING_LOOKUPS:
+            key = keyring.get_password(service, account)
+            if key:
+                if not quiet:
+                    print(
+                        f"  Using Anthropic API key from keyring "
+                        f"(service={service!r}, account={account!r})"
+                    )
+                return key, f"macOS Keychain ({service}/{account})"
+    except Exception as exc:
+        if not quiet:
+            warnings.warn(f"Keyring lookup failed: {exc}", stacklevel=3)
 
     return None, None
 
@@ -118,7 +162,8 @@ def create_llm(quiet=False, json_mode=True):
     """Create LLM instance based on LLM_PROVIDER env var.
 
     If provider is ``openai`` but no API key is found, falls back to Ollama
-    automatically (starting the server if needed).
+    automatically (starting the server if needed). Anthropic provider requires
+    ``ANTHROPIC_API_KEY`` or a configured keyring entry.
 
     Args:
         quiet: Suppress log output.
@@ -179,6 +224,27 @@ def create_llm(quiet=False, json_mode=True):
             print(f"  LLM: VertexAI ({os.getenv('LLM_MODEL', 'gemini-1.5-pro')})")
         return VertexAILLM(
             model_name=os.getenv("LLM_MODEL", "gemini-1.5-pro"),
+        )
+    elif provider == "anthropic":
+        api_key, _ = _resolve_anthropic_api_key(quiet=quiet)
+        if not api_key:
+            raise RuntimeError(
+                "No Anthropic API key found. Tried:\n"
+                "  1. ANTHROPIC_API_KEY env var\n"
+                "  2. macOS Keychain (agent-fleet-rts/Anthropic)\n"
+                "Set ANTHROPIC_API_KEY or add keyring entry."
+            )
+
+        from neo4j_graphrag.llm import AnthropicLLM
+
+        model = os.getenv("LLM_MODEL", "claude-sonnet-4-5")
+        if not quiet:
+            print(f"  LLM: Anthropic ({model})")
+
+        return AnthropicLLM(
+            model_name=model,
+            model_params={"temperature": 0},
+            api_key=api_key,
         )
     else:
         raise ValueError(f"Unknown LLM_PROVIDER: {provider!r}")
@@ -254,7 +320,7 @@ def create_embedder(quiet=False):
 def _create_ollama_embedder(quiet=False, is_fallback=False):
     """Create an Ollama embedder, starting the server if needed."""
     base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_URL)
-    # When falling back from OpenAI, ignore EMBEDDING_MODEL (e.g. "gemini-embedding-001")
+    # When falling back from OpenAI, ignore EMBEDDING_MODEL (e.g. "[REDACTED]")
     model = (
         OLLAMA_DEFAULT_EMBEDDING_MODEL
         if is_fallback
