@@ -233,7 +233,9 @@ logger = logging.getLogger(__name__)
 PIPELINE_HINT_TEXT = "Click Get latest news report to refresh data and get a summary."
 
 
-def _render_pipeline_status(step_label: str | None = None, progress: float | None = None) -> str:
+def _render_pipeline_status(
+    step_label: str | None = None, progress: float | None = None
+) -> str:
     """Render status below the run button: hint when idle, label + progress bar while running."""
     if step_label is None or progress is None:
         return (
@@ -482,7 +484,9 @@ def create_pipeline_interface():
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
         run_btn = gr.Button("Get latest news report", variant="primary")
-        pipeline_status = gr.HTML(value=_render_pipeline_status(), elem_id="pipeline-status")
+        pipeline_status = gr.HTML(
+            value=_render_pipeline_status(), elem_id="pipeline-status"
+        )
         report_output = gr.Markdown(
             value="Report will appear here after the pipeline run.",
             label="Report",
@@ -518,13 +522,17 @@ def create_pipeline_interface():
                     if status_update is not None:
                         progress_value, step_label = status_update
                     if last.startswith("❌"):
-                        yield _render_pipeline_status(step_label, progress_value), gr.update(
+                        yield _render_pipeline_status(
+                            step_label, progress_value
+                        ), gr.update(
                             value="⚠️ Pipeline failed. See terminal logs for details."
-                        ), cache, gr.update(interactive=True)
+                        ), cache, gr.update(
+                            interactive=True
+                        )
                         return
-                    yield _render_pipeline_status(step_label, progress_value), gr.update(), cache, gr.update(
-                        interactive=False
-                    )
+                    yield _render_pipeline_status(
+                        step_label, progress_value
+                    ), gr.update(), cache, gr.update(interactive=False)
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
@@ -534,9 +542,9 @@ def create_pipeline_interface():
                 return
 
             progress_value, step_label = 0.75, "Generating report…"
-            yield _render_pipeline_status(step_label, progress_value), gr.update(), cache, gr.update(
-                interactive=False
-            )
+            yield _render_pipeline_status(
+                step_label, progress_value
+            ), gr.update(), cache, gr.update(interactive=False)
             sig = _report_signature()
             disk = _load_report_cache()
             if disk is not None and disk[1] == sig:
