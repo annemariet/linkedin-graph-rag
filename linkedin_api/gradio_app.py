@@ -589,6 +589,7 @@ def create_pipeline_interface():
             fn=prepare_run,
             inputs=[report_cache_state],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            queue=False,
         ).then(
             fn=run_all,
             inputs=[period, from_cache, limit, report_cache_state],
