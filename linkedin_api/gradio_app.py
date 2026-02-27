@@ -494,6 +494,14 @@ def create_pipeline_interface():
         )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
 
+        def prepare_run(cache):
+            return (
+                _render_pipeline_status("Fetching…", 0.0),
+                gr.update(value="Running pipeline…"),
+                cache,
+                gr.update(interactive=False),
+            )
+
         def run_all(last: str, from_cache: bool, lim, cache):
             logger.info(
                 "Pipeline & report started: last=%s from_cache=%s limit=%s",
@@ -508,9 +516,6 @@ def create_pipeline_interface():
 
             progress_value = 0.0
             step_label = "Fetching…"
-            yield _render_pipeline_status(step_label, progress_value), gr.update(
-                value="Running pipeline…"
-            ), cache, gr.update(interactive=False)
             try:
                 for chunk in run_pipeline_ui_streaming(
                     last=last,
@@ -569,6 +574,10 @@ def create_pipeline_interface():
             )
 
         run_btn.click(
+            fn=prepare_run,
+            inputs=[report_cache_state],
+            outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+        ).then(
             fn=run_all,
             inputs=[period, from_cache, limit, report_cache_state],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
