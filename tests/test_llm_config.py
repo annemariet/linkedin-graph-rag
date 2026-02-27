@@ -81,5 +81,5 @@ def test_create_llm_anthropic_defaults(monkeypatch):
     llm = create_llm(quiet=True)
     assert isinstance(llm, DummyAnthropicLLM)
     assert llm.model_name == "claude-sonnet-4-5"
-    assert llm.model_params == {"temperature": 0}
+    assert llm.model_params == {"temperature": 0, "max_tokens": 8192}
     assert llm.kwargs["api_key"] == "sk-ant-xyz"

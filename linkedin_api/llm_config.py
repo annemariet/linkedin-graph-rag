@@ -22,6 +22,7 @@ Environment variables:
   LLM_BASE_URL        Custom base URL               (default: https://api.mammouth.ai/v1)
   LLM_API_KEY         API key (for OpenAI-compatible providers)
   ANTHROPIC_API_KEY   API key for Anthropic provider
+  ANTHROPIC_MAX_TOKENS  Max tokens for Anthropic responses (default: 8192; max 64000 for Sonnet 4.5)
   EMBEDDING_PROVIDER   openai | ollama | vertexai   (default: openai)
   EMBEDDING_MODEL      Embedding model name         (default: text-embedding-ada-002)
   OLLAMA_BASE_URL      Ollama server URL            (default: http://localhost:11434)
@@ -240,12 +241,16 @@ def create_llm(quiet=False, json_mode=True):
         from neo4j_graphrag.llm import AnthropicLLM
 
         model = os.getenv("LLM_MODEL", "claude-sonnet-4-5")
+        try:
+            max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8192"))
+        except ValueError:
+            max_tokens = 8192
         if not quiet:
-            print(f"  LLM: Anthropic ({model})")
-
+            print(f"  LLM: Anthropic ({model}, max_tokens={max_tokens})")
+        model_params = {"temperature": 0, "max_tokens": max_tokens}
         return AnthropicLLM(
             model_name=model,
-            model_params={"temperature": 0},
+            model_params=model_params,
             api_key=api_key,
         )
     else:

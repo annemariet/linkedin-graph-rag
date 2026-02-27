@@ -9,6 +9,10 @@ Tab 2: GraphRAG query — lazy-init Neo4j and Vertex AI on demand.
 import logging
 import os
 import tempfile
+
+import dotenv
+
+dotenv.load_dotenv()
 from typing import TYPE_CHECKING
 
 import gradio as gr
@@ -623,6 +627,11 @@ def main():
     )
     port = int(os.getenv("PORT", 7860))
     host = os.getenv("HOST", "0.0.0.0")
+    logger.info(
+        "LLM_PROVIDER=%s (embedding: %s)",
+        os.getenv("LLM_PROVIDER", "<unset>"),
+        os.getenv("EMBEDDING_PROVIDER", "<unset>"),
+    )
     logger.info(f"Starting Gradio app on {host}:{port}")
     demo.launch(server_name=host, server_port=port, share=False, show_error=True)
 
