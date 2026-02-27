@@ -10,6 +10,7 @@ import html
 import logging
 import os
 import tempfile
+import time
 from typing import TYPE_CHECKING
 
 import gradio as gr
@@ -231,6 +232,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 PIPELINE_HINT_TEXT = "Click Get latest news report to refresh data and get a summary."
+MIN_PROGRESS_VISIBILITY_SECONDS = 0.6
 
 
 def _render_pipeline_status(
@@ -509,6 +511,14 @@ def create_pipeline_interface():
                 from_cache,
                 lim,
             )
+            started_at = time.monotonic()
+
+            def _ensure_min_progress_visibility() -> None:
+                elapsed = time.monotonic() - started_at
+                remaining = MIN_PROGRESS_VISIBILITY_SECONDS - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
+
             try:
                 lim_int = int(lim) if lim not in (None, "", float("nan")) else None
             except (TypeError, ValueError):
@@ -527,6 +537,7 @@ def create_pipeline_interface():
                     if status_update is not None:
                         progress_value, step_label = status_update
                     if last.startswith("❌"):
+                        _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
                             step_label, progress_value
                         ), gr.update(
@@ -541,6 +552,7 @@ def create_pipeline_interface():
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
+                _ensure_min_progress_visibility()
                 yield _render_pipeline_status("Failed.", 1.0), gr.update(
                     value=f"⚠️ Pipeline failed: {err_msg}"
                 ), cache, gr.update(interactive=True)
