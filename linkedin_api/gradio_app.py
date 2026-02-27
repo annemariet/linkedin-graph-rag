@@ -2,10 +2,11 @@
 """
 Gradio MVP UI: run pipeline (collect → enrich → summarize) and query GraphRAG.
 
-Tab 1: Pipeline — period, from-cache, optional limit; run and see log.
+Tab 1: Pipeline — period, from-cache, optional limit; run and get report with progress.
 Tab 2: GraphRAG query — lazy-init Neo4j and Vertex AI on demand.
 """
 
+import html
 import logging
 import os
 import tempfile
@@ -229,6 +230,66 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+PIPELINE_HINT_TEXT = "Click Get latest news report to refresh data and get a summary."
+
+
+def _render_pipeline_status(step_label: str | None = None, progress: float | None = None) -> str:
+    """Render status below the run button: hint when idle, label + progress bar while running."""
+    if step_label is None or progress is None:
+        return (
+            '<div style="color: #6b7280; margin: 0.25rem 0 0.5rem 0;">'
+            f"{html.escape(PIPELINE_HINT_TEXT)}"
+            "</div>"
+        )
+    width = int(round(max(0.0, min(1.0, progress)) * 100))
+    return (
+        f'<div style="margin: 0.25rem 0; color: #111827;">{html.escape(step_label)}</div>'
+        '<div style="width: 100%; height: 10px; background: #e5e7eb; '
+        'border-radius: 9999px; overflow: hidden;">'
+        f'<div style="width: {width}%; height: 100%; background: #f97316; '
+        'transition: width 200ms ease;"></div>'
+        "</div>"
+    )
+
+
+def _parse_fraction_status(
+    line: str, prefix: str, base: float, span: float, step_label: str
+) -> tuple[float, str] | None:
+    if not line.startswith(prefix) or "/" not in line:
+        return None
+    try:
+        done_str, total_str = line.removeprefix(prefix).rstrip("…").split("/")
+        done, total = int(done_str), int(total_str)
+        if total <= 0:
+            return base, step_label
+        return (base + span * done / total), step_label
+    except (ValueError, IndexError):
+        return None
+
+
+def _status_from_pipeline_line(line: str) -> tuple[float, str] | None:
+    """Map pipeline stream lines to concise UI steps + normalized progress."""
+    enrich = _parse_fraction_status(line, "Enriching ", 0.2, 0.2, "Enriching…")
+    if enrich is not None:
+        return enrich
+    summarize = _parse_fraction_status(
+        line, "Summarizing batch ", 0.4, 0.2, "Summarizing…"
+    )
+    if summarize is not None:
+        return summarize
+    if line.startswith("Starting pipeline"):
+        return 0.0, "Fetching…"
+    if "Collected" in line:
+        return 0.2, "Enriching…"
+    if "Enriched" in line:
+        return 0.4, "Summarizing…"
+    if "Summarized" in line:
+        return 0.6, "Finishing up…"
+    if "✅ Done" in line:
+        return 0.75, "Generating report…"
+    if line.startswith("❌"):
+        return 1.0, "Failed."
+    return None
 
 
 class GraphRAGServices:
@@ -397,10 +458,13 @@ def get_database_stats(services: GraphRAGServices) -> str:
 
 
 def create_pipeline_interface():
-    """Pipeline tab: single button runs collect → enrich → summarize → report; progress bars and caches."""
+    """Pipeline tab: single button runs collect → enrich → summarize → report."""
     with gr.Blocks(
         title="Pipeline",
-        css="#report-output { min-height: 24em; overflow-y: auto; }",
+        css=(
+            "#report-output { min-height: 24em; overflow-y: auto; }"
+            "#pipeline-status { min-height: 2.8em; }"
+        ),
     ) as block:
         gr.Markdown(
             "# Pipeline\nOne run: fetch/enrich/summarize (using caches when possible), then generate report."
@@ -418,21 +482,15 @@ def create_pipeline_interface():
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
         run_btn = gr.Button("Get latest news report", variant="primary")
-        log_output = gr.Textbox(
-            label="Log",
-            lines=6,
-            max_lines=12,
-            interactive=False,
-            visible=True,
-        )
+        pipeline_status = gr.HTML(value=_render_pipeline_status(), elem_id="pipeline-status")
         report_output = gr.Markdown(
-            value="Click **Get latest news report** to refresh data and get a summary.",
+            value="Report will appear here after the pipeline run.",
             label="Report",
             elem_id="report-output",
         )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
 
-        def run_all(last: str, from_cache: bool, lim, cache, progress=gr.Progress()):
+        def run_all(last: str, from_cache: bool, lim, cache):
             logger.info(
                 "Pipeline & report started: last=%s from_cache=%s limit=%s",
                 last,
@@ -444,63 +502,41 @@ def create_pipeline_interface():
             except (TypeError, ValueError):
                 lim_int = None
 
-            progress(0, desc="Fetching…")
-            log_text = ""
+            progress_value = 0.0
+            step_label = "Fetching…"
+            yield _render_pipeline_status(step_label, progress_value), gr.update(
+                value="Running pipeline…"
+            ), cache, gr.update(interactive=False)
             try:
                 for chunk in run_pipeline_ui_streaming(
                     last=last,
                     from_cache=from_cache,
                     limit=lim_int,
                 ):
-                    log_text = chunk
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
-                    if last.startswith("Enriching ") and "/" in last:
-                        try:
-                            nums = (
-                                last.removeprefix("Enriching ").rstrip("…").split("/")
-                            )
-                            done, total = int(nums[0]), int(nums[1])
-                            if total > 0:
-                                progress(0.2 + 0.2 * done / total, desc=last)
-                        except Exception:
-                            pass
-                    elif last.startswith("Summarizing batch ") and "/" in last:
-                        try:
-                            nums = (
-                                last.removeprefix("Summarizing batch ")
-                                .rstrip("…")
-                                .split("/")
-                            )
-                            done, total = int(nums[0]), int(nums[1])
-                            if total > 0:
-                                progress(0.4 + 0.2 * done / total, desc=last)
-                        except Exception:
-                            pass
-                    elif "Collected" in last:
-                        progress(0.2, desc="Enriching…")
-                    elif "Enriched" in last:
-                        progress(0.4, desc="Summarizing…")
-                    elif "Summarized" in last:
-                        progress(0.6, desc="Finishing up…")
-                    elif "✅ Done" in last:
-                        progress(0.75, desc="Generating report…")
-                    elif last.startswith("❌"):
-                        progress(1, desc="Failed")
-                        yield log_text, gr.update(
-                            value="⚠️ Pipeline failed. See log above."
-                        ), cache
+                    status_update = _status_from_pipeline_line(last)
+                    if status_update is not None:
+                        progress_value, step_label = status_update
+                    if last.startswith("❌"):
+                        yield _render_pipeline_status(step_label, progress_value), gr.update(
+                            value="⚠️ Pipeline failed. See terminal logs for details."
+                        ), cache, gr.update(interactive=True)
                         return
-                    yield log_text, gr.update(), cache
+                    yield _render_pipeline_status(step_label, progress_value), gr.update(), cache, gr.update(
+                        interactive=False
+                    )
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
-                progress(1, desc="Failed")
-                yield f"{log_text}\n\n❌ Failed: {err_msg}", gr.update(
-                    value="⚠️ Pipeline failed. See log above."
-                ), cache
+                yield _render_pipeline_status("Failed.", 1.0), gr.update(
+                    value=f"⚠️ Pipeline failed: {err_msg}"
+                ), cache, gr.update(interactive=True)
                 return
 
-            progress(0.75, desc="Generating report…")
+            progress_value, step_label = 0.75, "Generating report…"
+            yield _render_pipeline_status(step_label, progress_value), gr.update(), cache, gr.update(
+                interactive=False
+            )
             sig = _report_signature()
             disk = _load_report_cache()
             if disk is not None and disk[1] == sig:
@@ -520,13 +556,14 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
-            progress(1, desc="Done.")
-            yield log_text, result, cache
+            yield _render_pipeline_status("Done.", 1.0), result, cache, gr.update(
+                interactive=True
+            )
 
         run_btn.click(
             fn=run_all,
             inputs=[period, from_cache, limit, report_cache_state],
-            outputs=[log_output, report_output, report_cache_state],
+            outputs=[pipeline_status, report_output, report_cache_state, run_btn],
         )
     return block
 
