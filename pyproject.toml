@@ -27,6 +27,7 @@ dependencies = [
     "gradio>=4.0.0",
     "playwright",
     "anthropic>=0.84.0",
+    "ollama>=0.6.1",
 ]
 
 [dependency-groups]
