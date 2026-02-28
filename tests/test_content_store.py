@@ -8,6 +8,7 @@ from linkedin_api.content_store import (
     load_content,
     load_metadata,
     list_posts_needing_summary,
+    list_summarized_metadata,
     needs_summary,
     save_content,
     save_metadata,
@@ -125,6 +126,17 @@ class TestNeedsSummary:
         save_content(urn, "x" * 100)
         save_metadata(urn, summary="Done")
         assert needs_summary(urn) is False
+
+
+class TestListSummarizedMetadata:
+    def test_includes_urn_for_content_lookup(self):
+        urn = "urn:li:ugcPost:listed"
+        save_content(urn, "x" * 100)
+        save_metadata(urn, summary="A summary")
+        metas = list_summarized_metadata()
+        assert len(metas) == 1
+        assert metas[0]["urn"] == urn
+        assert metas[0]["summary"] == "A summary"
 
 
 class TestListPostsNeedingSummary:
