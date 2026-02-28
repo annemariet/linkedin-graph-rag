@@ -11,10 +11,9 @@ Python client for LinkedIn's Portability API — fetches activity, builds a Neo4
 - **Gradio app**: `uv run python -m linkedin_api.gradio_app` (port 7860). The UI starts without Neo4j/LLM but full pipeline requires both.
 - **Neo4j**: Required for graph operations. Not included in the repo — must be provisioned externally or via Docker. Default URI: `neo4j://localhost:7687`.
 - **LLM/Embedder**: Required for enrichment, indexing, and queries. Falls back to Ollama if no API key is set.
-- **Ollama (cloud VM fallback)**:
-  - Install runtime: `curl -fsSL https://ollama.com/install.sh | sh` (if installer asks for `zstd`: `sudo apt-get update && sudo apt-get install -y zstd`).
-  - On VMs without systemd, start manually in a separate terminal: `ollama serve`.
-  - Preload default models used by this repo: `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`.
+- **Ollama**: Pre-installed with `llama3.2:3b` and `nomic-embed-text` models. In non-systemd environments (like this VM), start with `ollama serve &` before using LLM/embedding features. The `neo4j-graphrag[ollama]` extra is included in dependencies.
+  - If missing in a fresh VM, install runtime: `curl -fsSL https://ollama.com/install.sh | sh` (if installer asks for `zstd`: `sudo apt-get update && sudo apt-get install -y zstd`).
+  - Ensure default models are available: `ollama pull llama3.2:3b` and `ollama pull nomic-embed-text`.
 
 ### Development commands
 
@@ -36,3 +35,5 @@ All commands use `uv run` as the project manages dependencies with `uv`. See `CL
 - **Commits**: Use conventional commits with gitmoji (see `CLAUDE.md`).
 - **Python 3.12+** is required (`requires-python = ">=3.12"` in `pyproject.toml`).
 - If pipeline/report fails with `Cannot connect to Ollama` or `model ... not found`, verify `ollama list` shows `llama3.2:3b` and `nomic-embed-text`.
+- **zstd** is pre-installed as a system dependency (used by Ollama for model compression).
+- **Ollama serve must be started manually** in this VM since there is no systemd. Run `ollama serve &` and wait a few seconds before any LLM/embedding operations. The app's `_ensure_ollama_running()` in `llm_config.py` will also attempt auto-start.
