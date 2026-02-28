@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from neo4j import Driver
 
 from linkedin_api.activity_csv import get_data_dir
-from linkedin_api.content_store import list_summarized_metadata
+from linkedin_api.content_store import list_summarized_metadata, load_content
 from linkedin_api.llm_config import create_embedder, create_llm
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
@@ -44,6 +44,7 @@ _REPORT_SYSTEM = (
 REPORT_MAX_POSTS = 50
 REPORT_BATCH_CHAR_LIMIT = 4000
 REPORT_MAX_SUMMARY_CHARS = 400
+REPORT_MAX_FULL_POST_CHARS = 1500
 
 # Order defines report sections. "other" gets summaries + links only (no LLM).
 REPORT_CATEGORIES = (
@@ -72,9 +73,18 @@ def _truncate(s: str, max_len: int) -> str:
     return s[: max_len - 3].rstrip() + "..."
 
 
-def _format_post_for_prompt(m: dict) -> str:
-    summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    parts = [f"- {summary}"]
+def _format_post_for_prompt(m: dict, use_full_posts: bool = True) -> str:
+    """Format post for LLM prompt. Uses full content or summary."""
+    text: str
+    if use_full_posts and m.get("urn"):
+        content = load_content(m["urn"])
+        if content:
+            text = _truncate(content, REPORT_MAX_FULL_POST_CHARS)
+        else:
+            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+    else:
+        text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+    parts = [f"- {text}"]
     if m.get("topics"):
         parts.append(f"  Topics: {', '.join(m['topics'])}")
     if m.get("technologies"):
@@ -82,13 +92,15 @@ def _format_post_for_prompt(m: dict) -> str:
     return "\n".join(parts)
 
 
-def _batches_by_char_limit(metas: list[dict], char_limit: int) -> list[list[dict]]:
+def _batches_by_char_limit(
+    metas: list[dict], char_limit: int, use_full_posts: bool = True
+) -> list[list[dict]]:
     """Split metas into batches; start a new batch when adding the next post would exceed char_limit."""
     batches: list[list[dict]] = []
     current: list[dict] = []
     current_len = 0
     for m in metas:
-        block = _format_post_for_prompt(m)
+        block = _format_post_for_prompt(m, use_full_posts)
         if current and current_len + len(block) > char_limit:
             batches.append(current)
             current = []
@@ -100,9 +112,11 @@ def _batches_by_char_limit(metas: list[dict], char_limit: int) -> list[list[dict
     return batches
 
 
-def _summarize_batch(llm, metas: list[dict], category_label: str) -> str:
+def _summarize_batch(
+    llm, metas: list[dict], category_label: str, use_full_posts: bool = True
+) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
-    block = "\n\n".join(_format_post_for_prompt(m) for m in metas)
+    block = "\n\n".join(_format_post_for_prompt(m, use_full_posts) for m in metas)
     system = (
         "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
         "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
@@ -112,34 +126,50 @@ def _summarize_batch(llm, metas: list[dict], category_label: str) -> str:
     return (response.content if hasattr(response, "content") else str(response)).strip()
 
 
-def _format_other_section(metas: list[dict]) -> str:
-    """Format 'other' category as summary + link per post (no LLM)."""
+def _format_other_section(metas: list[dict], use_full_posts: bool = True) -> str:
+    """Format 'other' category as summary or full content + link per post (no LLM)."""
     lines = []
     for m in metas:
-        summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+        if use_full_posts and m.get("urn"):
+            content = load_content(m["urn"])
+            text = (
+                _truncate(content, REPORT_MAX_FULL_POST_CHARS)
+                if content
+                else _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+            )
+        else:
+            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
         url = (m.get("post_url") or "").strip()
         if url:
-            lines.append(f"- {summary} — [post]({url})")
+            lines.append(f"- {text} — [post]({url})")
         else:
-            lines.append(f"- {summary}")
+            lines.append(f"- {text}")
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
-def _report_signature() -> tuple[int, tuple[str, ...]] | None:
+def _report_signature(
+    use_full_posts: bool = True,
+) -> tuple[int, tuple[str, ...], bool] | None:
     """Signature of the post set used for the report. None if no posts. Used for cache invalidation."""
     all_metas = list_summarized_metadata()
     if not all_metas:
         return None
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
-    return (len(all_metas), tuple((m.get("summarized_at") or "") for m in metas))
+    return (
+        len(all_metas),
+        tuple((m.get("summarized_at") or "") for m in metas),
+        use_full_posts,
+    )
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
 
 
-def _load_report_cache() -> tuple[str, tuple[int, tuple[str, ...]]] | None:
-    """Load cached report from disk. Returns (report, signature) or None."""
+def _load_report_cache(
+    use_full_posts: bool,
+) -> tuple[str, tuple[int, tuple[str, ...], bool]] | None:
+    """Load cached report from disk. Returns (report, signature) or None if mode mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
@@ -147,21 +177,29 @@ def _load_report_cache() -> tuple[str, tuple[int, tuple[str, ...]]] | None:
         data = json.loads(path.read_text(encoding="utf-8"))
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
+        cached_full = data.get("use_full_posts", True)
+        if cached_full != use_full_posts:
+            return None
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (n, at))
+        return (report, (n, at, use_full_posts))
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...]]) -> None:
+def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...], bool]) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     try:
         path.write_text(
             json.dumps(
-                {"n": sig[0], "summarized_at": list(sig[1]), "report": report},
+                {
+                    "n": sig[0],
+                    "summarized_at": list(sig[1]),
+                    "use_full_posts": sig[2],
+                    "report": report,
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -170,7 +208,7 @@ def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...]]) -> None:
         pass
 
 
-def generate_activity_report() -> str:
+def generate_activity_report(use_full_posts: bool = True) -> str:
     """Build report by category. Batches by char limit per category; 'other' is summaries + links only."""
     setup_gcp_credentials()
     all_metas = list_summarized_metadata()
@@ -193,10 +231,16 @@ def generate_activity_report() -> str:
                 continue
             label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
             if cat == "other":
-                parts.append(f"## {label}\n\n{_format_other_section(category_metas)}")
+                parts.append(
+                    f"## {label}\n\n{_format_other_section(category_metas, use_full_posts)}"
+                )
                 continue
-            batches = _batches_by_char_limit(category_metas, REPORT_BATCH_CHAR_LIMIT)
-            batch_summaries = [_summarize_batch(llm, batch, label) for batch in batches]
+            batches = _batches_by_char_limit(
+                category_metas, REPORT_BATCH_CHAR_LIMIT, use_full_posts
+            )
+            batch_summaries = [
+                _summarize_batch(llm, batch, label, use_full_posts) for batch in batches
+            ]
             parts.append(f"## {label}\n\n" + "\n\n".join(batch_summaries))
         if not parts:
             return "No posts to summarize."
@@ -421,6 +465,11 @@ def create_pipeline_interface():
                 info="No LinkedIn API call; use only previously fetched data.",
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
+            use_full_posts = gr.Checkbox(
+                value=True,
+                label="Use full post content",
+                info="Default: use full posts. Uncheck to use short summaries (legacy).",
+            )
         run_btn = gr.Button("Get latest news report", variant="primary")
         log_output = gr.Textbox(
             label="Log",
@@ -436,7 +485,14 @@ def create_pipeline_interface():
         )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
 
-        def run_all(last: str, from_cache: bool, lim, cache, progress=gr.Progress()):
+        def run_all(
+            last: str,
+            from_cache: bool,
+            lim,
+            use_full: bool,
+            cache,
+            progress=gr.Progress(),
+        ):
             logger.info(
                 "Pipeline & report started: last=%s from_cache=%s limit=%s",
                 last,
@@ -505,8 +561,8 @@ def create_pipeline_interface():
                 return
 
             progress(0.75, desc="Generating report…")
-            sig = _report_signature()
-            disk = _load_report_cache()
+            sig = _report_signature(use_full)
+            disk = _load_report_cache(use_full)
             if disk is not None and disk[1] == sig:
                 result = disk[0]
                 logger.info("Report cache hit (disk)")
@@ -516,7 +572,7 @@ def create_pipeline_interface():
                 logger.info("Report cache hit (session)")
             else:
                 try:
-                    result = generate_activity_report()
+                    result = generate_activity_report(use_full_posts=use_full)
                     cache = (result, sig) if sig else None
                     if sig is not None:
                         _save_report_cache(result, sig)
@@ -529,7 +585,7 @@ def create_pipeline_interface():
 
         run_btn.click(
             fn=run_all,
-            inputs=[period, from_cache, limit, report_cache_state],
+            inputs=[period, from_cache, limit, use_full_posts, report_cache_state],
             outputs=[log_output, report_output, report_cache_state],
         )
     return block
