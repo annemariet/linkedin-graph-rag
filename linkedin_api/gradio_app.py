@@ -27,7 +27,13 @@ if TYPE_CHECKING:
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import list_summarized_metadata, load_content
-from linkedin_api.llm_config import create_embedder, create_llm, get_report_model_id
+from linkedin_api.llm_config import (
+    create_embedder,
+    create_llm,
+    get_default_provider_model,
+    get_report_model_id,
+)
+from linkedin_api.llm_models import fetch_models_for_provider
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -151,6 +157,8 @@ def _format_other_section(metas: list[dict], use_full_posts: bool = True) -> str
 
 def _report_signature(
     use_full_posts: bool = True,
+    report_provider: str | None = None,
+    report_model: str | None = None,
 ) -> tuple[str, int, tuple[str, ...], bool] | None:
     """Signature of post set + report model + use_full_posts. None if no posts. Used for cache invalidation."""
     all_metas = list_summarized_metadata()
@@ -158,7 +166,10 @@ def _report_signature(
         return None
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
-    model_id = get_report_model_id()
+    model_id = get_report_model_id(
+        provider_override=report_provider,
+        model_override=report_model,
+    )
     return (
         model_id,
         len(all_metas),
@@ -216,7 +227,11 @@ def _save_report_cache(
         pass
 
 
-def generate_activity_report(use_full_posts: bool = True) -> str:
+def generate_activity_report(
+    use_full_posts: bool = True,
+    report_provider: str | None = None,
+    report_model: str | None = None,
+) -> str:
     """Build report by category. Batches by char limit per category; 'other' is summaries + links only."""
     setup_gcp_credentials()
     all_metas = list_summarized_metadata()
@@ -231,7 +246,12 @@ def generate_activity_report(use_full_posts: bool = True) -> str:
             cat = "other"
         by_category.setdefault(cat, []).append(m)
     try:
-        llm = create_llm(stage="report", json_mode=False)
+        llm = create_llm(
+            stage="report",
+            json_mode=False,
+            provider_override=report_provider,
+            model_override=report_model,
+        )
         parts = []
         for cat in REPORT_CATEGORIES:
             category_metas = by_category.get(cat)
@@ -544,6 +564,79 @@ def create_pipeline_interface():
                 label="Use full post content",
                 info="Default: use full posts. Uncheck to use short summaries (legacy).",
             )
+        with gr.Accordion("Model selection", open=False):
+            sp, sm = get_default_provider_model("summary")
+            rp, rm = get_default_provider_model("report")
+            provider_choices = ["ollama", "anthropic", "mammouth"]
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("**Summary** (categorization & short summary)")
+                    summary_provider = gr.Dropdown(
+                        choices=provider_choices,
+                        value=sp,
+                        label="Provider",
+                    )
+                    summary_model = gr.Dropdown(
+                        choices=[sm],
+                        value=sm,
+                        label="Model",
+                        allow_custom_value=True,
+                    )
+                with gr.Column():
+                    gr.Markdown("**Report** (batch summaries & final report)")
+                    report_provider = gr.Dropdown(
+                        choices=provider_choices,
+                        value=rp,
+                        label="Provider",
+                    )
+                    report_model = gr.Dropdown(
+                        choices=[rm],
+                        value=rm,
+                        label="Model",
+                        allow_custom_value=True,
+                    )
+            refresh_models_btn = gr.Button("Refresh models", size="sm")
+
+            def refresh_summary_models(provider):
+                models = fetch_models_for_provider(provider)
+                choices = models if models else ["(Refresh to load)"]
+                return gr.update(choices=choices, value=choices[0] if choices else "")
+
+            def refresh_report_models(provider):
+                models = fetch_models_for_provider(provider)
+                choices = models if models else ["(Refresh to load)"]
+                return gr.update(choices=choices, value=choices[0] if choices else "")
+
+            summary_provider.change(
+                refresh_summary_models,
+                inputs=[summary_provider],
+                outputs=[summary_model],
+            )
+            report_provider.change(
+                refresh_report_models,
+                inputs=[report_provider],
+                outputs=[report_model],
+            )
+
+            def refresh_all(summary_prov, report_prov):
+                s_models = fetch_models_for_provider(summary_prov)
+                r_models = fetch_models_for_provider(report_prov)
+                return (
+                    gr.update(
+                        choices=s_models or ["(Refresh to load)"],
+                        value=(s_models[0] if s_models else ""),
+                    ),
+                    gr.update(
+                        choices=r_models or ["(Refresh to load)"],
+                        value=(r_models[0] if r_models else ""),
+                    ),
+                )
+
+            refresh_models_btn.click(
+                refresh_all,
+                inputs=[summary_provider, report_provider],
+                outputs=[summary_model, report_model],
+            )
         run_btn = gr.Button("Get latest news report", variant="primary")
         pipeline_status = gr.HTML(
             value=_render_pipeline_status(), elem_id="pipeline-status"
@@ -568,6 +661,10 @@ def create_pipeline_interface():
             from_cache: bool,
             lim,
             use_full: bool,
+            sum_prov,
+            sum_mod,
+            rep_prov,
+            rep_mod,
             cache,
         ):
             logger.info(
@@ -596,6 +693,8 @@ def create_pipeline_interface():
                     last=last,
                     from_cache=from_cache,
                     limit=lim_int,
+                    summary_provider=sum_prov or None,
+                    summary_model=sum_mod or None,
                 ):
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
@@ -627,7 +726,9 @@ def create_pipeline_interface():
             yield _render_pipeline_status(
                 step_label, progress_value
             ), gr.update(), cache, gr.update(interactive=False)
-            sig = _report_signature(use_full)
+            sig = _report_signature(
+                use_full, report_provider=rep_prov or None, report_model=rep_mod or None
+            )
             disk = _load_report_cache(use_full)
             if disk is not None and disk[1] == sig:
                 result = disk[0]
@@ -638,7 +739,11 @@ def create_pipeline_interface():
                 logger.info("Report cache hit (session)")
             else:
                 try:
-                    result = generate_activity_report(use_full_posts=use_full)
+                    result = generate_activity_report(
+                        use_full_posts=use_full,
+                        report_provider=rep_prov or None,
+                        report_model=rep_mod or None,
+                    )
                     cache = (result, sig) if sig else None
                     if sig is not None:
                         _save_report_cache(result, sig)
@@ -657,7 +762,17 @@ def create_pipeline_interface():
             queue=False,
         ).then(
             fn=run_all,
-            inputs=[period, from_cache, limit, use_full_posts, report_cache_state],
+            inputs=[
+                period,
+                from_cache,
+                limit,
+                use_full_posts,
+                summary_provider,
+                summary_model,
+                report_provider,
+                report_model,
+                report_cache_state,
+            ],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
         )
     return block

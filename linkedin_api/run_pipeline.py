@@ -145,7 +145,9 @@ def _enrich_activities_streaming(activities_path: Path, args):
     return out_path, count
 
 
-def _summarize_posts_streaming(args, enriched_path: Path | None = None):
+def _summarize_posts_streaming(
+    args, enriched_path: Path | None = None, summary_provider=None, summary_model=None
+):
     """
     Generator variant of _summarize_posts.
     Yields (batches_done, total_batches) per batch. Returns total via StopIteration.
@@ -160,6 +162,8 @@ def _summarize_posts_streaming(args, enriched_path: Path | None = None):
         limit=args.limit,
         batch_size=args.batch_size,
         quiet=args.quiet,
+        llm_provider=summary_provider,
+        llm_model=summary_model,
     )
     try:
         while True:
@@ -218,6 +222,8 @@ def run_pipeline_ui_streaming(
     limit: int | None = None,
     batch_size: int = 5,
     seed_json: str | None = None,
+    summary_provider: str | None = None,
+    summary_model: str | None = None,
 ):
     """
     Generator that runs the MVP pipeline and yields user-friendly progress for the UI.
@@ -271,7 +277,12 @@ def run_pipeline_ui_streaming(
         # Summarize with per-batch progress (placeholder updated in-place)
         n3 = 0
         lines.append("Summarizing…")
-        gen = _summarize_posts_streaming(args, enriched_path)
+        gen = _summarize_posts_streaming(
+            args,
+            enriched_path,
+            summary_provider=summary_provider,
+            summary_model=summary_model,
+        )
         try:
             while True:
                 batches_done, total_batches = next(gen)

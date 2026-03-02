@@ -39,6 +39,19 @@ def test_get_report_model_id_includes_model_in_cache_key(monkeypatch):
     monkeypatch.setenv("LLM_REPORT_MODEL", "llama3.2:3b")
     assert get_report_model_id() == "ollama:llama3.2:3b"
 
+    assert get_report_model_id("mammouth", "gpt-4o") == "mammouth:gpt-4o"
+
+
+def test_get_default_provider_model_maps_openai_to_mammouth(monkeypatch):
+    """UI default for openai provider is mammouth."""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+    from linkedin_api.llm_config import get_default_provider_model
+
+    p, m = get_default_provider_model("summary")
+    assert p == "mammouth"
+    assert m == "gpt-4o"
+
 
 def test_resolve_provider_model_fallback_to_global(monkeypatch):
     """When stage-specific vars unset, use global."""

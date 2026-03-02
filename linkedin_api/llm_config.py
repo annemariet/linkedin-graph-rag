@@ -188,8 +188,21 @@ def _resolve_provider_model(
     return provider, model
 
 
-def get_report_model_id() -> str:
+def get_default_provider_model(stage: Literal["summary", "report"]) -> tuple[str, str]:
+    """Default provider and model for UI dropdowns. Provider: ollama, anthropic, mammouth."""
+    provider, model = _resolve_provider_model(stage)
+    if provider == "openai":
+        provider = "mammouth"
+    return provider, model
+
+
+def get_report_model_id(
+    provider_override: str | None = None,
+    model_override: str | None = None,
+) -> str:
     """Report stage model identifier for cache invalidation. Format: provider:model."""
+    if provider_override and model_override:
+        return f"{provider_override}:{model_override}"
     provider, model = _resolve_provider_model("report")
     return f"{provider}:{model}"
 
@@ -198,6 +211,8 @@ def create_llm(
     quiet: bool = False,
     json_mode: bool = True,
     stage: Literal["summary", "report"] | None = None,
+    provider_override: str | None = None,
+    model_override: str | None = None,
 ):
     """Create LLM instance based on LLM_PROVIDER (or stage-specific) env var.
 
@@ -214,8 +229,14 @@ def create_llm(
         stage: "summary" for categorization/short summary (cheaper model),
             "report" for report generation (stronger model). Uses LLM_SUMMARY_* /
             LLM_REPORT_* env vars when set; else LLM_PROVIDER/MODEL.
+        provider_override: Override provider (ollama, anthropic, mammouth).
+        model_override: Override model name. Used when provider_override is set.
     """
-    provider, model = _resolve_provider_model(stage)
+    if provider_override and model_override:
+        provider = "openai" if provider_override == "mammouth" else provider_override
+        model = model_override
+    else:
+        provider, model = _resolve_provider_model(stage)
 
     if provider == "openai":
         api_key, _ = _resolve_api_key(quiet=quiet)
@@ -230,7 +251,11 @@ def create_llm(
             )
             return _create_ollama_llm(quiet=quiet, is_fallback=True)
 
-        base_url = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL)
+        base_url = (
+            MAMMOUTH_BASE_URL
+            if provider_override == "mammouth"
+            else os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL)
+        )
         if MAMMOUTH_BASE_URL in (base_url or "").split("?")[0] and model.startswith(
             "gemini-2.5"
         ):
@@ -304,12 +329,11 @@ def _create_ollama_llm(
 ):
     """Create an Ollama LLM, starting the server if needed."""
     base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_URL)
-    if is_fallback:
-        model = OLLAMA_DEFAULT_LLM_MODEL
-    elif model_override:
-        model = model_override
-    else:
-        model = os.getenv("LLM_MODEL", OLLAMA_DEFAULT_LLM_MODEL)
+    model = (
+        OLLAMA_DEFAULT_LLM_MODEL
+        if is_fallback
+        else (model_override or os.getenv("LLM_MODEL", OLLAMA_DEFAULT_LLM_MODEL))
+    )
 
     if not _ensure_ollama_running(base_url):
         raise RuntimeError(
