@@ -147,6 +147,8 @@ def summarize_posts(
     limit: int | None = None,
     batch_size: int = BATCH_SIZE,
     quiet: bool = False,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ) -> int:
     """Summarize posts. Returns count summarized."""
     if from_json:
@@ -162,7 +164,12 @@ def summarize_posts(
         return 0
     from tqdm import tqdm
 
-    llm = create_llm(quiet=quiet)
+    llm = create_llm(
+        quiet=quiet,
+        stage="summary",
+        provider_override=llm_provider,
+        model_override=llm_model,
+    )
     total = 0
     batches = [posts[i : i + batch_size] for i in range(0, len(posts), batch_size)]
     it = tqdm(batches, desc="Summarize", unit="batch", disable=quiet)
@@ -182,6 +189,8 @@ def summarize_posts_streaming(
     limit: int | None = None,
     batch_size: int = BATCH_SIZE,
     quiet: bool = False,
+    llm_provider: str | None = None,
+    llm_model: str | None = None,
 ):
     """
     Generator variant of summarize_posts.
@@ -191,7 +200,12 @@ def summarize_posts_streaming(
     posts = list_posts_needing_summary(limit=limit)
     if not posts:
         return 0
-    llm = create_llm(quiet=quiet)
+    llm = create_llm(
+        quiet=quiet,
+        stage="summary",
+        provider_override=llm_provider,
+        model_override=llm_model,
+    )
     batches = [posts[i : i + batch_size] for i in range(0, len(posts), batch_size)]
     total_batches = len(batches)
     total = 0

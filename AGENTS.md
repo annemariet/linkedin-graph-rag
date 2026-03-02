@@ -34,6 +34,11 @@ All commands use `uv run` as the project manages dependencies with `uv`. See `CL
 | Type check | `uv run mypy linkedin_api` (non-blocking; pre-existing errors) |
 | Gradio app | `uv run python -m linkedin_api.gradio_app` |
 
+### Git & PR workflow
+
+- **Push destination**: After committing, push to the current branch (e.g. `cursor/model-selection-by-stage-0735`). If you need a specific branch for review, it will be stated in the task.
+- **PR comments**: Address review comments on the PR when asked. Fetch them with `gh api repos/annemariet/linkedin-graph-rag/pulls/<number>/comments` if needed.
+
 ### Gotchas
 
 - **mypy must pass clean** (`uv run mypy linkedin_api`). All three linters (`black`, `flake8`, `mypy`) must pass before committing.
