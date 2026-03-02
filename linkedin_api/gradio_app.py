@@ -552,7 +552,7 @@ def create_pipeline_interface():
         def prepare_run(cache):
             return (
                 _render_pipeline_status("Fetching…", 0.0),
-                gr.update(value="Running pipeline…"),
+                gr.update(),
                 cache,
                 gr.update(interactive=False),
             )
@@ -599,9 +599,7 @@ def create_pipeline_interface():
                         _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
                             step_label, progress_value
-                        ), gr.update(
-                            value="⚠️ Pipeline failed. See terminal logs for details."
-                        ), cache, gr.update(
+                        ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
                             interactive=True
                         )
                         return
@@ -612,9 +610,9 @@ def create_pipeline_interface():
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
                 _ensure_min_progress_visibility()
-                yield _render_pipeline_status("Failed.", 1.0), gr.update(
-                    value=f"⚠️ Pipeline failed: {err_msg}"
-                ), cache, gr.update(interactive=True)
+                yield _render_pipeline_status(
+                    "Failed.", 1.0
+                ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(interactive=True)
                 return
 
             progress_value, step_label = 0.75, "Generating report…"
@@ -640,7 +638,7 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
-            yield _render_pipeline_status("Done.", 1.0), result, cache, gr.update(
+            yield _render_pipeline_status(None, None), result, cache, gr.update(
                 interactive=True
             )
 
@@ -653,6 +651,7 @@ def create_pipeline_interface():
             fn=run_all,
             inputs=[period, from_cache, limit, use_full_posts, report_cache_state],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            show_progress="hidden",
         )
     return block
 
