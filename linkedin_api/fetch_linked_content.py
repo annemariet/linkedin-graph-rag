@@ -1,5 +1,5 @@
 """
-Phase 4: Fetch content from URLs linked in LinkedIn posts/comments.
+Fetch content from URLs linked in LinkedIn posts/comments.
 
 Pluggable extractor with strategy dispatch by URL type.
 
@@ -19,7 +19,7 @@ Typical pipeline
 ----------------
 1. Post content (from API or HTTP fetch) is stored in the content store.
 2. ``enrich_activities`` populates ``meta.json`` ``urls`` field.
-3. Phase 4 (this module) reads those URLs and fetches their content.
+3. This module reads those URLs and fetches their content.
 
 CLI
 ---
@@ -337,9 +337,7 @@ def _iter_posts_with_urls():
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=(
-            "Phase 4: fetch content from URLs linked in LinkedIn posts/comments."
-        ),
+        description="Fetch content from URLs linked in LinkedIn posts/comments.",
     )
     parser.add_argument(
         "--limit",

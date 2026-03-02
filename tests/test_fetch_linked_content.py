@@ -1,4 +1,4 @@
-"""Tests for fetch_linked_content module — Phase 4."""
+"""Tests for fetch_linked_content module."""
 
 from __future__ import annotations
 
