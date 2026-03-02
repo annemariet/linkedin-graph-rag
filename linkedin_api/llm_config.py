@@ -4,6 +4,10 @@ Configurable LLM and embedder factory.
 Supports OpenAI-compatible (including Mammouth), Ollama, VertexAI, and Anthropic
 providers.
 
+Per-stage model selection (LUC-51): use cheaper model for summarization/categorization,
+stronger model for report generation. Set LLM_SUMMARY_PROVIDER/MODEL and
+LLM_REPORT_PROVIDER/MODEL; fall back to LLM_PROVIDER/MODEL when unset.
+
 API key resolution order (for OpenAI-compatible providers):
 1. ``LLM_API_KEY`` environment variable
 2. macOS Keychain: ``keyring.get_password("agent-fleet-rts", "mammouth_api_key")``
@@ -19,6 +23,8 @@ Environment variables:
 
   LLM_PROVIDER         openai | ollama | vertexai | anthropic (default: openai)
   LLM_MODEL           Model name                   (default: gpt-4o)
+  LLM_SUMMARY_PROVIDER / LLM_SUMMARY_MODEL  Override for summarization stage (cheaper)
+  LLM_REPORT_PROVIDER / LLM_REPORT_MODEL    Override for report stage (stronger)
   LLM_BASE_URL        Custom base URL               (default: https://api.mammouth.ai/v1)
   LLM_API_KEY         API key (for OpenAI-compatible providers)
   ANTHROPIC_API_KEY   API key for Anthropic provider
@@ -32,6 +38,7 @@ import os
 import subprocess
 import time
 import warnings
+from typing import Literal
 
 MAMMOUTH_BASE_URL = "https://api.mammouth.ai/v1"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
@@ -160,8 +167,37 @@ def _ensure_ollama_running(base_url=None):
     return False
 
 
-def create_llm(quiet=False, json_mode=True):
-    """Create LLM instance based on LLM_PROVIDER env var.
+def _resolve_provider_model(
+    stage: Literal["summary", "report"] | None,
+) -> tuple[str, str]:
+    """Resolve provider and model for a pipeline stage. Fallback to global vars."""
+    prefix = f"LLM_{stage.upper()}_" if stage else "LLM_"
+    provider = (
+        os.getenv(f"{prefix}PROVIDER")
+        or os.getenv("LLM_PROVIDER")
+        or "openai"
+    )
+    defaults: dict[str, str] = {
+        "openai": "gpt-4o",
+        "ollama": OLLAMA_DEFAULT_LLM_MODEL,
+        "vertexai": "gemini-1.5-pro",
+        "anthropic": "claude-sonnet-4-5",
+    }
+    model = (
+        os.getenv(f"{prefix}MODEL")
+        or os.getenv("LLM_MODEL")
+        or defaults.get(provider, "gpt-4o")
+        or "gpt-4o"
+    )
+    return provider, model
+
+
+def create_llm(
+    quiet: bool = False,
+    json_mode: bool = True,
+    stage: Literal["summary", "report"] | None = None,
+):
+    """Create LLM instance based on LLM_PROVIDER (or stage-specific) env var.
 
     If provider is ``openai`` but no API key is found, falls back to Ollama
     automatically (starting the server if needed). Anthropic provider requires
@@ -173,11 +209,14 @@ def create_llm(quiet=False, json_mode=True):
             output (e.g. summarize_posts). If False, no response_format so the LLM
             can return plain text (e.g. report generation). Some providers (e.g.
             Mammouth) require the prompt to mention "json" when json_mode is True.
+        stage: "summary" for categorization/short summary (cheaper model),
+            "report" for report generation (stronger model). Uses LLM_SUMMARY_* /
+            LLM_REPORT_* env vars when set; else LLM_PROVIDER/MODEL.
     """
-    provider = os.getenv("LLM_PROVIDER", "openai")
+    provider, model = _resolve_provider_model(stage)
 
     if provider == "openai":
-        api_key, source = _resolve_api_key(quiet=quiet)
+        api_key, _ = _resolve_api_key(quiet=quiet)
 
         if not api_key:
             print(
@@ -190,8 +229,6 @@ def create_llm(quiet=False, json_mode=True):
             return _create_ollama_llm(quiet=quiet, is_fallback=True)
 
         base_url = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL)
-        model = os.getenv("LLM_MODEL", "gpt-4o")
-        # Mammouth uses its own model IDs; raw Gemini names (e.g. gemini-2.5-flash-lite) often fail
         if MAMMOUTH_BASE_URL in (base_url or "").split("?")[0] and model.startswith(
             "gemini-2.5"
         ):
@@ -218,15 +255,13 @@ def create_llm(quiet=False, json_mode=True):
             base_url=base_url,
         )
     elif provider == "ollama":
-        return _create_ollama_llm(quiet=quiet)
+        return _create_ollama_llm(quiet=quiet, model_override=model)
     elif provider == "vertexai":
         from neo4j_graphrag.llm import VertexAILLM
 
         if not quiet:
-            print(f"  LLM: VertexAI ({os.getenv('LLM_MODEL', 'gemini-1.5-pro')})")
-        return VertexAILLM(
-            model_name=os.getenv("LLM_MODEL", "gemini-1.5-pro"),
-        )
+            print(f"  LLM: VertexAI ({model})")
+        return VertexAILLM(model_name=model)
     elif provider == "anthropic":
         api_key, _ = _resolve_anthropic_api_key(quiet=quiet)
         if not api_key:
@@ -240,7 +275,6 @@ def create_llm(quiet=False, json_mode=True):
 
         from neo4j_graphrag.llm import AnthropicLLM
 
-        model = os.getenv("LLM_MODEL", "claude-sonnet-4-5")
         try:
             max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8192"))
         except ValueError:
@@ -261,15 +295,19 @@ OLLAMA_DEFAULT_LLM_MODEL = "llama3.2:3b"
 OLLAMA_DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
 
 
-def _create_ollama_llm(quiet=False, is_fallback=False):
+def _create_ollama_llm(
+    quiet: bool = False,
+    is_fallback: bool = False,
+    model_override: str | None = None,
+):
     """Create an Ollama LLM, starting the server if needed."""
     base_url = os.getenv("OLLAMA_BASE_URL", OLLAMA_DEFAULT_URL)
-    # When falling back from OpenAI, ignore LLM_MODEL (e.g. "gpt-4o") — use Ollama default
-    model = (
-        OLLAMA_DEFAULT_LLM_MODEL
-        if is_fallback
-        else os.getenv("LLM_MODEL", OLLAMA_DEFAULT_LLM_MODEL)
-    )
+    if is_fallback:
+        model = OLLAMA_DEFAULT_LLM_MODEL
+    elif model_override:
+        model = model_override
+    else:
+        model = os.getenv("LLM_MODEL", OLLAMA_DEFAULT_LLM_MODEL)
 
     if not _ensure_ollama_running(base_url):
         raise RuntimeError(

@@ -162,7 +162,7 @@ def summarize_posts(
         return 0
     from tqdm import tqdm
 
-    llm = create_llm(quiet=quiet)
+    llm = create_llm(quiet=quiet, stage="summary")
     total = 0
     batches = [posts[i : i + batch_size] for i in range(0, len(posts), batch_size)]
     it = tqdm(batches, desc="Summarize", unit="batch", disable=quiet)
@@ -191,7 +191,7 @@ def summarize_posts_streaming(
     posts = list_posts_needing_summary(limit=limit)
     if not posts:
         return 0
-    llm = create_llm(quiet=quiet)
+    llm = create_llm(quiet=quiet, stage="summary")
     batches = [posts[i : i + batch_size] for i in range(0, len(posts), batch_size)]
     total_batches = len(batches)
     total = 0

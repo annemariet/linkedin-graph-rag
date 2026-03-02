@@ -187,7 +187,7 @@ def generate_activity_report() -> str:
             cat = "other"
         by_category.setdefault(cat, []).append(m)
     try:
-        llm = create_llm(json_mode=False)
+        llm = create_llm(stage="report", json_mode=False)
         parts = []
         for cat in REPORT_CATEGORIES:
             category_metas = by_category.get(cat)
