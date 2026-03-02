@@ -136,10 +136,13 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             response = requests.get(
                 url, timeout=15, allow_redirects=True, headers=headers
             )
+            # Pattern 1: HTTP redirect resolved by requests
             if response.url != url and "lnkd.in" not in response.url:
                 return response.url
 
             soup = BeautifulSoup(response.text, "html.parser")
+
+            # Pattern 2: <meta http-equiv="refresh"> tag
             meta_refresh = soup.find("meta", attrs={"http-equiv": "refresh"})
             if meta_refresh and meta_refresh.get("content"):
                 url_match = re.search(
@@ -149,6 +152,30 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
                 )
                 if url_match:
                     return url_match.group(1)
+
+            # Pattern 3: LinkedIn interstitial page — the target URL appears
+            # in the page text (e.g. "This link will take you to … https://…")
+            _url_pat = r"https?://[^\s<>\"'{}|\\^`\[\]]+[^\s<>\"'{}|\\^`\[\].,;:!?]"
+            _skip = ("/static/", "/aero-v1/", ".ico", ".png", ".jpg", ".css", ".js")
+            for found in re.findall(_url_pat, response.text):
+                found = found.rstrip(".,;:!?)")
+                found_lower = found.lower()
+                if "linkedin.com" in found_lower or "lnkd.in" in found_lower:
+                    continue
+                if any(p in found_lower for p in _skip):
+                    continue
+                if len(found) > 15:
+                    return found
+
+            # Pattern 4: anchor links in the page
+            for link in soup.find_all("a", href=True):
+                href = str(link["href"])
+                if (
+                    href.startswith("http")
+                    and "linkedin.com" not in href
+                    and "lnkd.in" not in href
+                ):
+                    return href
 
             if response.url != url:
                 return response.url

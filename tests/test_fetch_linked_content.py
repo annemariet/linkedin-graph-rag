@@ -313,29 +313,15 @@ class TestShortUrlResolution:
 
     @pytest.mark.integration
     def test_real_lnkd_in_resolves_and_classifies(self):
-        """Live network test: a real lnkd.in URL is processed end-to-end.
-
-        Note: LinkedIn's redirect service requires authentication for some
-        short URLs, so resolution may not succeed (returns lnkd.in unchanged).
-        The test verifies the code handles both outcomes gracefully:
-        - If resolved: resolved_url points to a non-lnkd.in domain
-        - If not resolved (auth required): falls back to fetching lnkd.in
-          itself, url_type defaults to 'article', no crash
-        """
+        """Live: https://lnkd.in/erbBvi7E resolves via LinkedIn interstitial page
+        to presse.economie.gouv.fr and is classified + fetched as an article."""
         result = fetch_linked_content(
             "https://lnkd.in/erbBvi7E", resolve_redirects=True
         )
-        # Should always complete without an uncaught exception
         assert result.url == "https://lnkd.in/erbBvi7E"
-        assert result.url_type  # always set to something
-        assert result.fetched_at  # attempt was made
-
-        if result.resolved_url != "https://lnkd.in/erbBvi7E":
-            # Resolution succeeded — final domain should be classifiable
-            assert "lnkd.in" not in result.resolved_url
-        else:
-            # Resolution failed (auth required) — graceful fallback expected
-            assert result.url_type == "article"  # lnkd.in defaults to article
+        assert "presse.economie.gouv.fr" in result.resolved_url
+        assert result.url_type == "article"
+        assert result.ok
 
 
 # ---------------------------------------------------------------------------
