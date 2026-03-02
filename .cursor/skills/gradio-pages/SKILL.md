@@ -28,7 +28,8 @@ So: **split "author" and "thumbnail"** into separate code paths. Thumbnail can b
 ## Logging and Observability
 
 - Use `logging` (e.g. `logger.info`) in handlers and in shared code (fetch, sync). Configure `logging.basicConfig` with a clear format (e.g. `%(asctime)s [%(levelname)s] %(name)s: %(message)s`) so progress is visible in the **terminal** where the app is run.
-- Log at the start of slow steps (e.g. "Fetching changelog…", "Syncing N elements…") so the user sees that the app is working, not stuck.
+- Log at the start of slow steps (e.g. "Fetching changelog…", "Syncing N elements…") so you can debug from the terminal and see that work is progressing.
+- In the **UI**, prefer lightweight indicators (progress bars / spinners + short status labels like "Fetching changelog…" or "Indexing 3/10"). Do not mirror full log output into the UI; keep it minimal and user-facing.
 
 ## State and Handlers
 
