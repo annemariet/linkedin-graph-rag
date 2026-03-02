@@ -178,16 +178,20 @@ def _load_registry() -> dict[str, str]:
 
 
 def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
-    """All posts that have a non-empty summary. Returns list of metadata dicts."""
+    """All posts that have a non-empty summary. Returns list of metadata dicts with urn for content lookup."""
     out: list[dict[str, Any]] = []
     content_dir = _content_dir()
+    registry = _load_registry()
     for path in sorted(content_dir.glob("*.meta.json")):
         try:
+            stem = path.stem.removesuffix(".meta")  # hash from xyz.meta.json
+            urn = registry.get(stem)
             meta = json.loads(path.read_text(encoding="utf-8"))
             if not (meta.get("summary") or "").strip():
                 continue
             out.append(
                 {
+                    "urn": urn or "",
                     "summary": (meta.get("summary") or "").strip(),
                     "topics": meta.get("topics") or [],
                     "technologies": meta.get("technologies") or [],
