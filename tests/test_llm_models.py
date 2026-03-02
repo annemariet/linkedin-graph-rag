@@ -43,6 +43,15 @@ def test_fetch_anthropic_models_no_key(monkeypatch):
     assert result == []
 
 
+def test_fetch_all_provider_models_returns_all_keys():
+    from linkedin_api.llm_models import fetch_all_provider_models
+
+    result = fetch_all_provider_models()
+    assert set(result.keys()) == {"ollama", "anthropic", "mammouth"}
+    for v in result.values():
+        assert isinstance(v, list)
+
+
 def test_fetch_mammouth_models_no_key(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

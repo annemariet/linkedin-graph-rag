@@ -33,7 +33,7 @@ from linkedin_api.llm_config import (
     get_default_provider_model,
     get_report_model_id,
 )
-from linkedin_api.llm_models import fetch_models_for_provider
+from linkedin_api.llm_models import fetch_all_provider_models, fetch_models_for_provider
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -572,6 +572,25 @@ def create_pipeline_interface():
             sp, sm = get_default_provider_model("summary")
             rp, rm = get_default_provider_model("report")
             provider_choices = ["ollama", "anthropic", "mammouth"]
+
+            models_by_provider = fetch_all_provider_models()
+            models_by_provider_state = gr.State(value=models_by_provider)
+
+            def _choices_for(
+                d: dict[str, list[str]], provider: str, default_model: str
+            ) -> tuple[list[str], str]:
+                models = d.get(provider, [])
+                choices = models if models else [default_model]
+                value = (
+                    default_model
+                    if default_model in choices
+                    else (choices[0] if choices else "")
+                )
+                return choices, value
+
+            s_choices, s_val = _choices_for(models_by_provider, sp, sm)
+            r_choices, r_val = _choices_for(models_by_provider, rp, rm)
+
             with gr.Row():
                 with gr.Column():
                     gr.Markdown("**Summary** (categorization & short summary)")
@@ -581,8 +600,8 @@ def create_pipeline_interface():
                         label="Provider",
                     )
                     summary_model = gr.Dropdown(
-                        choices=[sm],
-                        value=sm,
+                        choices=s_choices,
+                        value=s_val,
                         label="Model",
                         allow_custom_value=True,
                     )
@@ -594,52 +613,50 @@ def create_pipeline_interface():
                         label="Provider",
                     )
                     report_model = gr.Dropdown(
-                        choices=[rm],
-                        value=rm,
+                        choices=r_choices,
+                        value=r_val,
                         label="Model",
                         allow_custom_value=True,
                     )
             refresh_models_btn = gr.Button("Refresh models", size="sm")
 
-            def refresh_summary_models(provider):
-                models = fetch_models_for_provider(provider)
-                choices = models if models else ["(Refresh to load)"]
-                return gr.update(choices=choices, value=choices[0] if choices else "")
+            def refresh_summary_models(provider, models_dict):
+                choices = models_dict.get(provider, []) or [sm]
+                value = sm if sm in choices else (choices[0] if choices else "")
+                return gr.update(choices=choices, value=value)
 
-            def refresh_report_models(provider):
-                models = fetch_models_for_provider(provider)
-                choices = models if models else ["(Refresh to load)"]
-                return gr.update(choices=choices, value=choices[0] if choices else "")
+            def refresh_report_models(provider, models_dict):
+                choices = models_dict.get(provider, []) or [rm]
+                value = rm if rm in choices else (choices[0] if choices else "")
+                return gr.update(choices=choices, value=value)
 
             summary_provider.change(
                 refresh_summary_models,
-                inputs=[summary_provider],
+                inputs=[summary_provider, models_by_provider_state],
                 outputs=[summary_model],
             )
             report_provider.change(
                 refresh_report_models,
-                inputs=[report_provider],
+                inputs=[report_provider, models_by_provider_state],
                 outputs=[report_model],
             )
 
             def refresh_all(summary_prov, report_prov):
-                s_models = fetch_models_for_provider(summary_prov)
-                r_models = fetch_models_for_provider(report_prov)
+                new_models = fetch_all_provider_models()
+                s_choices = new_models.get(summary_prov, []) or [sm]
+                r_choices = new_models.get(report_prov, []) or [rm]
+                s_val = sm if sm in s_choices else (s_choices[0] if s_choices else "")
+                r_val = rm if rm in r_choices else (r_choices[0] if r_choices else "")
                 return (
-                    gr.update(
-                        choices=s_models or ["(Refresh to load)"],
-                        value=(s_models[0] if s_models else ""),
-                    ),
-                    gr.update(
-                        choices=r_models or ["(Refresh to load)"],
-                        value=(r_models[0] if r_models else ""),
-                    ),
+                    new_models,
+                    gr.update(choices=s_choices, value=s_val),
+                    gr.update(choices=r_choices, value=r_val),
                 )
 
             refresh_models_btn.click(
                 refresh_all,
                 inputs=[summary_provider, report_provider],
-                outputs=[summary_model, report_model],
+                outputs=[models_by_provider_state, summary_model, report_model],
             )
         run_btn = gr.Button("Get latest news report", variant="primary")
         pipeline_status = gr.HTML(

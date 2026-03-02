@@ -56,24 +56,37 @@ def fetch_anthropic_models() -> list[str]:
 
 
 def fetch_mammouth_models() -> list[str]:
-    """List models from Mammouth API (OpenAI-compatible). Requires LLM_API_KEY."""
+    """List models from Mammouth API. Tries /public/models then /v1/models (OpenAI)."""
     api_key, _ = _resolve_api_key(quiet=True)
     if not api_key:
         return []
-    base_url = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
-    url = base_url + "/v1/models"
-    try:
-        req = urllib.request.Request(
-            url,
-            method="GET",
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-        items = data.get("data", [])
-        return [m.get("id", "") for m in items if m.get("id")]
-    except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
-        return []
+    base = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
+    api_root = base.removesuffix("/v1") if base.endswith("/v1") else base
+
+    def _ids_from(items: list) -> list[str]:
+        return [
+            str(m.get("id") or m.get("model_id") or m.get("name", ""))
+            for m in items
+            if isinstance(m, dict) and (m.get("id") or m.get("model_id") or m.get("name"))
+        ]
+
+    for url in [f"{api_root}/public/models", f"{base}/models"]:
+        try:
+            req = urllib.request.Request(
+                url,
+                method="GET",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            items = data.get("data", data.get("models", data.get("list", [])))
+            if isinstance(items, list) and items:
+                ids = _ids_from(items)
+                if ids:
+                    return ids
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
+            continue
+    return []
 
 
 def fetch_models_for_provider(provider: str) -> list[str]:
@@ -85,3 +98,22 @@ def fetch_models_for_provider(provider: str) -> list[str]:
     if provider == "mammouth":
         return fetch_mammouth_models()
     return []
+
+
+def fetch_all_provider_models() -> dict[str, list[str]]:
+    """Fetch models for all providers in parallel. Returns {provider: [models]}."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    providers = ["ollama", "anthropic", "mammouth"]
+    result: dict[str, list[str]] = {}
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futures = {ex.submit(fetch_models_for_provider, p): p for p in providers}
+        for fut in as_completed(futures):
+            provider = futures[fut]
+            try:
+                models = fut.result()
+                result[provider] = models if models else []
+            except Exception:
+                result[provider] = []
+    return result
