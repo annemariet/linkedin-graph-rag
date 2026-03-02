@@ -121,7 +121,6 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
         Final URL after following redirects, or original URL if resolution fails
     """
     import requests
-    from bs4 import BeautifulSoup
 
     headers = {
         "User-Agent": (
