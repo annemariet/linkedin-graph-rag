@@ -6,6 +6,7 @@ from time import time
 from unittest.mock import MagicMock, patch
 
 from linkedin_api.utils.changelog import (
+    API_MAX_BATCH_SIZE,
     BASE_URL,
     fetch_changelog_data,
     get_last_processed_timestamp,
@@ -115,6 +116,23 @@ class TestFetchChangelogData:
         result = fetch_changelog_data()
 
         assert result == []
+
+    @patch("linkedin_api.utils.changelog.get_access_token")
+    @patch("linkedin_api.utils.changelog.build_linkedin_session")
+    def test_batch_size_enforced_to_api_max(self, mock_build_session, mock_get_token):
+        """Test that batch_size below 50 is enforced to 50 to avoid rate limiting."""
+        mock_get_token.return_value = "test_token"
+        mock_session = MagicMock()
+        mock_build_session.return_value = mock_session
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"elements": [], "paging": {"links": []}}
+        mock_session.get.return_value = mock_response
+
+        fetch_changelog_data(batch_size=5)
+
+        call_args = mock_session.get.call_args
+        assert call_args.kwargs["params"]["count"] == API_MAX_BATCH_SIZE
 
 
 class TestBaseUrl:
