@@ -86,7 +86,6 @@ def get_max_processed_at(elements: List[dict]) -> Optional[int]:
 def fetch_changelog_data(
     resource_filter: Optional[List[str]] = None,
     filter_func: Optional[Callable[[dict], bool]] = None,
-    batch_size: int = API_MAX_BATCH_SIZE,
     start_time: Optional[int] = None,
     verbose: bool = True,
 ) -> List[dict]:
@@ -98,8 +97,6 @@ def fetch_changelog_data(
                         Elements are included if any filter string is in resourceName.
         filter_func: Optional custom filter function that takes an element dict
                     and returns True to include it.
-        batch_size: Elements per API request (default: 50, API max). Values below 50
-                    cause unnecessary calls and rate limiting; enforced to >= 50.
         start_time: Optional start time in epoch milliseconds. Returns events
                    created after this time. LinkedIn keeps data for 28 days.
                    If None, automatically loads from .last_run file, or falls back
@@ -109,7 +106,6 @@ def fetch_changelog_data(
     Returns:
         List of changelog elements. Empty list if token is missing or on error.
     """
-    batch_size = max(API_MAX_BATCH_SIZE, batch_size)
     access_token = get_access_token()
     if not access_token:
         if verbose:
@@ -148,7 +144,7 @@ def fetch_changelog_data(
             params = {
                 "q": "memberAndApplication",
                 "start": start,
-                "count": batch_size,
+                "count": API_MAX_BATCH_SIZE,
             }
 
             if start_time:
@@ -217,7 +213,7 @@ def fetch_changelog_data(
             if not next_link:
                 break
 
-            start += batch_size
+            start += API_MAX_BATCH_SIZE
 
         except TokenExpiredError:
             raise
