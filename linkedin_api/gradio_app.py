@@ -129,18 +129,18 @@ def _summarize_batch(
 
 
 def _format_other_section(metas: list[dict], use_full_posts: bool = True) -> str:
-    """Format 'other' category as summary or full content + link per post (no LLM)."""
+    """Format 'other' category as summary + link per post (no LLM). Use full content only when post is shorter than summary."""
     lines = []
     for m in metas:
+        summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
         if use_full_posts and m.get("urn"):
             content = load_content(m["urn"])
-            text = (
-                _truncate(content, REPORT_MAX_FULL_POST_CHARS)
-                if content
-                else _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-            )
+            if content and len(content) <= len(m["summary"]):
+                text = content
+            else:
+                text = summary
         else:
-            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+            text = summary
         url = (m.get("post_url") or "").strip()
         if url:
             lines.append(f"- {text} — [post]({url})")
