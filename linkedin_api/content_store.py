@@ -121,6 +121,18 @@ def save_metadata(
     return path
 
 
+def update_urls_metadata(urn: str, urls: list[str]) -> Path:
+    """Update only the ``urls`` field in metadata, preserving all other fields.
+
+    Creates a minimal metadata record if none exists yet.
+    """
+    meta = dict(load_metadata(urn) or {})
+    meta["urls"] = urls
+    path = _meta_path(urn)
+    path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
+    return path
+
+
 def update_summary_metadata(
     urn: str,
     summary: str,
