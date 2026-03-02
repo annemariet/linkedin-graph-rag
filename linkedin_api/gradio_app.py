@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import list_summarized_metadata
-from linkedin_api.llm_config import create_embedder, create_llm
+from linkedin_api.llm_config import create_embedder, create_llm, get_report_model_id
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -127,43 +127,54 @@ def _format_other_section(metas: list[dict]) -> str:
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
-def _report_signature() -> tuple[int, tuple[str, ...]] | None:
-    """Signature of the post set used for the report. None if no posts. Used for cache invalidation."""
+def _report_signature() -> tuple[str, int, tuple[str, ...]] | None:
+    """Signature of post set + report model. None if no posts. Used for cache invalidation."""
     all_metas = list_summarized_metadata()
     if not all_metas:
         return None
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
-    return (len(all_metas), tuple((m.get("summarized_at") or "") for m in metas))
+    model_id = get_report_model_id()
+    return (
+        model_id,
+        len(all_metas),
+        tuple((m.get("summarized_at") or "") for m in metas),
+    )
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
 
 
-def _load_report_cache() -> tuple[str, tuple[int, tuple[str, ...]]] | None:
+def _load_report_cache() -> tuple[str, tuple[str, int, tuple[str, ...]]] | None:
     """Load cached report from disk. Returns (report, signature) or None."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        model_id = data.get("model_id", "legacy")
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (n, at))
+        return (report, (model_id, n, at))
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...]]) -> None:
+def _save_report_cache(report: str, sig: tuple[str, int, tuple[str, ...]]) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     try:
         path.write_text(
             json.dumps(
-                {"n": sig[0], "summarized_at": list(sig[1]), "report": report},
+                {
+                    "model_id": sig[0],
+                    "n": sig[1],
+                    "summarized_at": list(sig[2]),
+                    "report": report,
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",

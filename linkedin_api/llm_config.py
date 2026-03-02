@@ -172,11 +172,7 @@ def _resolve_provider_model(
 ) -> tuple[str, str]:
     """Resolve provider and model for a pipeline stage. Fallback to global vars."""
     prefix = f"LLM_{stage.upper()}_" if stage else "LLM_"
-    provider = (
-        os.getenv(f"{prefix}PROVIDER")
-        or os.getenv("LLM_PROVIDER")
-        or "openai"
-    )
+    provider = os.getenv(f"{prefix}PROVIDER") or os.getenv("LLM_PROVIDER") or "openai"
     defaults: dict[str, str] = {
         "openai": "gpt-4o",
         "ollama": OLLAMA_DEFAULT_LLM_MODEL,
@@ -190,6 +186,12 @@ def _resolve_provider_model(
         or "gpt-4o"
     )
     return provider, model
+
+
+def get_report_model_id() -> str:
+    """Report stage model identifier for cache invalidation. Format: provider:model."""
+    provider, model = _resolve_provider_model("report")
+    return f"{provider}:{model}"
 
 
 def create_llm(
