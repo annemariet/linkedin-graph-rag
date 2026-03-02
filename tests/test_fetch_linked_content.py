@@ -161,6 +161,184 @@ class TestFetchLinkedContent:
 
 
 # ---------------------------------------------------------------------------
+# Short URL resolution → classification
+# ---------------------------------------------------------------------------
+
+
+class TestShortUrlResolution:
+    """Verify that URL type classification uses the *resolved* URL, not the
+    raw lnkd.in short URL (which has no classifiable domain)."""
+
+    def _mock_html(self, title: str = "Title", body: str = "Body") -> str:
+        return (
+            f"<html><head>"
+            f'<meta property="og:title" content="{title}"/>'
+            f"</head><body><p>{body}</p></body></html>"
+        )
+
+    def test_lnkd_in_resolves_before_categorization(self):
+        """resolve_redirect is called with the original lnkd.in URL."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://github.com/user/repo",
+            ) as mock_resolve,
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("Repo")
+            )
+            fetch_linked_content("https://lnkd.in/erbBvi7E", resolve_redirects=True)
+
+        mock_resolve.assert_called_once_with("https://lnkd.in/erbBvi7E")
+
+    def test_lnkd_in_to_github_classified_as_repository(self):
+        """lnkd.in → github.com must be dispatched as 'repository'."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://github.com/user/repo",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("Some Repo")
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "repository"
+        assert result.resolved_url == "https://github.com/user/repo"
+        # metadata-only strategy → no body content
+        assert result.content == ""
+        assert result.title == "Some Repo"
+
+    def test_lnkd_in_to_youtube_classified_as_video(self):
+        """lnkd.in → youtube.com must be dispatched as 'video' (metadata-only)."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("My Video")
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "video"
+        assert result.content == ""  # metadata-only
+        assert result.title == "My Video"
+
+    def test_lnkd_in_to_medium_article_classified_as_article(self):
+        """lnkd.in → medium.com must be classified as 'article' and body-fetched."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://medium.com/@author/some-article-abc123",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                text=self._mock_html("Great Article", "Article body here"),
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "article"
+        assert "Article body here" in result.content
+
+    def test_lnkd_in_to_image_is_skipped(self):
+        """lnkd.in resolving to an image URL should be skipped without fetching."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://example.com/diagram.png",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        mock_get.assert_not_called()
+        assert "skipped" in result.error
+        assert result.ok is False
+
+    def test_failed_redirect_falls_back_gracefully(self):
+        """If resolve_redirect returns the original lnkd.in URL (resolution
+        failed), fetch_linked_content should still attempt a fetch rather
+        than crash — lnkd.in has no special type so it defaults to 'article'."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://lnkd.in/erbBvi7E",  # unchanged = failed
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(status_code=200, text="<html></html>")
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        # Should attempt fetch (not crash), resolved_url stays at lnkd.in
+        assert result.resolved_url == "https://lnkd.in/erbBvi7E"
+        assert result.url_type == "article"  # default for unknown domain
+
+    def test_resolved_url_stored_in_result(self):
+        """result.resolved_url must reflect the final URL, not the short one."""
+        final = "https://arxiv.org/abs/2401.00000"
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value=final,
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("Paper")
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url == "https://lnkd.in/erbBvi7E"  # original preserved
+        assert result.resolved_url == final
+
+    @pytest.mark.integration
+    def test_real_lnkd_in_resolves_and_classifies(self):
+        """Live network test: a real lnkd.in URL is processed end-to-end.
+
+        Note: LinkedIn's redirect service requires authentication for some
+        short URLs, so resolution may not succeed (returns lnkd.in unchanged).
+        The test verifies the code handles both outcomes gracefully:
+        - If resolved: resolved_url points to a non-lnkd.in domain
+        - If not resolved (auth required): falls back to fetching lnkd.in
+          itself, url_type defaults to 'article', no crash
+        """
+        result = fetch_linked_content(
+            "https://lnkd.in/erbBvi7E", resolve_redirects=True
+        )
+        # Should always complete without an uncaught exception
+        assert result.url == "https://lnkd.in/erbBvi7E"
+        assert result.url_type  # always set to something
+        assert result.fetched_at  # attempt was made
+
+        if result.resolved_url != "https://lnkd.in/erbBvi7E":
+            # Resolution succeeded — final domain should be classifiable
+            assert "lnkd.in" not in result.resolved_url
+        else:
+            # Resolution failed (auth required) — graceful fallback expected
+            assert result.url_type == "article"  # lnkd.in defaults to article
+
+
+# ---------------------------------------------------------------------------
 # Resource store
 # ---------------------------------------------------------------------------
 
