@@ -84,8 +84,9 @@ class TestResolveRedirect:
         )
 
     @patch("requests.get")
-    def test_lnkd_in_filters_linkedin_and_static_assets(self, mock_get):
-        """LinkedIn static assets and internal URLs are skipped; the external URL is returned."""
+    def test_lnkd_in_ignores_urls_in_html_attributes(self, mock_get):
+        """URLs in HTML attributes (stylesheet href, favicon) are not visible
+        to get_text() and are therefore never returned."""
         page = (
             "<html><head>"
             '<link rel="stylesheet" href="https://static.licdn.com/aero-v1/sc/h/abc.css"/>'
@@ -99,7 +100,6 @@ class TestResolveRedirect:
         result = resolve_redirect("https://lnkd.in/eXYZabc")
 
         assert result == "https://github.com/user/interesting-repo"
-        assert "static.licdn.com" not in result
 
     @patch("requests.get")
     def test_lnkd_in_returns_original_when_no_url_found(self, mock_get):

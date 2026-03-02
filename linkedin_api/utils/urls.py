@@ -121,6 +121,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
         Final URL after following redirects, or original URL if resolution fails
     """
     import requests
+    from bs4 import BeautifulSoup
 
     headers = {
         "User-Agent": (
@@ -136,17 +137,16 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
                 url, timeout=15, allow_redirects=True, headers=headers
             )
             # LinkedIn shows a security interstitial with the target URL in
-            # the page body: "This link will take you to… https://…"
-            _url_pat = r"https?://[^\s<>\"'{}|\\^`\[\]]+[^\s<>\"'{}|\\^`\[\].,;:!?]"
-            _skip = ("/static/", "/aero-v1/", ".ico", ".png", ".jpg", ".css", ".js")
-            for found in re.findall(_url_pat, response.text):
+            # the page text: "This link will take you to… https://…"
+            # Parsing with BeautifulSoup and searching get_text() naturally
+            # excludes URLs buried in HTML attributes (script src, link href…).
+            soup = BeautifulSoup(response.text, "html.parser")
+            for found in re.findall(r"https?://\S+", soup.get_text()):
                 found = found.rstrip(".,;:!?)")
-                found_lower = found.lower()
-                if "linkedin.com" in found_lower or "lnkd.in" in found_lower:
-                    continue
-                if any(p in found_lower for p in _skip):
-                    continue
-                if len(found) > 15:
+                if (
+                    "linkedin.com" not in found.lower()
+                    and "lnkd.in" not in found.lower()
+                ):
                     return found
         except Exception:
             pass
