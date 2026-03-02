@@ -8,9 +8,9 @@ Python client for LinkedIn's Portability API — fetches activity, builds a Neo4
 
 ### Cursor skills for this project
 
-- **`github-use`** (`.cursor/skills/github-use/SKILL.md`): Git and GitHub workflow – use feature branches and PRs, run the same steps as CI (format, lint, tests) before committing, use small focused gitmoji-style commits, and never force-push.
+- **`github-use`** (`.cursor/skills/github-use/SKILL.md`): Git and GitHub workflow – feature branches and PRs only, small focused gitmoji-style commits, and always run format, lint, and tests before committing (never force-push).
 - **`linear-use`** (`.cursor/skills/linear-use/SKILL.md`): Linear workflow – include ticket IDs in branches and PRs, keep ticket status in sync (in progress → in review → done), and start each ticket with a short implementation plan posted to Linear.
-- **`gradio-pages`** (`projects/linkedin/.cursor/skills/gradio-pages/SKILL.md`): Gradio UI design – never block the first paint, keep one expensive operation per explicit action, use `gr.State` for UI state, and add logging so long-running steps stay observable.
+- **`gradio-pages`** (`.cursor/skills/gradio-pages/SKILL.md`): Gradio UI design – never block the first paint, keep one expensive operation per explicit action, use `gr.State` for UI state, and add logging so long-running steps stay observable.
 
 ### Running services
 
