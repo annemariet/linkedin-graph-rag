@@ -69,6 +69,13 @@ CATEGORY_LABELS = {
     "other": "Other (uncategorized — review to improve categorization)",
 }
 
+REPORT_MODE_PER_CATEGORY = "per_category"
+REPORT_MODE_SINGLE_PASS = "single_pass"
+REPORT_MODE_CHOICES = [
+    ("Per category summary", REPORT_MODE_PER_CATEGORY),
+    ("Single pass (all posts)", REPORT_MODE_SINGLE_PASS),
+]
+
 
 def _truncate(s: str, max_len: int) -> str:
     if len(s) <= max_len:
@@ -150,9 +157,50 @@ def _format_other_section(metas: list[dict], use_full_posts: bool = True) -> str
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
+def _format_post_for_single_pass(m: dict, use_full_posts: bool = True) -> str:
+    """Format post for single-pass prompt: link + context."""
+    url = (m.get("post_url") or "").strip()
+    if use_full_posts and m.get("urn"):
+        content = load_content(m["urn"])
+        text = (
+            _truncate(content, REPORT_MAX_FULL_POST_CHARS) if content else m["summary"]
+        )
+    else:
+        text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+    parts = [text]
+    if m.get("topics"):
+        parts.append(f"Topics: {', '.join(m['topics'])}")
+    if m.get("technologies"):
+        parts.append(f"Tech: {', '.join(m['technologies'])}")
+    if url:
+        return f"- [{url}]: {' | '.join(parts)}"
+    return f"- (no link): {' | '.join(parts)}"
+
+
+_SINGLE_PASS_SYSTEM = """You are a concise analyst. The user shares LinkedIn posts (each with URL and summary).
+
+Produce a markdown report with:
+1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,
+   Papers & research, Experiments & benchmarks, Job & career, Other.
+2. For each section: a brief synthesis (2-4 sentences), then bullet points with **links**
+   to the most important/relevant posts in that category.
+3. Use the original post URLs when linking. Format links as [description](url).
+4. Output valid markdown only. No preamble."""
+
+
+def _generate_single_pass_report(metas: list[dict], use_full_posts: bool = True) -> str:
+    """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
+    blocks = "\n\n".join(_format_post_for_single_pass(m, use_full_posts) for m in metas)
+    prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
+    llm = create_llm(json_mode=False)
+    response = llm.invoke(prompt, system_instruction=_SINGLE_PASS_SYSTEM)
+    return (response.content if hasattr(response, "content") else str(response)).strip()
+
+
 def _report_signature(
+    report_mode: str = REPORT_MODE_PER_CATEGORY,
     use_full_posts: bool = True,
-) -> tuple[int, tuple[str, ...], bool] | None:
+) -> tuple[int, tuple[str, ...], str, bool] | None:
     """Signature of the post set used for the report. None if no posts. Used for cache invalidation."""
     all_metas = list_summarized_metadata()
     if not all_metas:
@@ -162,6 +210,7 @@ def _report_signature(
     return (
         len(all_metas),
         tuple((m.get("summarized_at") or "") for m in metas),
+        report_mode,
         use_full_posts,
     )
 
@@ -170,8 +219,9 @@ _REPORT_CACHE_FILE = "report_cache.json"
 
 
 def _load_report_cache(
+    report_mode: str,
     use_full_posts: bool,
-) -> tuple[str, tuple[int, tuple[str, ...], bool]] | None:
+) -> tuple[str, tuple[int, tuple[str, ...], str, bool]] | None:
     """Load cached report from disk. Returns (report, signature) or None if mode mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
@@ -180,18 +230,21 @@ def _load_report_cache(
         data = json.loads(path.read_text(encoding="utf-8"))
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
+        cached_mode = data.get("report_mode", REPORT_MODE_PER_CATEGORY)
         cached_full = data.get("use_full_posts", True)
-        if cached_full != use_full_posts:
+        if cached_mode != report_mode or cached_full != use_full_posts:
             return None
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (n, at, use_full_posts))
+        return (report, (n, at, cached_mode, cached_full))
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...], bool]) -> None:
+def _save_report_cache(
+    report: str, sig: tuple[int, tuple[str, ...], str, bool]
+) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     try:
@@ -200,7 +253,8 @@ def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...], bool]) -> N
                 {
                     "n": sig[0],
                     "summarized_at": list(sig[1]),
-                    "use_full_posts": sig[2],
+                    "report_mode": sig[2],
+                    "use_full_posts": sig[3],
                     "report": report,
                 },
                 ensure_ascii=False,
@@ -211,14 +265,24 @@ def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...], bool]) -> N
         pass
 
 
-def generate_activity_report(use_full_posts: bool = True) -> str:
-    """Build report by category. Batches by char limit per category; 'other' is summaries + links only."""
+def generate_activity_report(
+    report_mode: str = REPORT_MODE_PER_CATEGORY,
+    use_full_posts: bool = True,
+) -> str:
+    """Build report. Per-category: batches per category; 'other' is summaries+links.
+    Single-pass: one LLM call with all links."""
     setup_gcp_credentials()
     all_metas = list_summarized_metadata()
     if not all_metas:
         return "No summarized posts found. Run the pipeline first (collect → enrich → summarize)."
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
+    if report_mode == REPORT_MODE_SINGLE_PASS:
+        try:
+            return _generate_single_pass_report(metas, use_full_posts)
+        except Exception as e:
+            logger.exception("Single-pass report failed")
+            return _report_error_message(e)
     by_category: dict[str, list[dict]] = {}
     for m in metas:
         cat = (m.get("category") or "").strip().lower() or "other"
@@ -537,10 +601,16 @@ def create_pipeline_interface():
                 info="No LinkedIn API call; use only previously fetched data.",
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
+            report_mode = gr.Dropdown(
+                choices=REPORT_MODE_CHOICES,
+                value=REPORT_MODE_PER_CATEGORY,
+                label="Report mode",
+                info="Per category: one LLM call per category. Single pass: one call with all links.",
+            )
             use_full_posts = gr.Checkbox(
                 value=True,
                 label="Use full post content",
-                info="Default: use full posts. Uncheck to use short summaries (legacy).",
+                info="Use full text when available; else short summaries.",
             )
         run_btn = gr.Button("Get latest news report", variant="primary")
         pipeline_status = gr.HTML(
@@ -565,6 +635,7 @@ def create_pipeline_interface():
             last: str,
             from_cache: bool,
             lim,
+            mode: str,
             use_full: bool,
             cache,
         ):
@@ -630,8 +701,8 @@ def create_pipeline_interface():
             yield _render_pipeline_status(
                 step_label, progress_value
             ), gr.update(), cache, gr.update(interactive=False)
-            sig = _report_signature(use_full)
-            disk = _load_report_cache(use_full)
+            sig = _report_signature(report_mode=mode, use_full_posts=use_full)
+            disk = _load_report_cache(report_mode=mode, use_full_posts=use_full)
             if disk is not None and disk[1] == sig:
                 result = disk[0]
                 logger.info("Report cache hit (disk)")
@@ -641,7 +712,9 @@ def create_pipeline_interface():
                 logger.info("Report cache hit (session)")
             else:
                 try:
-                    result = generate_activity_report(use_full_posts=use_full)
+                    result = generate_activity_report(
+                        report_mode=mode, use_full_posts=use_full
+                    )
                     cache = (result, sig) if sig else None
                     if sig is not None:
                         _save_report_cache(result, sig)
@@ -660,7 +733,14 @@ def create_pipeline_interface():
             queue=False,
         ).then(
             fn=run_all,
-            inputs=[period, from_cache, limit, use_full_posts, report_cache_state],
+            inputs=[
+                period,
+                from_cache,
+                limit,
+                report_mode,
+                use_full_posts,
+                report_cache_state,
+            ],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
             show_progress="hidden",
         )
