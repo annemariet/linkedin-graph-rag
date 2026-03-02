@@ -525,7 +525,7 @@ def create_pipeline_interface():
         )
         with gr.Row():
             period = gr.Dropdown(
-                choices=["7d", "14d", "30d", "1d", "2d", "1w", "2w", "1m"],
+                choices=["1d", "2d", "7d", "14d", "30d", "1w", "2w", "1m"],
                 value="7d",
                 label="Period",
                 allow_custom_value=True,
@@ -574,7 +574,8 @@ def create_pipeline_interface():
                 from_cache,
                 lim,
             )
-            if _parse_last(last or "") is None:
+            last_clean = (last or "").strip()
+            if _parse_last(last_clean) is None:
                 err = f"Invalid period '{last}'. {PERIOD_SYNTAX}"
                 yield _render_pipeline_status(
                     "Invalid period", 0.0
@@ -597,7 +598,7 @@ def create_pipeline_interface():
             step_label = "Fetching…"
             try:
                 for chunk in run_pipeline_ui_streaming(
-                    last=last,
+                    last=last_clean,
                     from_cache=from_cache,
                     limit=lim_int,
                 ):
