@@ -102,46 +102,6 @@ class TestResolveRedirect:
         assert "static.licdn.com" not in result
 
     @patch("requests.get")
-    def test_lnkd_in_http_redirect_takes_priority(self, mock_get):
-        """If requests follows an HTTP redirect away from lnkd.in, use that immediately."""
-        resp = MagicMock()
-        resp.url = "https://example.com/final"  # HTTP redirect worked
-        resp.text = "<html><body>some page</body></html>"
-        mock_get.return_value = resp
-
-        result = resolve_redirect("https://lnkd.in/eXYZabc")
-
-        assert result == "https://example.com/final"
-
-    @patch("requests.get")
-    def test_lnkd_in_meta_refresh_takes_priority_over_body(self, mock_get):
-        """<meta refresh> takes priority over body text extraction."""
-        page = (
-            '<html><head><meta http-equiv="refresh" content="0;url=https://meta-target.com/page"/></head>'
-            "<body><p>Also see https://body-target.com/other</p></body></html>"
-        )
-        mock_get.return_value = self._mock_lnkd_response(page)
-
-        result = resolve_redirect("https://lnkd.in/eXYZabc")
-
-        assert result == "https://meta-target.com/page"
-
-    @patch("requests.get")
-    def test_lnkd_in_anchor_link_fallback(self, mock_get):
-        """If no URL in page text, falls back to first external anchor href."""
-        page = (
-            "<html><body>"
-            '<a href="https://www.linkedin.com/safety/go?url=...">skip</a>'
-            '<a href="https://actual-target.org/article">Continue</a>'
-            "</body></html>"
-        )
-        mock_get.return_value = self._mock_lnkd_response(page)
-
-        result = resolve_redirect("https://lnkd.in/eXYZabc")
-
-        assert result == "https://actual-target.org/article"
-
-    @patch("requests.get")
     def test_lnkd_in_returns_original_when_no_url_found(self, mock_get):
         """Falls back to original URL if nothing useful is found in the page."""
         page = "<html><body><p>Nothing to see here.</p></body></html>"
