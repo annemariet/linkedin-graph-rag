@@ -27,7 +27,13 @@ if TYPE_CHECKING:
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import list_summarized_metadata, load_content
-from linkedin_api.llm_config import create_embedder, create_llm
+from linkedin_api.llm_config import (
+    create_embedder,
+    create_llm,
+    get_default_provider_model,
+    get_report_model_id,
+)
+from linkedin_api.llm_models import fetch_models_for_provider
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -188,11 +194,21 @@ Produce a markdown report with:
 4. Output valid markdown only. No preamble."""
 
 
-def _generate_single_pass_report(metas: list[dict], use_full_posts: bool = True) -> str:
+def _generate_single_pass_report(
+    metas: list[dict],
+    use_full_posts: bool = True,
+    report_provider: str | None = None,
+    report_model: str | None = None,
+) -> str:
     """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
     blocks = "\n\n".join(_format_post_for_single_pass(m, use_full_posts) for m in metas)
     prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
-    llm = create_llm(json_mode=False)
+    llm = create_llm(
+        stage="report",
+        json_mode=False,
+        provider_override=report_provider,
+        model_override=report_model,
+    )
     response = llm.invoke(prompt, system_instruction=_SINGLE_PASS_SYSTEM)
     return (response.content if hasattr(response, "content") else str(response)).strip()
 
@@ -200,14 +216,21 @@ def _generate_single_pass_report(metas: list[dict], use_full_posts: bool = True)
 def _report_signature(
     report_mode: str = REPORT_MODE_PER_CATEGORY,
     use_full_posts: bool = True,
-) -> tuple[int, tuple[str, ...], str, bool] | None:
-    """Signature of the post set used for the report. None if no posts. Used for cache invalidation."""
+    report_provider: str | None = None,
+    report_model: str | None = None,
+) -> tuple[str, int, tuple[str, ...], str, bool] | None:
+    """Signature of post set + report model + report mode + use_full_posts. None if no posts."""
     all_metas = list_summarized_metadata()
     if not all_metas:
         return None
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
+    model_id = get_report_model_id(
+        provider_override=report_provider,
+        model_override=report_model,
+    )
     return (
+        model_id,
         len(all_metas),
         tuple((m.get("summarized_at") or "") for m in metas),
         report_mode,
@@ -221,13 +244,14 @@ _REPORT_CACHE_FILE = "report_cache.json"
 def _load_report_cache(
     report_mode: str,
     use_full_posts: bool,
-) -> tuple[str, tuple[int, tuple[str, ...], str, bool]] | None:
-    """Load cached report from disk. Returns (report, signature) or None if mode mismatch."""
+) -> tuple[str, tuple[str, int, tuple[str, ...], str, bool]] | None:
+    """Load cached report from disk. Returns (report, signature) or None if params mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        model_id = data.get("model_id", "legacy")
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
         cached_mode = data.get("report_mode", REPORT_MODE_PER_CATEGORY)
@@ -237,13 +261,13 @@ def _load_report_cache(
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (n, at, cached_mode, cached_full))
+        return (report, (model_id, n, at, cached_mode, cached_full))
     except (json.JSONDecodeError, OSError):
         return None
 
 
 def _save_report_cache(
-    report: str, sig: tuple[int, tuple[str, ...], str, bool]
+    report: str, sig: tuple[str, int, tuple[str, ...], str, bool]
 ) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
@@ -251,10 +275,11 @@ def _save_report_cache(
         path.write_text(
             json.dumps(
                 {
-                    "n": sig[0],
-                    "summarized_at": list(sig[1]),
-                    "report_mode": sig[2],
-                    "use_full_posts": sig[3],
+                    "model_id": sig[0],
+                    "n": sig[1],
+                    "summarized_at": list(sig[2]),
+                    "report_mode": sig[3],
+                    "use_full_posts": sig[4],
                     "report": report,
                 },
                 ensure_ascii=False,
@@ -268,6 +293,8 @@ def _save_report_cache(
 def generate_activity_report(
     report_mode: str = REPORT_MODE_PER_CATEGORY,
     use_full_posts: bool = True,
+    report_provider: str | None = None,
+    report_model: str | None = None,
 ) -> str:
     """Build report. Per-category: batches per category; 'other' is summaries+links.
     Single-pass: one LLM call with all links."""
@@ -279,7 +306,12 @@ def generate_activity_report(
     metas = all_metas[:REPORT_MAX_POSTS]
     if report_mode == REPORT_MODE_SINGLE_PASS:
         try:
-            return _generate_single_pass_report(metas, use_full_posts)
+            return _generate_single_pass_report(
+                metas,
+                use_full_posts,
+                report_provider=report_provider,
+                report_model=report_model,
+            )
         except Exception as e:
             logger.exception("Single-pass report failed")
             return _report_error_message(e)
@@ -290,7 +322,12 @@ def generate_activity_report(
             cat = "other"
         by_category.setdefault(cat, []).append(m)
     try:
-        llm = create_llm(json_mode=False)
+        llm = create_llm(
+            stage="report",
+            json_mode=False,
+            provider_override=report_provider,
+            model_override=report_model,
+        )
         parts = []
         for cat in REPORT_CATEGORIES:
             category_metas = by_category.get(cat)
@@ -605,12 +642,84 @@ def create_pipeline_interface():
                 choices=REPORT_MODE_CHOICES,
                 value=REPORT_MODE_PER_CATEGORY,
                 label="Report mode",
-                info="Per category: one LLM call per category. Single pass: one call with all links.",
             )
             use_full_posts = gr.Checkbox(
                 value=True,
                 label="Use full post content",
                 info="Use full text when available; else short summaries.",
+            )
+        with gr.Accordion("Model selection", open=False):
+            sp, sm = get_default_provider_model("summary")
+            rp, rm = get_default_provider_model("report")
+            provider_choices = ["ollama", "anthropic", "mammouth"]
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("**Summary** (categorization & short summary)")
+                    summary_provider = gr.Dropdown(
+                        choices=provider_choices,
+                        value=sp,
+                        label="Provider",
+                    )
+                    summary_model = gr.Dropdown(
+                        choices=[sm],
+                        value=sm,
+                        label="Model",
+                        allow_custom_value=True,
+                    )
+                with gr.Column():
+                    gr.Markdown("**Report** (batch summaries & final report)")
+                    report_provider = gr.Dropdown(
+                        choices=provider_choices,
+                        value=rp,
+                        label="Provider",
+                    )
+                    report_model = gr.Dropdown(
+                        choices=[rm],
+                        value=rm,
+                        label="Model",
+                        allow_custom_value=True,
+                    )
+            refresh_models_btn = gr.Button("Refresh models", size="sm")
+
+            def refresh_summary_models(provider):
+                models = fetch_models_for_provider(provider)
+                choices = models if models else ["(Refresh to load)"]
+                return gr.update(choices=choices, value=choices[0] if choices else "")
+
+            def refresh_report_models(provider):
+                models = fetch_models_for_provider(provider)
+                choices = models if models else ["(Refresh to load)"]
+                return gr.update(choices=choices, value=choices[0] if choices else "")
+
+            summary_provider.change(
+                refresh_summary_models,
+                inputs=[summary_provider],
+                outputs=[summary_model],
+            )
+            report_provider.change(
+                refresh_report_models,
+                inputs=[report_provider],
+                outputs=[report_model],
+            )
+
+            def refresh_all(summary_prov, report_prov):
+                s_models = fetch_models_for_provider(summary_prov)
+                r_models = fetch_models_for_provider(report_prov)
+                return (
+                    gr.update(
+                        choices=s_models or ["(Refresh to load)"],
+                        value=(s_models[0] if s_models else ""),
+                    ),
+                    gr.update(
+                        choices=r_models or ["(Refresh to load)"],
+                        value=(r_models[0] if r_models else ""),
+                    ),
+                )
+
+            refresh_models_btn.click(
+                refresh_all,
+                inputs=[summary_provider, report_provider],
+                outputs=[summary_model, report_model],
             )
         run_btn = gr.Button("Get latest news report", variant="primary")
         pipeline_status = gr.HTML(
@@ -637,6 +746,10 @@ def create_pipeline_interface():
             lim,
             mode: str,
             use_full: bool,
+            sum_prov,
+            sum_mod,
+            rep_prov,
+            rep_mod,
             cache,
         ):
             logger.info(
@@ -672,6 +785,8 @@ def create_pipeline_interface():
                     last=last_clean,
                     from_cache=from_cache,
                     limit=lim_int,
+                    summary_provider=sum_prov or None,
+                    summary_model=sum_mod or None,
                 ):
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
@@ -701,7 +816,12 @@ def create_pipeline_interface():
             yield _render_pipeline_status(
                 step_label, progress_value
             ), gr.update(), cache, gr.update(interactive=False)
-            sig = _report_signature(report_mode=mode, use_full_posts=use_full)
+            sig = _report_signature(
+                report_mode=mode,
+                use_full_posts=use_full,
+                report_provider=rep_prov or None,
+                report_model=rep_mod or None,
+            )
             disk = _load_report_cache(report_mode=mode, use_full_posts=use_full)
             if disk is not None and disk[1] == sig:
                 result = disk[0]
@@ -713,7 +833,10 @@ def create_pipeline_interface():
             else:
                 try:
                     result = generate_activity_report(
-                        report_mode=mode, use_full_posts=use_full
+                        report_mode=mode,
+                        use_full_posts=use_full,
+                        report_provider=rep_prov or None,
+                        report_model=rep_mod or None,
                     )
                     cache = (result, sig) if sig else None
                     if sig is not None:
@@ -739,6 +862,10 @@ def create_pipeline_interface():
                 limit,
                 report_mode,
                 use_full_posts,
+                summary_provider,
+                summary_model,
+                report_provider,
+                report_model,
                 report_cache_state,
             ],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
