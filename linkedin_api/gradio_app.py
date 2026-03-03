@@ -312,63 +312,90 @@ PERIOD_SYNTAX = "e.g. 1d, 7d, 14d, 30d, 1w, 2w, 1m"
 
 
 def _render_pipeline_status(
-    step_label: str | None = None, progress: float | None = None
+    step_label: str | None = None,
+    stage_progress: tuple[int, float] | None = None,
 ) -> str:
-    """Render status below the run button: hint when idle, label + progress bar while running."""
-    if step_label is None or progress is None:
+    """
+    Render status below the run button: hint when idle, stage label + 4-segment bar while running.
+    stage_progress: (stage_index 0-3, progress_in_stage 0-1). Bar splits into 4 segments.
+    """
+    if step_label is None or stage_progress is None:
         return (
             '<div style="color: #6b7280; margin: 0.25rem 0 0.5rem 0;">'
             f"{html.escape(PIPELINE_HINT_TEXT)}"
             "</div>"
         )
-    width = int(round(max(0.0, min(1.0, progress)) * 100))
+    stage_idx, prog = stage_progress
+    stage_idx = max(0, min(3, stage_idx))
+    prog = max(0.0, min(1.0, prog))
+    segments: list[float] = []
+    for i in range(4):
+        if i < stage_idx:
+            segments.append(1.0)
+        elif i == stage_idx:
+            segments.append(prog)
+        else:
+            segments.append(0.0)
+    pct = [int(round(s * 100)) for s in segments]
+    segment_css = (
+        "flex: 1; min-width: 0; height: 100%; background: #e5e7eb; "
+        "overflow: hidden; display: flex;"
+    )
+    fill_css = "height: 100%; background: #f97316; transition: width 200ms ease;"
     return (
         f'<div style="margin: 0.25rem 0; color: #111827;">{html.escape(step_label)}</div>'
-        '<div style="width: 100%; height: 10px; background: #e5e7eb; '
-        'border-radius: 9999px; overflow: hidden;">'
-        f'<div style="width: {width}%; height: 100%; background: #f97316; '
-        'transition: width 200ms ease;"></div>'
+        '<div style="display: flex; width: 100%; height: 10px; gap: 2px; '
+        'border-radius: 4px; overflow: hidden;">'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[0]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[1]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[2]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[3]}%;"></div></div>'
         "</div>"
     )
 
 
-def _parse_fraction_status(
-    line: str, prefix: str, base: float, span: float, step_label: str
-) -> tuple[float, str] | None:
+def _parse_fraction(line: str, prefix: str) -> tuple[int, int] | None:
+    """Extract (done, total) from lines like 'Enriching 3/10…' or 'Summarizing batch 2/5…'."""
     if not line.startswith(prefix) or "/" not in line:
         return None
     try:
         done_str, total_str = line.removeprefix(prefix).rstrip("…").split("/")
-        done, total = int(done_str), int(total_str)
-        if total <= 0:
-            return base, step_label
-        return (base + span * done / total), step_label
+        return int(done_str), int(total_str)
     except (ValueError, IndexError):
         return None
 
 
-def _status_from_pipeline_line(line: str) -> tuple[float, str] | None:
-    """Map pipeline stream lines to concise UI steps + normalized progress."""
-    enrich = _parse_fraction_status(line, "Enriching ", 0.2, 0.2, "Enriching…")
-    if enrich is not None:
-        return enrich
-    summarize = _parse_fraction_status(
-        line, "Summarizing batch ", 0.4, 0.2, "Summarizing…"
-    )
-    if summarize is not None:
-        return summarize
+def _status_from_pipeline_line(line: str) -> tuple[tuple[int, float], str] | None:
+    """
+    Map pipeline stream lines to (stage_index, progress_in_stage), label.
+    Label format: stage_name [i/n]… when countable, else stage_name…
+    """
     if line.startswith("Starting pipeline"):
-        return 0.0, "Fetching…"
+        return (0, 0.0), "fetching…"
     if "Collected" in line:
-        return 0.2, "Enriching…"
+        return (0, 1.0), "fetching…"
+    frac = _parse_fraction(line, "Enriching ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (1, p), f"enriching [{done}/{total}]…"
     if "Enriched" in line:
-        return 0.4, "Summarizing…"
+        return (1, 1.0), "enriching…"
+    frac = _parse_fraction(line, "Summarizing batch ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (2, p), f"summarizing [{done}/{total}]…"
     if "Summarized" in line:
-        return 0.6, "Finishing up…"
+        return (2, 1.0), "summarizing…"
     if "✅ Done" in line:
-        return 0.75, "Generating report…"
+        return (3, 0.0), "preparing report…"
     if line.startswith("❌"):
-        return 1.0, "Failed."
+        return (3, 1.0), "Failed."
     return None
 
 
@@ -654,7 +681,7 @@ def create_pipeline_interface():
 
         def prepare_run(cache):
             return (
-                _render_pipeline_status("Fetching…", 0.0),
+                _render_pipeline_status("fetching…", (0, 0.0)),
                 gr.update(),
                 cache,
                 gr.update(interactive=False),
@@ -681,7 +708,7 @@ def create_pipeline_interface():
             if _parse_last(last_clean) is None:
                 err = f"Invalid period '{last}'. {PERIOD_SYNTAX}"
                 yield _render_pipeline_status(
-                    "Invalid period", 0.0
+                    "Invalid period", (0, 0.0)
                 ), err, cache, gr.update(interactive=True)
                 return
             started_at = time.monotonic()
@@ -697,8 +724,8 @@ def create_pipeline_interface():
             except (TypeError, ValueError):
                 lim_int = None
 
-            progress_value = 0.0
-            step_label = "Fetching…"
+            stage_progress: tuple[int, float] = (0, 0.0)
+            step_label = "fetching…"
             try:
                 for chunk in run_pipeline_ui_streaming(
                     last=last_clean,
@@ -710,30 +737,30 @@ def create_pipeline_interface():
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
                     if status_update is not None:
-                        progress_value, step_label = status_update
+                        stage_progress, step_label = status_update
                     if last.startswith("❌"):
                         _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
-                            step_label, progress_value
+                            step_label, stage_progress
                         ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
                             interactive=True
                         )
                         return
                     yield _render_pipeline_status(
-                        step_label, progress_value
+                        step_label, stage_progress
                     ), gr.update(), cache, gr.update(interactive=False)
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
                 _ensure_min_progress_visibility()
                 yield _render_pipeline_status(
-                    "Failed.", 1.0
+                    "Failed.", (3, 1.0)
                 ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(interactive=True)
                 return
 
-            progress_value, step_label = 0.75, "Generating report…"
+            stage_progress, step_label = (3, 0.0), "preparing report…"
             yield _render_pipeline_status(
-                step_label, progress_value
+                step_label, stage_progress
             ), gr.update(), cache, gr.update(interactive=False)
             sig = _report_signature(
                 use_full, report_provider=rep_prov or None, report_model=rep_mod or None
@@ -783,7 +810,7 @@ def create_pipeline_interface():
                 report_cache_state,
             ],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
-            show_progress="hidden",
+            show_progress=False,
         )
     return block
 
