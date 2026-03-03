@@ -37,6 +37,7 @@ All commands use `uv run` as the project manages dependencies with `uv`. See `CL
 ### Git & PR workflow
 
 - **Push destination**: After committing, push to the current branch (e.g. `cursor/model-selection-by-stage-0735`). If you need a specific branch for review, it will be stated in the task.
+- **PR title format**: Use `[TICKET-XX] Title` (e.g. `[LUC-60] Single pass posts report`) when the work is tied to a Linear ticket.
 - **PR comments**: Address review comments on the PR when asked. Fetch them with `gh api repos/annemariet/linkedin-graph-rag/pulls/<number>/comments` if needed.
 
 ### Gotchas
