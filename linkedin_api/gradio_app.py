@@ -190,7 +190,7 @@ Produce a markdown report with:
    Papers & research, Experiments & benchmarks, Job & career, Other.
 2. For each section: a brief synthesis (2-4 sentences), then bullet points with **links**
    to the most important/relevant posts in that category.
-3. Use the original post URLs when linking. Format links as [description](url).
+3. Use the original post URLs when linking. Format links as [title](url) or [description](url).
 4. Output valid markdown only. No preamble."""
 
 
