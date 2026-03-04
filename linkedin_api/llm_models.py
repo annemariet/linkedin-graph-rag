@@ -67,7 +67,8 @@ def fetch_mammouth_models() -> list[str]:
         return [
             str(m.get("id") or m.get("model_id") or m.get("name", ""))
             for m in items
-            if isinstance(m, dict) and (m.get("id") or m.get("model_id") or m.get("name"))
+            if isinstance(m, dict)
+            and (m.get("id") or m.get("model_id") or m.get("name"))
         ]
 
     for url in [f"{api_root}/public/models", f"{base}/models"]:
