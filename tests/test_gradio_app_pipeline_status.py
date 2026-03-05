@@ -1,7 +1,5 @@
 """Unit tests for pipeline progress rendering in gradio_app."""
 
-import pytest
-
 from linkedin_api.gradio_app import (
     PIPELINE_HINT_TEXT,
     _render_pipeline_status,
