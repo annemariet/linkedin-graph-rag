@@ -54,4 +54,3 @@ def test_report_mode_choices_have_label_value_pairs():
     values = [v for _, v in REPORT_MODE_CHOICES]
     assert REPORT_MODE_PER_CATEGORY in values
     assert REPORT_MODE_SINGLE_PASS in values
-
