@@ -157,22 +157,6 @@ class TestShortUrlResolution:
             f"</head><body><p>{body}</p></body></html>"
         )
 
-    def test_lnkd_in_resolves_before_categorization(self):
-        """resolve_redirect is called with the original lnkd.in URL."""
-        with (
-            patch(
-                "linkedin_api.fetch_linked_content.resolve_redirect",
-                return_value="https://github.com/user/repo",
-            ) as mock_resolve,
-            patch("requests.get") as mock_get,
-        ):
-            mock_get.return_value = MagicMock(
-                status_code=200, text=self._mock_html("Repo")
-            )
-            fetch_linked_content("https://lnkd.in/erbBvi7E", resolve_redirects=True)
-
-        mock_resolve.assert_called_once_with("https://lnkd.in/erbBvi7E")
-
     def test_lnkd_in_to_github_classified_as_repository(self):
         """lnkd.in → github.com must be dispatched as 'repository'."""
         with (

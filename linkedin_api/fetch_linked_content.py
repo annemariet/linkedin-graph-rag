@@ -99,61 +99,45 @@ FetchStrategy = Callable[[str], tuple[str, str]]  # returns (title, content)
 # ---------------------------------------------------------------------------
 
 
-def _fetch_html_body(url: str) -> tuple[str, str]:
-    """MVP: extract title and body text using BeautifulSoup.
-
-    Removes <script>, <style>, <nav>, <header>, <footer>, and <aside>
-    elements before extracting text, to reduce noise.
-    """
+def _fetch_soup(url: str, timeout: int = 15) -> tuple[BeautifulSoup, str]:
+    """Fetch *url* and return (parsed soup, og:title or <title>)."""
     resp = requests.get(
-        url, timeout=15, allow_redirects=True, headers=_HEADERS, verify=_ssl_verify()
+        url,
+        timeout=timeout,
+        allow_redirects=True,
+        headers=_HEADERS,
+        verify=_ssl_verify(),
     )
     if resp.status_code != 200:
         raise ValueError(f"HTTP {resp.status_code}")
-
     soup = BeautifulSoup(resp.text, "html.parser")
+    og = soup.find("meta", property="og:title")
+    title = (
+        str(og["content"]).strip()
+        if og and og.get("content")
+        else (soup.title.get_text(strip=True) if soup.title else "")
+    )
+    return soup, title
 
-    # Prefer og:title over <title> (cleaner for articles)
-    title = ""
-    og_title = soup.find("meta", property="og:title")
-    if og_title and og_title.get("content"):
-        title = str(og_title["content"]).strip()
-    elif soup.title:
-        title = soup.title.get_text(strip=True)
 
-    # Remove chrome/noise elements
+def _fetch_html_body(url: str) -> tuple[str, str]:
+    """Extract title and body text, stripping nav/chrome noise."""
+    soup, title = _fetch_soup(url)
     for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
         tag.decompose()
-
     body = soup.find("body") or soup
     lines = [
         ln.strip() for ln in body.get_text(separator="\n").splitlines() if ln.strip()
     ]
-    content = "\n".join(lines)
-    return title, content
+    return title, "\n".join(lines)
 
 
 def _fetch_metadata_only(url: str) -> tuple[str, str]:
-    """Metadata-only fetch: title via og: tags, no body extraction.
+    """Title-only fetch (og:title / <title>); body extraction deferred.
 
     Used for video platforms (YouTube), code repositories (GitHub), etc.
-    Full content extraction for these types is deferred to a later phase.
     """
-    resp = requests.get(
-        url, timeout=10, allow_redirects=True, headers=_HEADERS, verify=_ssl_verify()
-    )
-    if resp.status_code != 200:
-        raise ValueError(f"HTTP {resp.status_code}")
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-    title = ""
-    og_title = soup.find("meta", property="og:title")
-    if og_title and og_title.get("content"):
-        title = str(og_title["content"]).strip()
-    elif soup.title:
-        title = soup.title.get_text(strip=True)
-
-    # Return empty content — body extraction is not implemented for this type
+    _, title = _fetch_soup(url, timeout=10)
     return title, ""
 
 
