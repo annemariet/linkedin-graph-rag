@@ -204,11 +204,49 @@ _SINGLE_PASS_SYSTEM = """You are a concise analyst. The user shares LinkedIn pos
 
 Produce a markdown report with:
 1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,
-   Papers & research, Experiments & benchmarks, Job & career, Other.
-2. For each section: a brief synthesis (2-4 sentences), then bullet points with **links**
-   to the most important/relevant posts in that category.
-3. Use the original post URLs when linking. Format links as [title](url) or [description](url).
-4. Output valid markdown only. No preamble."""
+   Papers & research, Experiments & benchmarks, Company & career news, Other. Put each post into the right category
+   based on content.
+2. For each section: bullet points with the most important news for the category, with inline **links**
+   to the relevant content as well as the source. See the example below for how links can be inserted.
+   A bullet point may group articles if they cite the same product/idea/technology/etc. or are closely related
+   (eg competing models, similar subdomains, etc).
+3. Cite the post as the source of the information, with the Author name if it's a person, otherwise it can be inlined
+   with the entity name making the announcement.
+4. Output valid markdown only. No preamble.
+
+Example input (keeping only the links for brevity):
+**Posts**:
+- https://www.linkedin.com/feed/update/urn:li:ugcPost:7432397932697481216
+- https://www.linkedin.com/feed/update/urn:li:ugcPost:7432135776701693952
+- https://www.linkedin.com/feed/update/urn:li:activity:7430628329965137920
+- https://www.linkedin.com/feed/update/urn:li:activity:7427799631356473344
+- https://www.linkedin.com/feed/update/urn:li:activity:7432043070642290688
+- https://www.linkedin.com/feed/update/urn:li:activity:7432412067652943872
+
+Example output (showing only the Product Announcements section):
+The period saw several significant product launches and infrastructure releases.
+
+- **Data visualization**: It looks like there is a new player in town in the datavis world!
+  [Graphy](https://graphy.dev/) launched its Developer Platform as the first charting
+  infrastructure for AI-native products, targeting the growing need for data visualization in AI applications
+  ([from Andrey Vinitsky](https://www.linkedin.com/feed/update/urn:li:ugcPost:7432397932697481216)).
+- **Agentic coding**:
+    * [Cursor announced](https://www.linkedin.com/feed/update/urn:li:ugcPost:7432135776701693952/)
+      a major capability upgrade allowing agents to setup their own VM and control their own computers and send videos
+      of their work (get started [here](https://cursor.com/onboard)).
+    * [LightOn](https://lighton.ai/) [released](https://huggingface.co/blog/lightonai/colgrep-lateon-code) 2 new
+      LateOn-code models on HuggingFace, and ColGREP, a Rust-based multi-vector search tool for coding agents (from
+      [Tom Aarsen](https://www.linkedin.com/feed/update/urn:li:activity:7427799631356473344/)).
+- **Data and MCPs**: [data.gouv.fr](https://www.linkedin.com/feed/update/urn:li:activity:7432412067652943872/)
+  announced an experimental MCP server to make public datasets accessible to AI chatbots.
+  Check it out on Github: https://github.com/datagouv/datagouv-mcp.
+
+
+https://www.linkedin.com/feed/update/urn:li:activity:7432043070642290688/ should be either in the Company & career
+news or with Research news.
+https://www.linkedin.com/feed/update/urn:li:activity:7430628329965137920/ can be skipped because it's not not so
+relevant, an inference provider adding a new model must happen regularly.
+"""
 
 
 def _generate_single_pass_report(
