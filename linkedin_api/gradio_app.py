@@ -51,13 +51,11 @@ _REPORT_SYSTEM = (
     "Output a short report in markdown (sections, bullet points). No preamble."
 )
 REPORT_MAX_POSTS = 50  # fallback when max_posts not set
-REPORT_MAX_POSTS_LINKS = 100
-REPORT_MAX_POSTS_SUMMARIES = 50
+REPORT_MAX_POSTS_MINIMAL = 100
+REPORT_MAX_POSTS_SUMMARY = 50
 REPORT_MAX_POSTS_FULL = 20
 REPORT_BATCH_CHAR_LIMIT = 4000
-REPORT_MAX_SUMMARY_CHARS = 400
-REPORT_MAX_FULL_POST_CHARS = 1500
-REPORT_MAX_LINKS_CHARS = 150
+REPORT_MAX_FULL_POST_CHARS_DEFAULT = 1500
 
 # Order defines report sections. "other" gets summaries + links only (no LLM).
 REPORT_CATEGORIES = (
@@ -85,15 +83,15 @@ REPORT_MODE_LABEL_PER_CATEGORY = "Per category summary"
 REPORT_MODE_LABEL_SINGLE_PASS = "Single pass (all posts)"
 REPORT_MODE_CHOICES = [REPORT_MODE_LABEL_PER_CATEGORY, REPORT_MODE_LABEL_SINGLE_PASS]
 
-CONTENT_LEVEL_LINKS = "links"
-CONTENT_LEVEL_SUMMARIES = "summaries"
+CONTENT_LEVEL_MINIMAL = "minimal"
+CONTENT_LEVEL_SUMMARY = "summary"
 CONTENT_LEVEL_FULL = "full"
-CONTENT_LEVEL_LABEL_LINKS = "Links (minimal)"
-CONTENT_LEVEL_LABEL_SUMMARIES = "Summaries"
-CONTENT_LEVEL_LABEL_FULL = "Full posts"
+CONTENT_LEVEL_LABEL_MINIMAL = "Minimal (link + tags)"
+CONTENT_LEVEL_LABEL_SUMMARY = "Summary (minimal + post summary)"
+CONTENT_LEVEL_LABEL_FULL = "Full (minimal + full post content)"
 CONTENT_LEVEL_CHOICES = [
-    CONTENT_LEVEL_LABEL_LINKS,
-    CONTENT_LEVEL_LABEL_SUMMARIES,
+    CONTENT_LEVEL_LABEL_MINIMAL,
+    CONTENT_LEVEL_LABEL_SUMMARY,
     CONTENT_LEVEL_LABEL_FULL,
 ]
 
@@ -111,22 +109,22 @@ def _normalize_report_mode(value: str | None) -> str:
 def _normalize_content_level(value: str | None) -> str:
     """Normalize dropdown value to content level constant."""
     if not value:
-        return CONTENT_LEVEL_SUMMARIES
+        return CONTENT_LEVEL_SUMMARY
     v = (value or "").strip().lower()
-    if "link" in v or "minimal" in v or v == CONTENT_LEVEL_LINKS:
-        return CONTENT_LEVEL_LINKS
+    if "minimal" in v or "link" in v or "tag" in v or v == CONTENT_LEVEL_MINIMAL:
+        return CONTENT_LEVEL_MINIMAL
     if "full" in v or v == CONTENT_LEVEL_FULL:
         return CONTENT_LEVEL_FULL
-    return CONTENT_LEVEL_SUMMARIES
+    return CONTENT_LEVEL_SUMMARY
 
 
 def _default_max_posts(content_level: str) -> int:
-    """Default max posts per report by content level. Full posts use more tokens."""
-    if content_level == CONTENT_LEVEL_LINKS:
-        return REPORT_MAX_POSTS_LINKS
+    """Default max posts per report by content level."""
+    if content_level == CONTENT_LEVEL_MINIMAL:
+        return REPORT_MAX_POSTS_MINIMAL
     if content_level == CONTENT_LEVEL_FULL:
         return REPORT_MAX_POSTS_FULL
-    return REPORT_MAX_POSTS_SUMMARIES
+    return REPORT_MAX_POSTS_SUMMARY
 
 
 def _truncate(s: str, max_len: int) -> str:
@@ -136,37 +134,54 @@ def _truncate(s: str, max_len: int) -> str:
 
 
 def _format_post_for_prompt(
-    m: dict, content_level: str = CONTENT_LEVEL_SUMMARIES
+    m: dict,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> str:
-    """Format post for LLM prompt. Links=minimal, Summaries=mid, Full=full content."""
-    text: str
-    if content_level == CONTENT_LEVEL_FULL and m.get("urn"):
-        content = load_content(m["urn"])
-        if content:
-            text = _truncate(content, REPORT_MAX_FULL_POST_CHARS)
-        else:
-            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    elif content_level == CONTENT_LEVEL_LINKS:
-        text = _truncate(m["summary"], REPORT_MAX_LINKS_CHARS)
-    else:
-        text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    parts = [f"- {text}"]
+    """Format post for LLM. Always includes link. Minimal=link+tags, Summary=+full summary, Full=+truncated content."""
+    url = (m.get("post_url") or "").strip()
+    cat = (m.get("category") or "").strip() or "other"
+    parts: list[str] = []
     if m.get("topics"):
-        parts.append(f"  Topics: {', '.join(m['topics'])}")
+        parts.append(f"Topics: {', '.join(m['topics'])}")
     if m.get("technologies"):
-        parts.append(f"  Tech: {', '.join(m['technologies'])}")
-    return "\n".join(parts)
+        parts.append(f"Tech: {', '.join(m['technologies'])}")
+    tag_part = " | ".join(parts) if parts else ""
+    tag_part = f"Category: {cat}" + (f" | {tag_part}" if tag_part else "")
+
+    if content_level == CONTENT_LEVEL_MINIMAL:
+        body = tag_part
+    elif content_level == CONTENT_LEVEL_FULL and m.get("urn"):
+        content = load_content(m["urn"])
+        full_text = (
+            _truncate(content, max_full_post_chars) if content else (m["summary"] or "")
+        )
+        body = (
+            f"{tag_part} | Content: {full_text}"
+            if tag_part
+            else f"Content: {full_text}"
+        )
+    else:
+        summary = (m["summary"] or "").strip()
+        body = f"{tag_part} | Summary: {summary}" if tag_part else f"Summary: {summary}"
+
+    if url:
+        return f"- [{url}]: {body}"
+    return f"- (no link): {body}"
 
 
 def _batches_by_char_limit(
-    metas: list[dict], char_limit: int, content_level: str = CONTENT_LEVEL_SUMMARIES
+    metas: list[dict],
+    char_limit: int,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> list[list[dict]]:
     """Split metas into batches; start a new batch when adding the next post would exceed char_limit."""
     batches: list[list[dict]] = []
     current: list[dict] = []
     current_len = 0
     for m in metas:
-        block = _format_post_for_prompt(m, content_level)
+        block = _format_post_for_prompt(m, content_level, max_full_post_chars)
         if current and current_len + len(block) > char_limit:
             batches.append(current)
             current = []
@@ -188,11 +203,14 @@ def _summarize_batch(
     llm,
     metas: list[dict],
     category_label: str,
-    content_level: str = CONTENT_LEVEL_SUMMARIES,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     prompts_out: list[str] | None = None,
 ) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
-    block = "\n\n".join(_format_post_for_prompt(m, content_level) for m in metas)
+    block = "\n\n".join(
+        _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
+    )
     prompt = f"Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
     if prompts_out is not None:
         prompts_out.append(prompt)
@@ -201,57 +219,30 @@ def _summarize_batch(
 
 
 def _format_other_section(
-    metas: list[dict], content_level: str = CONTENT_LEVEL_SUMMARIES
+    metas: list[dict],
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> str:
-    """Format 'other' category as summary + link (no LLM)."""
-    lines = []
-    for m in metas:
-        if content_level == CONTENT_LEVEL_LINKS:
-            text = _truncate(m["summary"], REPORT_MAX_LINKS_CHARS)
-        elif content_level == CONTENT_LEVEL_FULL and m.get("urn"):
-            content = load_content(m["urn"])
-            summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-            if content and len(content) <= len(m["summary"]):
-                text = content
-            else:
-                text = summary
-        else:
-            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-        url = (m.get("post_url") or "").strip()
-        if url:
-            lines.append(f"- {text} — [post]({url})")
-        else:
-            lines.append(f"- {text}")
+    """Format 'other' category. Always includes link."""
+    lines = [
+        _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
+    ]
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
 def _format_post_for_single_pass(
-    m: dict, content_level: str = CONTENT_LEVEL_SUMMARIES
+    m: dict,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> str:
-    """Format post for single-pass prompt: link + context. Links=minimal, Summaries/Full=more."""
-    url = (m.get("post_url") or "").strip()
-    if content_level == CONTENT_LEVEL_FULL and m.get("urn"):
-        content = load_content(m["urn"])
-        text = (
-            _truncate(content, REPORT_MAX_FULL_POST_CHARS) if content else m["summary"]
-        )
-    elif content_level == CONTENT_LEVEL_LINKS:
-        text = _truncate(m["summary"], REPORT_MAX_LINKS_CHARS)
-    else:
-        text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    parts = [text]
-    if m.get("topics"):
-        parts.append(f"Topics: {', '.join(m['topics'])}")
-    if m.get("technologies"):
-        parts.append(f"Tech: {', '.join(m['technologies'])}")
-    if url:
-        return f"- [{url}]: {' | '.join(parts)}"
-    return f"- (no link): {' | '.join(parts)}"
+    """Format post for single-pass. Same structure as _format_post_for_prompt."""
+    return _format_post_for_prompt(m, content_level, max_full_post_chars)
 
 
-_SINGLE_PASS_SYSTEM = """You are a concise analyst. The user shares LinkedIn posts (each with URL and summary).
-
-Produce a markdown report with:
+_SINGLE_PASS_SYSTEM = (
+    "You are a concise analyst. The user shares LinkedIn posts. "
+    "Each has URL, category/tags, and optionally summary or full content.\n\n"
+    """Produce a markdown report with:
 1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,
    Papers & research, Experiments & benchmarks, Company & career news, Other. Put each post into the right category
    based on content.
@@ -296,16 +287,21 @@ news or with Research news.
 https://www.linkedin.com/feed/update/urn:li:activity:7430628329965137920/ can be skipped because it's not not so
 relevant, an inference provider adding a new model must happen regularly.
 """
+)
 
 
 def _generate_single_pass_report(
     metas: list[dict],
-    content_level: str = CONTENT_LEVEL_SUMMARIES,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
 ) -> str:
     """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
-    blocks = "\n\n".join(_format_post_for_single_pass(m, content_level) for m in metas)
+    blocks = "\n\n".join(
+        _format_post_for_single_pass(m, content_level, max_full_post_chars)
+        for m in metas
+    )
     prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
     _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
     llm = create_llm(
@@ -327,12 +323,13 @@ def _resolve_max_posts(max_posts: int | None, content_level: str) -> int:
 
 def _report_signature(
     report_mode: str = REPORT_MODE_PER_CATEGORY,
-    content_level: str = CONTENT_LEVEL_SUMMARIES,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
     max_posts: int | None = None,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
-) -> tuple[str, int, tuple[str, ...], str, str, int] | None:
-    """Signature of post set + report model + report mode + content_level + max_posts."""
+) -> tuple[str, int, tuple[str, ...], str, str, int, int] | None:
+    """Signature of post set + report model + report mode + content_level + max_posts + max_full_post_chars."""
     all_metas = list_summarized_metadata()
     if not all_metas:
         return None
@@ -350,6 +347,7 @@ def _report_signature(
         report_mode,
         content_level,
         limit,
+        max_full_post_chars,
     )
 
 
@@ -390,7 +388,8 @@ def _load_report_cache(
     report_mode: str,
     content_level: str,
     max_posts: int,
-) -> tuple[str, tuple[str, int, tuple[str, ...], str, str, int]] | None:
+    max_full_post_chars: int,
+) -> tuple[str, tuple[str, int, tuple[str, ...], str, str, int, int]] | None:
     """Load cached report from disk. Returns (report, signature) or None if params mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
@@ -404,24 +403,31 @@ def _load_report_cache(
         cached_level = data.get("content_level")
         if cached_level is None:
             use_full = data.get("use_full_posts", True)
-            cached_level = CONTENT_LEVEL_FULL if use_full else CONTENT_LEVEL_SUMMARIES
+            cached_level = CONTENT_LEVEL_SUMMARY if use_full else CONTENT_LEVEL_MINIMAL
         cached_max = data.get("max_posts", REPORT_MAX_POSTS)
+        cached_full_chars = data.get(
+            "max_full_post_chars", REPORT_MAX_FULL_POST_CHARS_DEFAULT
+        )
         if (
             cached_mode != report_mode
             or cached_level != content_level
             or cached_max != max_posts
+            or cached_full_chars != max_full_post_chars
         ):
             return None
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (model_id, n, at, cached_mode, cached_level, cached_max))
+        return (
+            report,
+            (model_id, n, at, cached_mode, cached_level, cached_max, cached_full_chars),
+        )
     except (json.JSONDecodeError, OSError):
         return None
 
 
 def _save_report_cache(
-    report: str, sig: tuple[str, int, tuple[str, ...], str, str, int]
+    report: str, sig: tuple[str, int, tuple[str, ...], str, str, int, int]
 ) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
@@ -435,6 +441,7 @@ def _save_report_cache(
                     "report_mode": sig[3],
                     "content_level": sig[4],
                     "max_posts": sig[5],
+                    "max_full_post_chars": sig[6],
                     "report": report,
                 },
                 ensure_ascii=False,
@@ -447,13 +454,14 @@ def _save_report_cache(
 
 def generate_activity_report(
     report_mode: str = REPORT_MODE_PER_CATEGORY,
-    content_level: str = CONTENT_LEVEL_SUMMARIES,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
     max_posts: int | None = None,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
 ) -> str:
     """Build report. Per-category: batches per category; 'other' is summaries+links.
-    Single-pass: one LLM call with all links. Content: links (minimal), summaries, or full.
+    Single-pass: one LLM call with all links. Content: Minimal, Summary, or Full.
     """
     setup_gcp_credentials()
     all_metas = list_summarized_metadata()
@@ -467,6 +475,7 @@ def generate_activity_report(
             return _generate_single_pass_report(
                 metas,
                 content_level,
+                max_full_post_chars=max_full_post_chars,
                 report_provider=report_provider,
                 report_model=report_model,
             )
@@ -495,15 +504,23 @@ def generate_activity_report(
             label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
             if cat == "other":
                 parts.append(
-                    f"## {label}\n\n{_format_other_section(category_metas, content_level)}"
+                    f"## {label}\n\n{_format_other_section(category_metas, content_level, max_full_post_chars)}"
                 )
                 continue
             batches = _batches_by_char_limit(
-                category_metas, REPORT_BATCH_CHAR_LIMIT, content_level
+                category_metas,
+                REPORT_BATCH_CHAR_LIMIT,
+                content_level,
+                max_full_post_chars,
             )
             batch_summaries = [
                 _summarize_batch(
-                    llm, batch, label, content_level, prompts_out=prompts_collected
+                    llm,
+                    batch,
+                    label,
+                    content_level,
+                    max_full_post_chars=max_full_post_chars,
+                    prompts_out=prompts_collected,
                 )
                 for batch in batches
             ]
@@ -836,16 +853,24 @@ def create_pipeline_interface():
             )
             content_level = gr.Dropdown(
                 choices=CONTENT_LEVEL_CHOICES,
-                value=CONTENT_LEVEL_LABEL_LINKS,
+                value=CONTENT_LEVEL_LABEL_MINIMAL,
                 label="Content level",
             )
             max_posts_report = gr.Number(
-                value=REPORT_MAX_POSTS_LINKS,
+                value=REPORT_MAX_POSTS_MINIMAL,
                 label="Max posts (report)",
                 minimum=1,
                 maximum=500,
                 precision=0,
-                info="Defaults: 100 (links), 50 (summaries), 20 (full). APIs ~200k tokens.",
+                info="Defaults: 100 (minimal), 50 (summary), 20 (full).",
+            )
+            max_full_post_chars = gr.Number(
+                value=REPORT_MAX_FULL_POST_CHARS_DEFAULT,
+                label="Max post content length",
+                minimum=100,
+                maximum=10000,
+                precision=0,
+                info="Chars per post when Full. Ignored for Minimal/Summary.",
             )
 
         def suggest_max_posts(content_lvl: str):
@@ -972,6 +997,7 @@ def create_pipeline_interface():
             mode: str,
             content_lvl: str,
             max_posts_val,
+            max_full_chars_val,
             sum_prov,
             sum_mod,
             rep_prov,
@@ -1054,19 +1080,33 @@ def create_pipeline_interface():
                 )
             except (TypeError, ValueError):
                 max_posts_int = None
+            try:
+                max_full_chars_int = (
+                    int(max_full_chars_val)
+                    if max_full_chars_val not in (None, "", float("nan"))
+                    else REPORT_MAX_FULL_POST_CHARS_DEFAULT
+                )
+            except (TypeError, ValueError):
+                max_full_chars_int = REPORT_MAX_FULL_POST_CHARS_DEFAULT
+            max_full_chars_int = max(
+                100,
+                min(10000, max_full_chars_int or REPORT_MAX_FULL_POST_CHARS_DEFAULT),
+            )
             max_posts_resolved = _resolve_max_posts(max_posts_int, content_level_val)
             logger.info(
-                "Report mode: raw=%r → %s; content: raw=%r → %s; max_posts=%s",
+                "Report mode: raw=%r → %s; content: raw=%r → %s; max_posts=%s; max_full=%s",
                 mode,
                 report_mode_val,
                 content_lvl,
                 content_level_val,
                 max_posts_resolved,
+                max_full_chars_int,
             )
             sig = _report_signature(
                 report_mode=report_mode_val,
                 content_level=content_level_val,
                 max_posts=max_posts_int,
+                max_full_post_chars=max_full_chars_int,
                 report_provider=rep_prov or None,
                 report_model=rep_mod or None,
             )
@@ -1074,6 +1114,7 @@ def create_pipeline_interface():
                 report_mode=report_mode_val,
                 content_level=content_level_val,
                 max_posts=max_posts_resolved,
+                max_full_post_chars=max_full_chars_int,
             )
             if disk is not None and disk[1] == sig:
                 result = disk[0]
@@ -1088,6 +1129,7 @@ def create_pipeline_interface():
                         report_mode=report_mode_val,
                         content_level=content_level_val,
                         max_posts=max_posts_int,
+                        max_full_post_chars=max_full_chars_int,
                         report_provider=rep_prov or None,
                         report_model=rep_mod or None,
                     )
@@ -1123,6 +1165,7 @@ def create_pipeline_interface():
                 report_mode,
                 content_level,
                 max_posts_report,
+                max_full_post_chars,
                 summary_provider,
                 summary_model,
                 report_provider,
