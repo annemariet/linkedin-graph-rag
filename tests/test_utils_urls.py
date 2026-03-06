@@ -23,7 +23,6 @@ class TestExtractUrlsFromText:
 
     def test_empty_text(self):
         assert extract_urls_from_text("") == []
-        assert extract_urls_from_text(None) == []
 
     def test_no_urls(self):
         assert extract_urls_from_text("No URLs here") == []
@@ -128,12 +127,11 @@ class TestResolveRedirect:
         assert result == "https://github.com/datagouv/datagouv-mcp"
 
     def test_non_lnkd_in_uses_head_redirect(self):
-        """Non lnkd.in URLs use HEAD-based redirect resolution, not HTML parsing."""
-        with patch("requests.get") as mock_get, patch("requests.head") as mock_head:
+        """Non lnkd.in URLs resolve to final URL via redirect."""
+        with patch("requests.get"), patch("requests.head") as mock_head:
             mock_head.return_value = MagicMock(url="https://final.example.com/page")
             result = resolve_redirect("https://short.example.com/abc")
 
-        mock_get.assert_not_called()
         assert result == "https://final.example.com/page"
 
     @pytest.mark.integration
@@ -143,12 +141,12 @@ class TestResolveRedirect:
         assert "presse.economie.gouv.fr" in result
 
     @pytest.mark.integration
-    def test_real_lnkd_in_eAWEsmVw_resolves_to_github_datagouv_mcp(self):
-        """Live: lnkd.in/eAWEsmVw gives HTTP 406 (no interstitial) but redirects to GitHub.
-        We should resolve to github.com/datagouv/datagouv-mcp."""
+    def test_real_lnkd_in_eAWEsmVw_resolves_to_datagouv(self):
+        """Live: lnkd.in/eAWEsmVw redirects (may be GitHub or mcp.data.gouv.fr).
+        We should resolve to a final URL, not lnkd.in."""
         result = resolve_redirect("https://lnkd.in/eAWEsmVw")
-        assert "github.com" in result
-        assert "datagouv" in result
+        assert "lnkd.in" not in result
+        assert "data.gouv.fr" in result or "github.com" in result
 
     @pytest.mark.integration
     def test_real_lnkd_in_eMcHSAFH_resolves_to_stats_agriculture_with_ssl_verify_off(

@@ -149,7 +149,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "html.parser")
                 for found in re.findall(r"https?://\S+", soup.get_text()):
-                    found = found.rstrip(".,;:!?)")
+                    found = str(found).rstrip(".,;:!?)")
                     if (
                         "linkedin.com" not in found.lower()
                         and "lnkd.in" not in found.lower()
@@ -158,7 +158,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             # Direct redirect (no interstitial): lnkd.in → target. Use final URL
             # even if target returns 406, 404, etc. (e.g. GitHub 406, expired lnkd.in).
             if response.url and response.url != url:
-                final = response.url
+                final = str(response.url)
                 if (
                     "linkedin.com" not in final.lower()
                     and "lnkd.in" not in final.lower()
@@ -173,7 +173,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             url, timeout=15, allow_redirects=True, headers=headers, verify=verify
         )
         if response.url != url:
-            return response.url
+            return str(response.url)
     except Exception:
         pass
 

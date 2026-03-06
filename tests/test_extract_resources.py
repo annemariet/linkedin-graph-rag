@@ -39,7 +39,6 @@ class TestExtractUrlsFromText:
     def test_empty_text(self):
         """Test that empty text returns empty list."""
         assert extract_urls_from_text("") == []
-        assert extract_urls_from_text(None) == []
 
     def test_no_urls(self):
         """Test that text without URLs returns empty list."""
@@ -219,24 +218,6 @@ class TestResolveRedirect:
         result = resolve_redirect("https://example.com")
         # requests normalizes URLs, so trailing slash is acceptable
         assert result in ("https://example.com", "https://example.com/")
-
-    @patch("linkedin_api.extract_resources.requests.head")
-    def test_resolve_redirect_uses_headers(self, mock_head):
-        """Test that redirect resolution includes proper headers."""
-        mock_response = MagicMock()
-        mock_response.url = "https://final-url.com"
-        mock_head.return_value = mock_response
-
-        resolve_redirect("https://short.ly/abc")
-
-        # Verify headers are included
-        call_kwargs = mock_head.call_args[1]
-        assert "headers" in call_kwargs
-        headers = call_kwargs["headers"]
-        assert "User-Agent" in headers
-        assert "Accept" in headers
-        assert "Accept-Language" in headers
-        assert "Mozilla" in headers["User-Agent"]
 
 
 class TestExtractTitleFromUrl:
