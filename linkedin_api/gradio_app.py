@@ -578,8 +578,8 @@ def _render_pipeline_status(
     stage_progress: tuple[int, float] | None = None,
 ) -> str:
     """
-    Render status below the run button: hint when idle, stage label + 4-segment bar while running.
-    stage_progress: (stage_index 0-3, progress_in_stage 0-1). Bar splits into 4 segments.
+    Render status below the run button: hint when idle, stage label + 5-segment bar while running.
+    stage_progress: (stage_index 0-4, progress_in_stage 0-1). Bar splits into 5 segments.
     """
     if step_label is None or stage_progress is None:
         return (
@@ -588,10 +588,10 @@ def _render_pipeline_status(
             "</div>"
         )
     stage_idx, prog = stage_progress
-    stage_idx = max(0, min(3, stage_idx))
+    stage_idx = max(0, min(4, stage_idx))
     prog = max(0.0, min(1.0, prog))
     segments: list[float] = []
-    for i in range(4):
+    for i in range(5):
         if i < stage_idx:
             segments.append(1.0)
         elif i == stage_idx:
@@ -616,6 +616,8 @@ def _render_pipeline_status(
         f'<div style="{fill_css} width: {pct[2]}%;"></div></div>'
         f'<div style="{segment_css}">'
         f'<div style="{fill_css} width: {pct[3]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[4]}%;"></div></div>'
         "</div>"
     )
 
@@ -634,7 +636,7 @@ def _parse_fraction(line: str, prefix: str) -> tuple[int, int] | None:
 def _status_from_pipeline_line(line: str) -> tuple[tuple[int, float], str] | None:
     """
     Map pipeline stream lines to (stage_index, progress_in_stage), label.
-    Label format: stage_name [i/n]… when countable, else stage_name…
+    Stages: 0=fetching, 1=enriching, 2=fetch linked URLs, 3=summarizing, 4=preparing report.
     """
     if line.startswith("Starting pipeline"):
         return (0, 0.0), "fetching…"
@@ -647,17 +649,24 @@ def _status_from_pipeline_line(line: str) -> tuple[tuple[int, float], str] | Non
         return (1, p), f"enriching [{done}/{total}]…"
     if "Enriched" in line:
         return (1, 1.0), "enriching…"
+    frac = _parse_fraction(line, "Fetching linked URLs ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (2, p), f"fetching linked URLs [{done}/{total}]…"
+    if "Fetched" in line and "URL" in line:
+        return (2, 1.0), "fetching linked URLs…"
     frac = _parse_fraction(line, "Summarizing batch ")
     if frac is not None:
         done, total = frac
         p = (done / total) if total > 0 else 1.0
-        return (2, p), f"summarizing [{done}/{total}]…"
+        return (3, p), f"summarizing [{done}/{total}]…"
     if "Summarized" in line:
-        return (2, 1.0), "summarizing…"
+        return (3, 1.0), "summarizing…"
     if "✅ Done" in line:
-        return (3, 0.0), "preparing report…"
+        return (4, 0.0), "preparing report…"
     if line.startswith("❌"):
-        return (3, 1.0), "Failed."
+        return (4, 1.0), "Failed."
     return None
 
 
@@ -1066,13 +1075,13 @@ def create_pipeline_interface():
                 err_msg = str(e)[:200]
                 _ensure_min_progress_visibility()
                 yield _render_pipeline_status(
-                    "Failed.", (3, 1.0)
+                    "Failed.", (4, 1.0)
                 ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(
                     interactive=True
                 ), gr.update()
                 return
 
-            stage_progress, step_label = (3, 0.0), "preparing report…"
+            stage_progress, step_label = (4, 0.0), "preparing report…"
             yield _render_pipeline_status(
                 step_label, stage_progress
             ), gr.update(), cache, gr.update(interactive=False), gr.update()

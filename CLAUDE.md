@@ -301,6 +301,11 @@ Data directory:
 LINKEDIN_DATA_DIR=~/.linkedin_api/data  # Default; master CSV lives here
 ```
 
+Linked content fetch (fetch_linked_content, resolve_redirect):
+```bash
+REQUESTS_SSL_VERIFY=true  # Set to false to skip SSL verification for sites with cert issues (use with caution)
+```
+
 For deployment (Scalingo/cloud):
 ```bash
 PORT=7860  # Overrides default Gradio port
