@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,12 @@ _HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
+
+
+def _ssl_verify() -> bool:
+    """Honor REQUESTS_SSL_VERIFY=false for sites with certificate issues."""
+    return os.environ.get("REQUESTS_SSL_VERIFY", "true").lower() not in ("0", "false")
+
 
 # ---------------------------------------------------------------------------
 # FetchResult
@@ -98,7 +105,9 @@ def _fetch_html_body(url: str) -> tuple[str, str]:
     Removes <script>, <style>, <nav>, <header>, <footer>, and <aside>
     elements before extracting text, to reduce noise.
     """
-    resp = requests.get(url, timeout=15, allow_redirects=True, headers=_HEADERS)
+    resp = requests.get(
+        url, timeout=15, allow_redirects=True, headers=_HEADERS, verify=_ssl_verify()
+    )
     if resp.status_code != 200:
         raise ValueError(f"HTTP {resp.status_code}")
 
@@ -130,7 +139,9 @@ def _fetch_metadata_only(url: str) -> tuple[str, str]:
     Used for video platforms (YouTube), code repositories (GitHub), etc.
     Full content extraction for these types is deferred to a later phase.
     """
-    resp = requests.get(url, timeout=10, allow_redirects=True, headers=_HEADERS)
+    resp = requests.get(
+        url, timeout=10, allow_redirects=True, headers=_HEADERS, verify=_ssl_verify()
+    )
     if resp.status_code != 200:
         raise ValueError(f"HTTP {resp.status_code}")
 

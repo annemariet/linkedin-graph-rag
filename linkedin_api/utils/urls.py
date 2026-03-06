@@ -116,10 +116,14 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
     """Resolve redirects to get the final URL.
 
     Handles LinkedIn short URLs (lnkd.in) which use an intermediate page.
+    When lnkd.in redirects directly (no interstitial), uses response.url even
+    if the final server returns 4xx/5xx (e.g. 406).
 
     Returns:
         Final URL after following redirects, or original URL if resolution fails
     """
+    import os
+
     import requests
     from bs4 import BeautifulSoup
 
@@ -129,31 +133,45 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
+    verify = os.environ.get("REQUESTS_SSL_VERIFY", "true").lower() not in ("0", "false")
 
     if "lnkd.in" in url:
         try:
             response = requests.get(
-                url, timeout=15, allow_redirects=True, headers=headers
+                url, timeout=15, allow_redirects=True, headers=headers, verify=verify
             )
             # LinkedIn shows a security interstitial with the target URL in
             # the page text: "This link will take you to… https://…"
             # Parsing with BeautifulSoup and searching get_text() naturally
             # excludes URLs buried in HTML attributes (script src, link href…).
-            soup = BeautifulSoup(response.text, "html.parser")
-            for found in re.findall(r"https?://\S+", soup.get_text()):
-                found = found.rstrip(".,;:!?)")
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                for found in re.findall(r"https?://\S+", soup.get_text()):
+                    found = found.rstrip(".,;:!?)")
+                    if (
+                        "linkedin.com" not in found.lower()
+                        and "lnkd.in" not in found.lower()
+                    ):
+                        return found
+            # Direct redirect (no interstitial): lnkd.in → target. Use final URL
+            # even if target returns 406, 404, etc. (e.g. GitHub 406, expired lnkd.in).
+            if response.url and response.url != url:
+                final = response.url
                 if (
-                    "linkedin.com" not in found.lower()
-                    and "lnkd.in" not in found.lower()
+                    "linkedin.com" not in final.lower()
+                    and "lnkd.in" not in final.lower()
                 ):
-                    return found
+                    return final
         except Exception:
             pass
         return url
 
     try:
-        response = requests.head(url, timeout=15, allow_redirects=True, headers=headers)
+        response = requests.head(
+            url, timeout=15, allow_redirects=True, headers=headers, verify=verify
+        )
         if response.url != url:
             return response.url
     except Exception:

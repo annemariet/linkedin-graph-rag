@@ -55,9 +55,12 @@ class TestCategorizeUrl:
 class TestResolveRedirect:
     """Tests for lnkd.in interstitial page parsing."""
 
-    def _mock_lnkd_response(self, page_text: str, final_url: str = "") -> MagicMock:
+    def _mock_lnkd_response(
+        self, page_text: str, final_url: str = "", status_code: int = 200
+    ) -> MagicMock:
         """Build a mock requests.get response for a lnkd.in page."""
         resp = MagicMock()
+        resp.status_code = status_code
         resp.url = (
             final_url or "https://lnkd.in/erbBvi7E"
         )  # unchanged = no HTTP redirect
@@ -111,6 +114,18 @@ class TestResolveRedirect:
         result = resolve_redirect(original)
 
         assert result == original
+
+    @patch("requests.get")
+    def test_lnkd_in_direct_redirect_uses_final_url_on_406(self, mock_get):
+        """When lnkd.in redirects directly (no interstitial), final server may return 406.
+        We use response.url to get the resolved target."""
+        mock_get.return_value = self._mock_lnkd_response(
+            "", final_url="https://github.com/datagouv/datagouv-mcp", status_code=406
+        )
+
+        result = resolve_redirect("https://lnkd.in/eAWEsmVw")
+
+        assert result == "https://github.com/datagouv/datagouv-mcp"
 
     def test_non_lnkd_in_uses_head_redirect(self):
         """Non lnkd.in URLs use HEAD-based redirect resolution, not HTML parsing."""
