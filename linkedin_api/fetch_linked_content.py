@@ -194,9 +194,9 @@ def has_resource(url: str) -> bool:
 def save_resource(url: str, result: FetchResult) -> Path:
     """Persist *result* for *url*.
 
-    Writes two files:
-    - ``{stem}.json``  — full FetchResult dict
-    - ``{stem}.md``    — body text (empty string if none)
+    Writes:
+    - ``{stem}.json``  — full FetchResult dict (always)
+    - ``{stem}.md``    — body text (only when content is non-empty)
     """
     stem = _url_stem(url)
     resource_dir = _resource_dir()
@@ -206,8 +206,9 @@ def save_resource(url: str, result: FetchResult) -> Path:
         json.dumps(asdict(result), indent=0, ensure_ascii=False), encoding="utf-8"
     )
 
-    md_path = resource_dir / f"{stem}.md"
-    md_path.write_text(result.content or "", encoding="utf-8")
+    if result.content:
+        md_path = resource_dir / f"{stem}.md"
+        md_path.write_text(result.content, encoding="utf-8")
 
     return json_path
 
