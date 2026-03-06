@@ -352,6 +352,7 @@ def _report_signature(
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
+_REPORT_CACHE_VERSION = 2
 _REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
 
 
@@ -396,6 +397,8 @@ def _load_report_cache(
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
+            return None
         model_id = data.get("model_id", "legacy")
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
@@ -437,6 +440,7 @@ def _save_report_cache(
         path.write_text(
             json.dumps(
                 {
+                    "report_cache_version": _REPORT_CACHE_VERSION,
                     "model_id": sig[0],
                     "n": sig[1],
                     "summarized_at": list(sig[2]),

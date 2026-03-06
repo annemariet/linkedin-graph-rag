@@ -306,6 +306,14 @@ def create_llm(
             max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8192"))
         except ValueError:
             max_tokens = 8192
+        _HAIKU_MAX_TOKENS: dict[str, int] = {
+            "claude-3-haiku-20240307": 4096,
+            "claude-3-5-haiku": 8000,
+        }
+        for pattern, cap in _HAIKU_MAX_TOKENS.items():
+            if pattern in model.lower():
+                max_tokens = min(max_tokens, cap)
+                break
         if not quiet:
             print(f"  LLM: Anthropic ({model}, max_tokens={max_tokens})")
         model_params = {"temperature": 0, "max_tokens": max_tokens}
