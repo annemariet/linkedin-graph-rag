@@ -365,8 +365,6 @@ def _iter_posts_with_urls():
         urls = meta.get("urls") or []
         if not urls:
             continue
-        stem = meta_path.stem.removesuffix(".meta").removesuffix("")
-        # stem is the hash part before ".meta"
         stem = meta_path.name.replace(".meta.json", "")
         urn = registry.get(stem, "")
         yield urn, urls

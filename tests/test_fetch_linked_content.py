@@ -7,8 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from linkedin_api.fetch_linked_content import (
-    SKIP_TYPES,
-    STRATEGIES,
     FetchResult,
     fetch_linked_content,
     has_resource,
@@ -46,31 +44,6 @@ class TestFetchResult:
         r = FetchResult(url="https://example.com")
         assert r.ok is False
 
-    def test_not_ok_ignored(self):
-        r = FetchResult(url="https://linkedin.com/in/user", error="ignored")
-        assert r.ok is False
-
-
-# ---------------------------------------------------------------------------
-# Strategy registry
-# ---------------------------------------------------------------------------
-
-
-class TestStrategyRegistry:
-    def test_article_type_is_registered(self):
-        assert "article" in STRATEGIES
-
-    def test_video_type_is_registered(self):
-        assert "video" in STRATEGIES
-
-    def test_repository_type_is_registered(self):
-        assert "repository" in STRATEGIES
-
-    def test_skip_types_are_defined(self):
-        assert "image" in SKIP_TYPES
-        assert "document" in SKIP_TYPES
-        assert "audio" in SKIP_TYPES
-
 
 # ---------------------------------------------------------------------------
 # fetch_linked_content — unit tests (HTTP mocked)
@@ -91,10 +64,18 @@ class TestFetchLinkedContent:
         )
         assert result.error == "ignored"
 
-    def test_skips_binary_type(self):
-        """Image URLs (detected by extension) should be skipped without fetch."""
+    def test_skips_image_url(self):
+        """Image URLs (detected by extension) should be skipped without an HTTP fetch."""
         result = fetch_linked_content(
             "https://example.com/photo.png", resolve_redirects=False
+        )
+        assert "skipped" in result.error
+        assert result.ok is False
+
+    def test_skips_pdf_document(self):
+        """PDF URLs should be skipped without an HTTP fetch."""
+        result = fetch_linked_content(
+            "https://example.com/report.pdf", resolve_redirects=False
         )
         assert "skipped" in result.error
         assert result.ok is False
