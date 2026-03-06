@@ -142,6 +142,38 @@ class TestResolveRedirect:
         result = resolve_redirect("https://lnkd.in/erbBvi7E")
         assert "presse.economie.gouv.fr" in result
 
+    @pytest.mark.integration
+    def test_real_lnkd_in_eAWEsmVw_resolves_to_github_datagouv_mcp(self):
+        """Live: lnkd.in/eAWEsmVw gives HTTP 406 (no interstitial) but redirects to GitHub.
+        We should resolve to github.com/datagouv/datagouv-mcp."""
+        result = resolve_redirect("https://lnkd.in/eAWEsmVw")
+        assert "github.com" in result
+        assert "datagouv" in result
+
+    @pytest.mark.integration
+    def test_real_lnkd_in_eMcHSAFH_resolves_to_stats_agriculture_with_ssl_verify_off(
+        self, monkeypatch
+    ):
+        """Live: lnkd.in/eMcHSAFH redirects to stats.agriculture.gouv.fr which has SSL cert
+        issues. With REQUESTS_SSL_VERIFY=false, we should resolve to the target."""
+        import warnings
+
+        import urllib3
+
+        monkeypatch.setenv("REQUESTS_SSL_VERIFY", "false")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+            result = resolve_redirect("https://lnkd.in/eMcHSAFH")
+        assert "stats.agriculture.gouv.fr" in result
+        assert "cartostat" in result
+
+    @pytest.mark.integration
+    def test_real_lnkd_in_geemzfeQ_resolves_to_theshamblog(self):
+        """Live: lnkd.in/geemzfeQ should show LinkedIn interstitial with target
+        https://theshamblog.com/an-ai-agent-wrote-a-hit-piece-on-me-part-4/"""
+        result = resolve_redirect("https://lnkd.in/geemzfeQ")
+        assert "theshamblog.com" in result
+
 
 class TestShouldIgnoreUrl:
     def test_linkedin_profile(self):
