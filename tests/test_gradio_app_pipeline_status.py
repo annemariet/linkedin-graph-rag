@@ -1,10 +1,6 @@
 """Unit tests for pipeline progress rendering in gradio_app."""
 
 from linkedin_api.gradio_app import (
-    CONTENT_LEVEL_CHOICES,
-    CONTENT_LEVEL_FULL,
-    CONTENT_LEVEL_MINIMAL,
-    CONTENT_LEVEL_SUMMARY,
     PIPELINE_HINT_TEXT,
     REPORT_MODE_CHOICES,
     REPORT_MODE_PER_CATEGORY,
@@ -59,10 +55,3 @@ def test_report_mode_choices_have_label_value_pairs():
     assert REPORT_MODE_PER_CATEGORY in values
     assert REPORT_MODE_SINGLE_PASS in values
 
-
-def test_content_level_choices_have_label_value_pairs():
-    """Gradio dropdown passes value (2nd elem); each choice is (label, value)."""
-    values = [v for _, v in CONTENT_LEVEL_CHOICES]
-    assert CONTENT_LEVEL_MINIMAL in values
-    assert CONTENT_LEVEL_SUMMARY in values
-    assert CONTENT_LEVEL_FULL in values
