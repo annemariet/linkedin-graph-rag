@@ -28,13 +28,19 @@ def test_render_pipeline_status_escapes_label_html():
 
 def test_status_from_pipeline_line_parses_enriching_fraction():
     progress, label = _status_from_pipeline_line("Enriching 3/10…")
-    assert progress == pytest.approx(0.26)
+    assert progress == pytest.approx(0.21)  # 0.15 + 0.2 * 3/10
     assert label == "Enriching…"
+
+
+def test_status_from_pipeline_line_parses_fetching_linked_urls():
+    progress, label = _status_from_pipeline_line("Fetching linked URLs 2/5…")
+    assert progress == pytest.approx(0.41)  # 0.35 + 0.15 * 2/5
+    assert label == "Fetching linked URLs…"
 
 
 def test_status_from_pipeline_line_parses_summarizing_fraction():
     progress, label = _status_from_pipeline_line("Summarizing batch 2/4…")
-    assert progress == 0.5
+    assert progress == pytest.approx(0.6)  # 0.5 + 0.2 * 2/4
     assert label == "Summarizing…"
 
 

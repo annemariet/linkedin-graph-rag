@@ -309,6 +309,31 @@ def process_post_linked_content(
 
 
 # ---------------------------------------------------------------------------
+# Pipeline integration (streaming)
+# ---------------------------------------------------------------------------
+
+
+def fetch_linked_content_streaming(
+    limit: int | None = None,
+    skip_cached: bool = True,
+):
+    """
+    Generator for pipeline use. Yields (posts_done, total_posts) after each post.
+
+    Returns total URLs fetched via StopIteration.value.
+    """
+    posts = list(_iter_posts_with_urls())
+    if limit:
+        posts = posts[:limit]
+    urls_fetched = 0
+    for i, (urn, urls) in enumerate(posts):
+        results = process_post_linked_content(urls, skip_cached=skip_cached)
+        urls_fetched += sum(1 for r in results if r.ok)
+        yield i + 1, len(posts)
+    return urls_fetched
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 

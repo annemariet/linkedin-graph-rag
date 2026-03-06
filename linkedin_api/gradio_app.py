@@ -277,24 +277,31 @@ def _parse_fraction_status(
 
 def _status_from_pipeline_line(line: str) -> tuple[float, str] | None:
     """Map pipeline stream lines to concise UI steps + normalized progress."""
-    enrich = _parse_fraction_status(line, "Enriching ", 0.2, 0.2, "Enriching…")
+    enrich = _parse_fraction_status(line, "Enriching ", 0.15, 0.2, "Enriching…")
     if enrich is not None:
         return enrich
+    fetch_urls = _parse_fraction_status(
+        line, "Fetching linked URLs ", 0.35, 0.15, "Fetching linked URLs…"
+    )
+    if fetch_urls is not None:
+        return fetch_urls
     summarize = _parse_fraction_status(
-        line, "Summarizing batch ", 0.4, 0.2, "Summarizing…"
+        line, "Summarizing batch ", 0.5, 0.2, "Summarizing…"
     )
     if summarize is not None:
         return summarize
     if line.startswith("Starting pipeline"):
         return 0.0, "Fetching…"
     if "Collected" in line:
-        return 0.2, "Enriching…"
+        return 0.15, "Enriching…"
     if "Enriched" in line:
-        return 0.4, "Summarizing…"
+        return 0.35, "Fetching linked URLs…"
+    if "Fetched" in line and "URL" in line:
+        return 0.5, "Summarizing…"
     if "Summarized" in line:
-        return 0.6, "Finishing up…"
+        return 0.7, "Finishing up…"
     if "✅ Done" in line:
-        return 0.75, "Generating report…"
+        return 0.85, "Generating report…"
     if line.startswith("❌"):
         return 1.0, "Failed."
     return None
