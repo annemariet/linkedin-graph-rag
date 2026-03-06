@@ -2,7 +2,67 @@
 
 import pytest
 
-from linkedin_api.llm_config import _resolve_api_key
+from linkedin_api.llm_config import _resolve_api_key, _resolve_provider_model
+
+
+def test_resolve_provider_model_stage_override(monkeypatch):
+    """Stage-specific env vars override global when set."""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-4-5")
+    monkeypatch.setenv("LLM_SUMMARY_PROVIDER", "ollama")
+    monkeypatch.setenv("LLM_SUMMARY_MODEL", "llama3.2:3b")
+    monkeypatch.setenv("LLM_REPORT_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_REPORT_MODEL", "claude-3-5-sonnet-20241022")
+
+    p, m = _resolve_provider_model("summary")
+    assert p == "ollama"
+    assert m == "llama3.2:3b"
+
+    p, m = _resolve_provider_model("report")
+    assert p == "anthropic"
+    assert m == "claude-3-5-sonnet-20241022"
+
+    p, m = _resolve_provider_model(None)
+    assert p == "anthropic"
+    assert m == "claude-sonnet-4-5"
+
+
+def test_get_report_model_id_includes_model_in_cache_key(monkeypatch):
+    """Report model id used for cache invalidation when model changes."""
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-4-5")
+    from linkedin_api.llm_config import get_report_model_id
+
+    assert get_report_model_id() == "anthropic:claude-sonnet-4-5"
+
+    monkeypatch.setenv("LLM_REPORT_PROVIDER", "ollama")
+    monkeypatch.setenv("LLM_REPORT_MODEL", "llama3.2:3b")
+    assert get_report_model_id() == "ollama:llama3.2:3b"
+
+    assert get_report_model_id("mammouth", "gpt-4o") == "mammouth:gpt-4o"
+
+
+def test_get_default_provider_model_maps_openai_to_mammouth(monkeypatch):
+    """UI default for openai provider is mammouth."""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+    from linkedin_api.llm_config import get_default_provider_model
+
+    p, m = get_default_provider_model("summary")
+    assert p == "mammouth"
+    assert m == "gpt-4o"
+
+
+def test_resolve_provider_model_fallback_to_global(monkeypatch):
+    """When stage-specific vars unset, use global."""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.delenv("LLM_SUMMARY_PROVIDER", raising=False)
+    monkeypatch.delenv("LLM_SUMMARY_MODEL", raising=False)
+
+    p, m = _resolve_provider_model("summary")
+    assert p == "openai"
+    assert m == "gpt-4o-mini"
 
 
 def test_create_llm_unknown_provider(monkeypatch):

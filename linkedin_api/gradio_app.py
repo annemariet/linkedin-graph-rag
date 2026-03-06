@@ -26,8 +26,14 @@ if TYPE_CHECKING:
     from neo4j import Driver
 
 from linkedin_api.activity_csv import get_data_dir
-from linkedin_api.content_store import list_summarized_metadata
-from linkedin_api.llm_config import create_embedder, create_llm
+from linkedin_api.content_store import list_summarized_metadata, load_content
+from linkedin_api.llm_config import (
+    create_embedder,
+    create_llm,
+    get_default_provider_model,
+    get_report_model_id,
+)
+from linkedin_api.llm_models import fetch_models_for_provider
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -37,6 +43,7 @@ from linkedin_api.query_graphrag import (
     create_vector_retriever,
 )
 from linkedin_api.run_pipeline import run_pipeline_ui_streaming
+from linkedin_api.summarize_activity import _parse_last
 
 _REPORT_SYSTEM = (
     "You are a concise analyst. Summarize the user's LinkedIn activity globally. "
@@ -46,6 +53,7 @@ _REPORT_SYSTEM = (
 REPORT_MAX_POSTS = 50
 REPORT_BATCH_CHAR_LIMIT = 4000
 REPORT_MAX_SUMMARY_CHARS = 400
+REPORT_MAX_FULL_POST_CHARS = 1500
 
 # Order defines report sections. "other" gets summaries + links only (no LLM).
 REPORT_CATEGORIES = (
@@ -74,9 +82,18 @@ def _truncate(s: str, max_len: int) -> str:
     return s[: max_len - 3].rstrip() + "..."
 
 
-def _format_post_for_prompt(m: dict) -> str:
-    summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    parts = [f"- {summary}"]
+def _format_post_for_prompt(m: dict, use_full_posts: bool = True) -> str:
+    """Format post for LLM prompt. Uses full content or summary."""
+    text: str
+    if use_full_posts and m.get("urn"):
+        content = load_content(m["urn"])
+        if content:
+            text = _truncate(content, REPORT_MAX_FULL_POST_CHARS)
+        else:
+            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+    else:
+        text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+    parts = [f"- {text}"]
     if m.get("topics"):
         parts.append(f"  Topics: {', '.join(m['topics'])}")
     if m.get("technologies"):
@@ -84,13 +101,15 @@ def _format_post_for_prompt(m: dict) -> str:
     return "\n".join(parts)
 
 
-def _batches_by_char_limit(metas: list[dict], char_limit: int) -> list[list[dict]]:
+def _batches_by_char_limit(
+    metas: list[dict], char_limit: int, use_full_posts: bool = True
+) -> list[list[dict]]:
     """Split metas into batches; start a new batch when adding the next post would exceed char_limit."""
     batches: list[list[dict]] = []
     current: list[dict] = []
     current_len = 0
     for m in metas:
-        block = _format_post_for_prompt(m)
+        block = _format_post_for_prompt(m, use_full_posts)
         if current and current_len + len(block) > char_limit:
             batches.append(current)
             current = []
@@ -102,9 +121,11 @@ def _batches_by_char_limit(metas: list[dict], char_limit: int) -> list[list[dict
     return batches
 
 
-def _summarize_batch(llm, metas: list[dict], category_label: str) -> str:
+def _summarize_batch(
+    llm, metas: list[dict], category_label: str, use_full_posts: bool = True
+) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
-    block = "\n\n".join(_format_post_for_prompt(m) for m in metas)
+    block = "\n\n".join(_format_post_for_prompt(m, use_full_posts) for m in metas)
     system = (
         "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
         "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
@@ -114,56 +135,91 @@ def _summarize_batch(llm, metas: list[dict], category_label: str) -> str:
     return (response.content if hasattr(response, "content") else str(response)).strip()
 
 
-def _format_other_section(metas: list[dict]) -> str:
-    """Format 'other' category as summary + link per post (no LLM)."""
+def _format_other_section(metas: list[dict], use_full_posts: bool = True) -> str:
+    """Format 'other' category as summary + link (no LLM). Use full content only when post < summary."""
     lines = []
     for m in metas:
         summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
+        if use_full_posts and m.get("urn"):
+            content = load_content(m["urn"])
+            if content and len(content) <= len(m["summary"]):
+                text = content
+            else:
+                text = summary
+        else:
+            text = summary
         url = (m.get("post_url") or "").strip()
         if url:
-            lines.append(f"- {summary} — [post]({url})")
+            lines.append(f"- {text} — [post]({url})")
         else:
-            lines.append(f"- {summary}")
+            lines.append(f"- {text}")
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
-def _report_signature() -> tuple[int, tuple[str, ...]] | None:
-    """Signature of the post set used for the report. None if no posts. Used for cache invalidation."""
+def _report_signature(
+    use_full_posts: bool = True,
+    report_provider: str | None = None,
+    report_model: str | None = None,
+) -> tuple[str, int, tuple[str, ...], bool] | None:
+    """Signature of post set + report model + use_full_posts. None if no posts. Used for cache invalidation."""
     all_metas = list_summarized_metadata()
     if not all_metas:
         return None
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     metas = all_metas[:REPORT_MAX_POSTS]
-    return (len(all_metas), tuple((m.get("summarized_at") or "") for m in metas))
+    model_id = get_report_model_id(
+        provider_override=report_provider,
+        model_override=report_model,
+    )
+    return (
+        model_id,
+        len(all_metas),
+        tuple((m.get("summarized_at") or "") for m in metas),
+        use_full_posts,
+    )
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
 
 
-def _load_report_cache() -> tuple[str, tuple[int, tuple[str, ...]]] | None:
-    """Load cached report from disk. Returns (report, signature) or None."""
+def _load_report_cache(
+    use_full_posts: bool,
+) -> tuple[str, tuple[str, int, tuple[str, ...], bool]] | None:
+    """Load cached report from disk. Returns (report, signature) or None if mode mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        model_id = data.get("model_id", "legacy")
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
+        cached_full = data.get("use_full_posts", True)
+        if cached_full != use_full_posts:
+            return None
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (n, at))
+        return (report, (model_id, n, at, use_full_posts))
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...]]) -> None:
+def _save_report_cache(
+    report: str, sig: tuple[str, int, tuple[str, ...], bool]
+) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     try:
         path.write_text(
             json.dumps(
-                {"n": sig[0], "summarized_at": list(sig[1]), "report": report},
+                {
+                    "model_id": sig[0],
+                    "n": sig[1],
+                    "summarized_at": list(sig[2]),
+                    "use_full_posts": sig[3],
+                    "report": report,
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -172,7 +228,11 @@ def _save_report_cache(report: str, sig: tuple[int, tuple[str, ...]]) -> None:
         pass
 
 
-def generate_activity_report() -> str:
+def generate_activity_report(
+    use_full_posts: bool = True,
+    report_provider: str | None = None,
+    report_model: str | None = None,
+) -> str:
     """Build report by category. Batches by char limit per category; 'other' is summaries + links only."""
     setup_gcp_credentials()
     all_metas = list_summarized_metadata()
@@ -187,7 +247,12 @@ def generate_activity_report() -> str:
             cat = "other"
         by_category.setdefault(cat, []).append(m)
     try:
-        llm = create_llm(json_mode=False)
+        llm = create_llm(
+            stage="report",
+            json_mode=False,
+            provider_override=report_provider,
+            model_override=report_model,
+        )
         parts = []
         for cat in REPORT_CATEGORIES:
             category_metas = by_category.get(cat)
@@ -195,10 +260,16 @@ def generate_activity_report() -> str:
                 continue
             label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
             if cat == "other":
-                parts.append(f"## {label}\n\n{_format_other_section(category_metas)}")
+                parts.append(
+                    f"## {label}\n\n{_format_other_section(category_metas, use_full_posts)}"
+                )
                 continue
-            batches = _batches_by_char_limit(category_metas, REPORT_BATCH_CHAR_LIMIT)
-            batch_summaries = [_summarize_batch(llm, batch, label) for batch in batches]
+            batches = _batches_by_char_limit(
+                category_metas, REPORT_BATCH_CHAR_LIMIT, use_full_posts
+            )
+            batch_summaries = [
+                _summarize_batch(llm, batch, label, use_full_posts) for batch in batches
+            ]
             parts.append(f"## {label}\n\n" + "\n\n".join(batch_summaries))
         if not parts:
             return "No posts to summarize."
@@ -237,73 +308,103 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 PIPELINE_HINT_TEXT = "Click Get latest news report to refresh data and get a summary."
 MIN_PROGRESS_VISIBILITY_SECONDS = 0.6
+PERIOD_SYNTAX = "e.g. 1d, 7d, 14d, 30d, 1w, 2w, 1m"
 
 
 def _render_pipeline_status(
-    step_label: str | None = None, progress: float | None = None
+    step_label: str | None = None,
+    stage_progress: tuple[int, float] | None = None,
 ) -> str:
-    """Render status below the run button: hint when idle, label + progress bar while running."""
-    if step_label is None or progress is None:
+    """
+    Render status below the run button: hint when idle, stage label + 5-segment bar while running.
+    stage_progress: (stage_index 0-4, progress_in_stage 0-1). Bar splits into 5 segments.
+    """
+    if step_label is None or stage_progress is None:
         return (
             '<div style="color: #6b7280; margin: 0.25rem 0 0.5rem 0;">'
             f"{html.escape(PIPELINE_HINT_TEXT)}"
             "</div>"
         )
-    width = int(round(max(0.0, min(1.0, progress)) * 100))
+    stage_idx, prog = stage_progress
+    stage_idx = max(0, min(4, stage_idx))
+    prog = max(0.0, min(1.0, prog))
+    segments: list[float] = []
+    for i in range(5):
+        if i < stage_idx:
+            segments.append(1.0)
+        elif i == stage_idx:
+            segments.append(prog)
+        else:
+            segments.append(0.0)
+    pct = [int(round(s * 100)) for s in segments]
+    segment_css = (
+        "flex: 1; min-width: 0; height: 100%; background: #e5e7eb; "
+        "overflow: hidden; display: flex;"
+    )
+    fill_css = "height: 100%; background: #f97316; transition: width 200ms ease;"
     return (
         f'<div style="margin: 0.25rem 0; color: #111827;">{html.escape(step_label)}</div>'
-        '<div style="width: 100%; height: 10px; background: #e5e7eb; '
-        'border-radius: 9999px; overflow: hidden;">'
-        f'<div style="width: {width}%; height: 100%; background: #f97316; '
-        'transition: width 200ms ease;"></div>'
+        '<div style="display: flex; width: 100%; height: 10px; gap: 2px; '
+        'border-radius: 4px; overflow: hidden;">'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[0]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[1]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[2]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[3]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[4]}%;"></div></div>'
         "</div>"
     )
 
 
-def _parse_fraction_status(
-    line: str, prefix: str, base: float, span: float, step_label: str
-) -> tuple[float, str] | None:
+def _parse_fraction(line: str, prefix: str) -> tuple[int, int] | None:
+    """Extract (done, total) from lines like 'Enriching 3/10…' or 'Summarizing batch 2/5…'."""
     if not line.startswith(prefix) or "/" not in line:
         return None
     try:
         done_str, total_str = line.removeprefix(prefix).rstrip("…").split("/")
-        done, total = int(done_str), int(total_str)
-        if total <= 0:
-            return base, step_label
-        return (base + span * done / total), step_label
+        return int(done_str), int(total_str)
     except (ValueError, IndexError):
         return None
 
 
-def _status_from_pipeline_line(line: str) -> tuple[float, str] | None:
-    """Map pipeline stream lines to concise UI steps + normalized progress."""
-    enrich = _parse_fraction_status(line, "Enriching ", 0.15, 0.2, "Enriching…")
-    if enrich is not None:
-        return enrich
-    fetch_urls = _parse_fraction_status(
-        line, "Fetching linked URLs ", 0.35, 0.15, "Fetching linked URLs…"
-    )
-    if fetch_urls is not None:
-        return fetch_urls
-    summarize = _parse_fraction_status(
-        line, "Summarizing batch ", 0.5, 0.2, "Summarizing…"
-    )
-    if summarize is not None:
-        return summarize
+def _status_from_pipeline_line(line: str) -> tuple[tuple[int, float], str] | None:
+    """
+    Map pipeline stream lines to (stage_index, progress_in_stage), label.
+    Stages: 0=fetching, 1=enriching, 2=fetch linked URLs, 3=summarizing, 4=preparing report.
+    """
     if line.startswith("Starting pipeline"):
-        return 0.0, "Fetching…"
+        return (0, 0.0), "fetching…"
     if "Collected" in line:
-        return 0.15, "Enriching…"
+        return (0, 1.0), "fetching…"
+    frac = _parse_fraction(line, "Enriching ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (1, p), f"enriching [{done}/{total}]…"
     if "Enriched" in line:
-        return 0.35, "Fetching linked URLs…"
+        return (1, 1.0), "enriching…"
+    frac = _parse_fraction(line, "Fetching linked URLs ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (2, p), f"fetching linked URLs [{done}/{total}]…"
     if "Fetched" in line and "URL" in line:
-        return 0.5, "Summarizing…"
+        return (2, 1.0), "fetching linked URLs…"
+    frac = _parse_fraction(line, "Summarizing batch ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (3, p), f"summarizing [{done}/{total}]…"
     if "Summarized" in line:
-        return 0.7, "Finishing up…"
+        return (3, 1.0), "summarizing…"
     if "✅ Done" in line:
-        return 0.85, "Generating report…"
+        return (4, 0.0), "preparing report…"
     if line.startswith("❌"):
-        return 1.0, "Failed."
+        return (4, 1.0), "Failed."
     return None
 
 
@@ -486,9 +587,11 @@ def create_pipeline_interface():
         )
         with gr.Row():
             period = gr.Dropdown(
-                choices=["7d", "14d", "30d"],
+                choices=["1d", "2d", "7d", "14d", "30d", "1w", "2w", "1m"],
                 value="7d",
                 label="Period",
+                allow_custom_value=True,
+                info=PERIOD_SYNTAX,
             )
             from_cache = gr.Checkbox(
                 value=False,
@@ -496,6 +599,84 @@ def create_pipeline_interface():
                 info="No LinkedIn API call; use only previously fetched data.",
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
+            use_full_posts = gr.Checkbox(
+                value=True,
+                label="Use full post content",
+                info="Default: use full posts. Uncheck to use short summaries (legacy).",
+            )
+        with gr.Accordion("Model selection", open=False):
+            sp, sm = get_default_provider_model("summary")
+            rp, rm = get_default_provider_model("report")
+            provider_choices = ["ollama", "anthropic", "mammouth"]
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("**Summary** (categorization & short summary)")
+                    summary_provider = gr.Dropdown(
+                        choices=provider_choices,
+                        value=sp,
+                        label="Provider",
+                    )
+                    summary_model = gr.Dropdown(
+                        choices=[sm],
+                        value=sm,
+                        label="Model",
+                        allow_custom_value=True,
+                    )
+                with gr.Column():
+                    gr.Markdown("**Report** (batch summaries & final report)")
+                    report_provider = gr.Dropdown(
+                        choices=provider_choices,
+                        value=rp,
+                        label="Provider",
+                    )
+                    report_model = gr.Dropdown(
+                        choices=[rm],
+                        value=rm,
+                        label="Model",
+                        allow_custom_value=True,
+                    )
+            refresh_models_btn = gr.Button("Refresh models", size="sm")
+
+            def refresh_summary_models(provider):
+                models = fetch_models_for_provider(provider)
+                choices = models if models else ["(Refresh to load)"]
+                return gr.update(choices=choices, value=choices[0] if choices else "")
+
+            def refresh_report_models(provider):
+                models = fetch_models_for_provider(provider)
+                choices = models if models else ["(Refresh to load)"]
+                return gr.update(choices=choices, value=choices[0] if choices else "")
+
+            summary_provider.change(
+                refresh_summary_models,
+                inputs=[summary_provider],
+                outputs=[summary_model],
+            )
+            report_provider.change(
+                refresh_report_models,
+                inputs=[report_provider],
+                outputs=[report_model],
+            )
+
+            def refresh_all(summary_prov, report_prov):
+                s_models = fetch_models_for_provider(summary_prov)
+                r_models = fetch_models_for_provider(report_prov)
+                return (
+                    gr.update(
+                        choices=s_models or ["(Refresh to load)"],
+                        value=(s_models[0] if s_models else ""),
+                    ),
+                    gr.update(
+                        choices=r_models or ["(Refresh to load)"],
+                        value=(r_models[0] if r_models else ""),
+                    ),
+                )
+
+            refresh_models_btn.click(
+                refresh_all,
+                inputs=[summary_provider, report_provider],
+                outputs=[summary_model, report_model],
+            )
         run_btn = gr.Button("Get latest news report", variant="primary")
         pipeline_status = gr.HTML(
             value=_render_pipeline_status(), elem_id="pipeline-status"
@@ -509,19 +690,36 @@ def create_pipeline_interface():
 
         def prepare_run(cache):
             return (
-                _render_pipeline_status("Fetching…", 0.0),
-                gr.update(value="Running pipeline…"),
+                _render_pipeline_status("fetching…", (0, 0.0)),
+                gr.update(),
                 cache,
                 gr.update(interactive=False),
             )
 
-        def run_all(last: str, from_cache: bool, lim, cache):
+        def run_all(
+            last: str,
+            from_cache: bool,
+            lim,
+            use_full: bool,
+            sum_prov,
+            sum_mod,
+            rep_prov,
+            rep_mod,
+            cache,
+        ):
             logger.info(
                 "Pipeline & report started: last=%s from_cache=%s limit=%s",
                 last,
                 from_cache,
                 lim,
             )
+            last_clean = (last or "").strip()
+            if _parse_last(last_clean) is None:
+                err = f"Invalid period '{last}'. {PERIOD_SYNTAX}"
+                yield _render_pipeline_status(
+                    "Invalid period", (0, 0.0)
+                ), err, cache, gr.update(interactive=True)
+                return
             started_at = time.monotonic()
 
             def _ensure_min_progress_visibility() -> None:
@@ -535,46 +733,48 @@ def create_pipeline_interface():
             except (TypeError, ValueError):
                 lim_int = None
 
-            progress_value = 0.0
-            step_label = "Fetching…"
+            stage_progress: tuple[int, float] = (0, 0.0)
+            step_label = "fetching…"
             try:
                 for chunk in run_pipeline_ui_streaming(
-                    last=last,
+                    last=last_clean,
                     from_cache=from_cache,
                     limit=lim_int,
+                    summary_provider=sum_prov or None,
+                    summary_model=sum_mod or None,
                 ):
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
                     if status_update is not None:
-                        progress_value, step_label = status_update
+                        stage_progress, step_label = status_update
                     if last.startswith("❌"):
                         _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
-                            step_label, progress_value
-                        ), gr.update(
-                            value="⚠️ Pipeline failed. See terminal logs for details."
-                        ), cache, gr.update(
+                            step_label, stage_progress
+                        ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
                             interactive=True
                         )
                         return
                     yield _render_pipeline_status(
-                        step_label, progress_value
+                        step_label, stage_progress
                     ), gr.update(), cache, gr.update(interactive=False)
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
                 _ensure_min_progress_visibility()
-                yield _render_pipeline_status("Failed.", 1.0), gr.update(
-                    value=f"⚠️ Pipeline failed: {err_msg}"
-                ), cache, gr.update(interactive=True)
+                yield _render_pipeline_status(
+                    "Failed.", (4, 1.0)
+                ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(interactive=True)
                 return
 
-            progress_value, step_label = 0.75, "Generating report…"
+            stage_progress, step_label = (4, 0.0), "preparing report…"
             yield _render_pipeline_status(
-                step_label, progress_value
+                step_label, stage_progress
             ), gr.update(), cache, gr.update(interactive=False)
-            sig = _report_signature()
-            disk = _load_report_cache()
+            sig = _report_signature(
+                use_full, report_provider=rep_prov or None, report_model=rep_mod or None
+            )
+            disk = _load_report_cache(use_full)
             if disk is not None and disk[1] == sig:
                 result = disk[0]
                 logger.info("Report cache hit (disk)")
@@ -584,7 +784,11 @@ def create_pipeline_interface():
                 logger.info("Report cache hit (session)")
             else:
                 try:
-                    result = generate_activity_report()
+                    result = generate_activity_report(
+                        use_full_posts=use_full,
+                        report_provider=rep_prov or None,
+                        report_model=rep_mod or None,
+                    )
                     cache = (result, sig) if sig else None
                     if sig is not None:
                         _save_report_cache(result, sig)
@@ -592,7 +796,7 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
-            yield _render_pipeline_status("Done.", 1.0), result, cache, gr.update(
+            yield _render_pipeline_status(None, None), result, cache, gr.update(
                 interactive=True
             )
 
@@ -603,8 +807,19 @@ def create_pipeline_interface():
             queue=False,
         ).then(
             fn=run_all,
-            inputs=[period, from_cache, limit, report_cache_state],
+            inputs=[
+                period,
+                from_cache,
+                limit,
+                use_full_posts,
+                summary_provider,
+                summary_model,
+                report_provider,
+                report_model,
+                report_cache_state,
+            ],
             outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            show_progress=False,
         )
     return block
 
