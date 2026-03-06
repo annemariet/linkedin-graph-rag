@@ -335,8 +335,18 @@ def fetch_linked_content_streaming(
 
 
 def _iter_posts_with_urls():
-    """Yield (urn, urls) for all posts that have URLs in their metadata."""
-    from linkedin_api.content_store import _content_dir, _load_registry
+    """Yield (urn, urls) for all posts that have URLs.
+
+    First checks the ``urls`` field in ``.meta.json``; if empty, falls back to
+    extracting URLs from the ``.md`` content file and persists them so future
+    runs skip re-extraction.
+    """
+    from linkedin_api.content_store import (
+        _content_dir,
+        _load_registry,
+        update_urls_metadata,
+    )
+    from linkedin_api.utils.urls import extract_urls_from_text
 
     content_dir = _content_dir()
     registry = _load_registry()
@@ -346,11 +356,23 @@ def _iter_posts_with_urls():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
+
         urls = meta.get("urls") or []
-        if not urls:
-            continue
         stem = meta_path.name.replace(".meta.json", "")
         urn = registry.get(stem, "")
+
+        if not urls:
+            md_path = content_dir / f"{stem}.md"
+            if md_path.exists():
+                text = md_path.read_text(encoding="utf-8")
+                urls = [
+                    u for u in extract_urls_from_text(text) if not should_ignore_url(u)
+                ]
+                if urls and urn:
+                    update_urls_metadata(urn, urls)
+
+        if not urls:
+            continue
         yield urn, urls
 
 

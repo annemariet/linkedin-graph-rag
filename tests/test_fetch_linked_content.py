@@ -6,8 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from linkedin_api.content_store import load_metadata, save_content, save_metadata
 from linkedin_api.fetch_linked_content import (
     FetchResult,
+    _iter_posts_with_urls,
     fetch_linked_content,
     has_resource,
     load_resource,
@@ -402,3 +404,66 @@ class TestProcessPostLinkedContent:
 
     def test_empty_list_returns_empty(self):
         assert process_post_linked_content([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _iter_posts_with_urls — URL discovery from metadata and .md fallback
+# ---------------------------------------------------------------------------
+
+
+class TestIterPostsWithUrls:
+    URN = "urn:li:activity:123"
+
+    def test_yields_urls_from_metadata(self):
+        """Posts with urls already in .meta.json are yielded directly."""
+        save_content(self.URN, "some text")
+        save_metadata(self.URN, urls=["https://example.com/article"])
+
+        results = list(_iter_posts_with_urls())
+
+        assert len(results) == 1
+        _, urls = results[0]
+        assert urls == ["https://example.com/article"]
+
+    def test_extracts_urls_from_md_when_metadata_urls_empty(self):
+        """When urls field is absent, URLs are extracted from the .md content."""
+        save_content(self.URN, "Check out https://github.com/user/repo for details.")
+        save_metadata(self.URN)  # no urls
+
+        results = list(_iter_posts_with_urls())
+
+        assert len(results) == 1
+        _, urls = results[0]
+        assert "https://github.com/user/repo" in urls
+
+    def test_persists_extracted_urls_to_metadata(self):
+        """URLs extracted from .md are written back to .meta.json for future runs."""
+        save_content(self.URN, "See https://arxiv.org/abs/2401.00000 for the paper.")
+        save_metadata(self.URN)
+
+        list(_iter_posts_with_urls())
+
+        meta = load_metadata(self.URN)
+        assert meta is not None
+        assert "https://arxiv.org/abs/2401.00000" in meta.get("urls", [])
+
+    def test_filters_linkedin_urls_from_md_extraction(self):
+        """LinkedIn profile/hashtag URLs in .md content are excluded."""
+        save_content(
+            self.URN,
+            "Follow https://www.linkedin.com/in/johndoe and visit https://example.com/good",
+        )
+        save_metadata(self.URN)
+
+        results = list(_iter_posts_with_urls())
+
+        _, urls = results[0]
+        assert all("linkedin.com/in/" not in u for u in urls)
+        assert "https://example.com/good" in urls
+
+    def test_skips_posts_with_no_urls_anywhere(self):
+        """Posts with no urls in metadata and no URLs in .md are not yielded."""
+        save_content(self.URN, "Just some plain text with no links.")
+        save_metadata(self.URN)
+
+        assert list(_iter_posts_with_urls()) == []
