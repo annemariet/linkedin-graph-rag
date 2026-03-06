@@ -77,10 +77,19 @@ CATEGORY_LABELS = {
 
 REPORT_MODE_PER_CATEGORY = "per_category"
 REPORT_MODE_SINGLE_PASS = "single_pass"
-REPORT_MODE_CHOICES = [
-    ("Per category summary", REPORT_MODE_PER_CATEGORY),
-    ("Single pass (all posts)", REPORT_MODE_SINGLE_PASS),
-]
+REPORT_MODE_LABEL_PER_CATEGORY = "Per category summary"
+REPORT_MODE_LABEL_SINGLE_PASS = "Single pass (all posts)"
+REPORT_MODE_CHOICES = [REPORT_MODE_LABEL_PER_CATEGORY, REPORT_MODE_LABEL_SINGLE_PASS]
+
+
+def _normalize_report_mode(value: str | None) -> str:
+    """Normalize dropdown value (label) to mode constant."""
+    if not value:
+        return REPORT_MODE_PER_CATEGORY
+    v = (value or "").strip().lower()
+    if "singlepass" in v or "single pass" in v or v == REPORT_MODE_SINGLE_PASS:
+        return REPORT_MODE_SINGLE_PASS
+    return REPORT_MODE_PER_CATEGORY
 
 
 def _truncate(s: str, max_len: int) -> str:
@@ -128,17 +137,25 @@ def _batches_by_char_limit(
     return batches
 
 
+_BATCH_SYSTEM = (
+    "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
+    "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
+)
+
+
 def _summarize_batch(
-    llm, metas: list[dict], category_label: str, use_full_posts: bool = True
+    llm,
+    metas: list[dict],
+    category_label: str,
+    use_full_posts: bool = True,
+    prompts_out: list[str] | None = None,
 ) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
     block = "\n\n".join(_format_post_for_prompt(m, use_full_posts) for m in metas)
-    system = (
-        "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
-        "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
-    )
     prompt = f"Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
-    response = llm.invoke(prompt, system_instruction=system)
+    if prompts_out is not None:
+        prompts_out.append(prompt)
+    response = llm.invoke(prompt, system_instruction=_BATCH_SYSTEM)
     return (response.content if hasattr(response, "content") else str(response)).strip()
 
 
@@ -203,6 +220,7 @@ def _generate_single_pass_report(
     """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
     blocks = "\n\n".join(_format_post_for_single_pass(m, use_full_posts) for m in metas)
     prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
+    _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
     llm = create_llm(
         stage="report",
         json_mode=False,
@@ -239,6 +257,36 @@ def _report_signature(
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
+_REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
+
+
+def _save_report_prompt_debug(mode: str, system: str, prompts: list[str]) -> None:
+    """Save report prompt(s) to a local file for debugging. Viewable as Markdown."""
+    path = get_data_dir() / _REPORT_PROMPT_DEBUG_FILE
+    try:
+        parts = [
+            f"# Report prompt ({mode})\n\n## System instruction\n\n```\n{system}\n```\n"
+        ]
+        for i, p in enumerate(prompts):
+            sep = "\n\n---\n\n" if i > 0 else ""
+            parts.append(
+                f"{sep}## User prompt{' ' + str(i + 1) if len(prompts) > 1 else ''}\n\n```\n{p}\n```"
+            )
+        path.write_text("\n".join(parts), encoding="utf-8")
+        logger.info("Report prompt saved to %s", path)
+    except OSError as e:
+        logger.warning("Could not save report prompt: %s", e)
+
+
+def _load_report_prompt_debug() -> str:
+    """Load last report prompt from file. Returns content or placeholder."""
+    path = get_data_dir() / _REPORT_PROMPT_DEBUG_FILE
+    if not path.exists():
+        return "_No prompt saved yet. Run the pipeline to generate a report._"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return "_Could not read prompt file._"
 
 
 def _load_report_cache(
@@ -329,6 +377,7 @@ def generate_activity_report(
             model_override=report_model,
         )
         parts = []
+        prompts_collected: list[str] = []
         for cat in REPORT_CATEGORIES:
             category_metas = by_category.get(cat)
             if not category_metas:
@@ -343,9 +392,14 @@ def generate_activity_report(
                 category_metas, REPORT_BATCH_CHAR_LIMIT, use_full_posts
             )
             batch_summaries = [
-                _summarize_batch(llm, batch, label, use_full_posts) for batch in batches
+                _summarize_batch(
+                    llm, batch, label, use_full_posts, prompts_out=prompts_collected
+                )
+                for batch in batches
             ]
             parts.append(f"## {label}\n\n" + "\n\n".join(batch_summaries))
+        if prompts_collected:
+            _save_report_prompt_debug("per-category", _BATCH_SYSTEM, prompts_collected)
         if not parts:
             return "No posts to summarize."
         return "\n\n".join(parts)
@@ -640,7 +694,7 @@ def create_pipeline_interface():
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
             report_mode = gr.Dropdown(
                 choices=REPORT_MODE_CHOICES,
-                value=REPORT_MODE_PER_CATEGORY,
+                value=REPORT_MODE_LABEL_PER_CATEGORY,
                 label="Report mode",
             )
             use_full_posts = gr.Checkbox(
@@ -730,7 +784,23 @@ def create_pipeline_interface():
             label="Report",
             elem_id="report-output",
         )
+        with gr.Accordion("Debug: Last report prompt", open=False):
+            prompt_debug_btn = gr.Button("View last prompt", size="sm")
+            prompt_debug_output = gr.Markdown(
+                value=_load_report_prompt_debug(),
+                label="Prompt",
+                elem_id="prompt-debug-output",
+            )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
+
+        def load_prompt_debug():
+            return _load_report_prompt_debug()
+
+        prompt_debug_btn.click(
+            fn=load_prompt_debug,
+            inputs=[],
+            outputs=[prompt_debug_output],
+        )
 
         def prepare_run(cache):
             return (
@@ -738,6 +808,7 @@ def create_pipeline_interface():
                 gr.update(),
                 cache,
                 gr.update(interactive=False),
+                gr.update(),
             )
 
         def run_all(
@@ -763,7 +834,7 @@ def create_pipeline_interface():
                 err = f"Invalid period '{last}'. {PERIOD_SYNTAX}"
                 yield _render_pipeline_status(
                     "Invalid period", 0.0
-                ), err, cache, gr.update(interactive=True)
+                ), err, cache, gr.update(interactive=True), gr.update()
                 return
             started_at = time.monotonic()
 
@@ -798,31 +869,37 @@ def create_pipeline_interface():
                             step_label, progress_value
                         ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
                             interactive=True
-                        )
+                        ), gr.update()
                         return
                     yield _render_pipeline_status(
                         step_label, progress_value
-                    ), gr.update(), cache, gr.update(interactive=False)
+                    ), gr.update(), cache, gr.update(interactive=False), gr.update()
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
                 _ensure_min_progress_visibility()
                 yield _render_pipeline_status(
                     "Failed.", 1.0
-                ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(interactive=True)
+                ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(
+                    interactive=True
+                ), gr.update()
                 return
 
             progress_value, step_label = 0.75, "Generating report…"
             yield _render_pipeline_status(
                 step_label, progress_value
-            ), gr.update(), cache, gr.update(interactive=False)
+            ), gr.update(), cache, gr.update(interactive=False), gr.update()
+            report_mode_val = _normalize_report_mode(mode)
+            logger.info("Report mode: raw=%r normalized=%s", mode, report_mode_val)
             sig = _report_signature(
-                report_mode=mode,
+                report_mode=report_mode_val,
                 use_full_posts=use_full,
                 report_provider=rep_prov or None,
                 report_model=rep_mod or None,
             )
-            disk = _load_report_cache(report_mode=mode, use_full_posts=use_full)
+            disk = _load_report_cache(
+                report_mode=report_mode_val, use_full_posts=use_full
+            )
             if disk is not None and disk[1] == sig:
                 result = disk[0]
                 logger.info("Report cache hit (disk)")
@@ -833,7 +910,7 @@ def create_pipeline_interface():
             else:
                 try:
                     result = generate_activity_report(
-                        report_mode=mode,
+                        report_mode=report_mode_val,
                         use_full_posts=use_full,
                         report_provider=rep_prov or None,
                         report_model=rep_mod or None,
@@ -845,14 +922,21 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
+            prompt_content = _load_report_prompt_debug()
             yield _render_pipeline_status(None, None), result, cache, gr.update(
                 interactive=True
-            )
+            ), prompt_content
 
         run_btn.click(
             fn=prepare_run,
             inputs=[report_cache_state],
-            outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            outputs=[
+                pipeline_status,
+                report_output,
+                report_cache_state,
+                run_btn,
+                prompt_debug_output,
+            ],
             queue=False,
         ).then(
             fn=run_all,
@@ -868,7 +952,13 @@ def create_pipeline_interface():
                 report_model,
                 report_cache_state,
             ],
-            outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            outputs=[
+                pipeline_status,
+                report_output,
+                report_cache_state,
+                run_btn,
+                prompt_debug_output,
+            ],
             show_progress="hidden",
         )
     return block
