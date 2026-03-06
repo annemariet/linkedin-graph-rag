@@ -110,13 +110,13 @@ def _normalize_content_level(value: str | None) -> str:
     """Normalize dropdown value to content level constant."""
     if not value:
         return CONTENT_LEVEL_SUMMARY
-    v = (value or "").strip().lower()
-    if v.startswith("summary") or v == CONTENT_LEVEL_SUMMARY:
-        return CONTENT_LEVEL_SUMMARY
-    if v.startswith("full") or "full" in v or v == CONTENT_LEVEL_FULL:
-        return CONTENT_LEVEL_FULL
-    if v.startswith("minimal") or "minimal" in v or v == CONTENT_LEVEL_MINIMAL:
+    v = (value or "").strip()
+    if v == CONTENT_LEVEL_LABEL_MINIMAL or v == CONTENT_LEVEL_MINIMAL:
         return CONTENT_LEVEL_MINIMAL
+    if v == CONTENT_LEVEL_LABEL_SUMMARY or v == CONTENT_LEVEL_SUMMARY:
+        return CONTENT_LEVEL_SUMMARY
+    if v == CONTENT_LEVEL_LABEL_FULL or v == CONTENT_LEVEL_FULL:
+        return CONTENT_LEVEL_FULL
     return CONTENT_LEVEL_SUMMARY
 
 
