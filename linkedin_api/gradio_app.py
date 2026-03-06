@@ -408,9 +408,7 @@ def _load_report_cache(
         cached_level = data.get("content_level")
         if cached_level is None:
             use_full = data.get("use_full_posts", True)
-            cached_level = (
-                CONTENT_LEVEL_FULL if use_full else CONTENT_LEVEL_SUMMARY
-            )
+            cached_level = CONTENT_LEVEL_FULL if use_full else CONTENT_LEVEL_SUMMARY
         cached_max = data.get("max_posts", REPORT_MAX_POSTS)
         cached_full_chars = data.get(
             "max_full_post_chars", REPORT_MAX_FULL_POST_CHARS_DEFAULT
@@ -1124,6 +1122,7 @@ def create_pipeline_interface():
                 max_posts=max_posts_resolved,
                 max_full_post_chars=max_full_chars_int,
             )
+
             def _is_cache_valid(cached_sig: tuple) -> bool:
                 if cached_sig != sig:
                     return False

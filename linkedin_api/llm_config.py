@@ -356,7 +356,7 @@ def _create_ollama_llm(
 
     # Use `host=` not `base_url=` — ollama.Client expects `host` and
     # passes **kwargs through to httpx.Client which already gets base_url.
-    return OllamaLLM(model_name=model, host=base_url)
+    return OllamaLLM(model_name=model or OLLAMA_DEFAULT_LLM_MODEL, host=base_url)
 
 
 def create_embedder(quiet=False):

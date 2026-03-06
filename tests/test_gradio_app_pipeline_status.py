@@ -68,6 +68,10 @@ def test_normalize_report_mode_per_category():
 
 def test_normalize_content_level_exact_labels():
     """Labels map to constants via exact match (no substring confusion)."""
-    assert _normalize_content_level(CONTENT_LEVEL_LABEL_MINIMAL) == CONTENT_LEVEL_MINIMAL
-    assert _normalize_content_level(CONTENT_LEVEL_LABEL_SUMMARY) == CONTENT_LEVEL_SUMMARY
+    assert (
+        _normalize_content_level(CONTENT_LEVEL_LABEL_MINIMAL) == CONTENT_LEVEL_MINIMAL
+    )
+    assert (
+        _normalize_content_level(CONTENT_LEVEL_LABEL_SUMMARY) == CONTENT_LEVEL_SUMMARY
+    )
     assert _normalize_content_level(CONTENT_LEVEL_LABEL_FULL) == CONTENT_LEVEL_FULL
