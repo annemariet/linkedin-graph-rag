@@ -1,18 +1,14 @@
 """Unit tests for pipeline progress rendering in gradio_app."""
 
 from linkedin_api.gradio_app import (
+    CONTENT_LEVEL_CHOICES,
     CONTENT_LEVEL_FULL,
-    CONTENT_LEVEL_LABEL_FULL,
-    CONTENT_LEVEL_LABEL_MINIMAL,
-    CONTENT_LEVEL_LABEL_SUMMARY,
     CONTENT_LEVEL_MINIMAL,
     CONTENT_LEVEL_SUMMARY,
     PIPELINE_HINT_TEXT,
-    REPORT_MODE_LABEL_SINGLE_PASS,
+    REPORT_MODE_CHOICES,
     REPORT_MODE_PER_CATEGORY,
     REPORT_MODE_SINGLE_PASS,
-    _normalize_content_level,
-    _normalize_report_mode,
     _render_pipeline_status,
     _status_from_pipeline_line,
 )
@@ -57,27 +53,16 @@ def test_status_from_pipeline_line_handles_failures():
     assert _status_from_pipeline_line("❌ Failed: boom") == ((4, 1.0), "Failed.")
 
 
-def test_normalize_report_mode_label_returns_single_pass():
-    assert (
-        _normalize_report_mode(REPORT_MODE_LABEL_SINGLE_PASS) == REPORT_MODE_SINGLE_PASS
-    )
+def test_report_mode_choices_have_label_value_pairs():
+    """Gradio dropdown passes value (2nd elem); each choice is (label, value)."""
+    values = [v for _, v in REPORT_MODE_CHOICES]
+    assert REPORT_MODE_PER_CATEGORY in values
+    assert REPORT_MODE_SINGLE_PASS in values
 
 
-def test_normalize_report_mode_value_returns_single_pass():
-    assert _normalize_report_mode(REPORT_MODE_SINGLE_PASS) == REPORT_MODE_SINGLE_PASS
-
-
-def test_normalize_report_mode_per_category():
-    assert _normalize_report_mode("Per category summary") == REPORT_MODE_PER_CATEGORY
-    assert _normalize_report_mode(None) == REPORT_MODE_PER_CATEGORY
-
-
-def test_normalize_content_level_exact_labels():
-    """Labels map to constants via exact match (no substring confusion)."""
-    assert (
-        _normalize_content_level(CONTENT_LEVEL_LABEL_MINIMAL) == CONTENT_LEVEL_MINIMAL
-    )
-    assert (
-        _normalize_content_level(CONTENT_LEVEL_LABEL_SUMMARY) == CONTENT_LEVEL_SUMMARY
-    )
-    assert _normalize_content_level(CONTENT_LEVEL_LABEL_FULL) == CONTENT_LEVEL_FULL
+def test_content_level_choices_have_label_value_pairs():
+    """Gradio dropdown passes value (2nd elem); each choice is (label, value)."""
+    values = [v for _, v in CONTENT_LEVEL_CHOICES]
+    assert CONTENT_LEVEL_MINIMAL in values
+    assert CONTENT_LEVEL_SUMMARY in values
+    assert CONTENT_LEVEL_FULL in values

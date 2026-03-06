@@ -81,7 +81,10 @@ REPORT_MODE_PER_CATEGORY = "per_category"
 REPORT_MODE_SINGLE_PASS = "single_pass"
 REPORT_MODE_LABEL_PER_CATEGORY = "Per category summary"
 REPORT_MODE_LABEL_SINGLE_PASS = "Single pass (all posts)"
-REPORT_MODE_CHOICES = [REPORT_MODE_LABEL_PER_CATEGORY, REPORT_MODE_LABEL_SINGLE_PASS]
+REPORT_MODE_CHOICES = [
+    (REPORT_MODE_LABEL_PER_CATEGORY, REPORT_MODE_PER_CATEGORY),
+    (REPORT_MODE_LABEL_SINGLE_PASS, REPORT_MODE_SINGLE_PASS),
+]
 
 CONTENT_LEVEL_MINIMAL = "minimal"
 CONTENT_LEVEL_SUMMARY = "summary"
@@ -90,34 +93,10 @@ CONTENT_LEVEL_LABEL_MINIMAL = "Minimal (link + tags)"
 CONTENT_LEVEL_LABEL_SUMMARY = "Summary (minimal + post summary)"
 CONTENT_LEVEL_LABEL_FULL = "Full (minimal + full post content)"
 CONTENT_LEVEL_CHOICES = [
-    CONTENT_LEVEL_LABEL_MINIMAL,
-    CONTENT_LEVEL_LABEL_SUMMARY,
-    CONTENT_LEVEL_LABEL_FULL,
+    (CONTENT_LEVEL_LABEL_MINIMAL, CONTENT_LEVEL_MINIMAL),
+    (CONTENT_LEVEL_LABEL_SUMMARY, CONTENT_LEVEL_SUMMARY),
+    (CONTENT_LEVEL_LABEL_FULL, CONTENT_LEVEL_FULL),
 ]
-
-
-def _normalize_report_mode(value: str | None) -> str:
-    """Normalize dropdown value (label) to mode constant."""
-    if not value:
-        return REPORT_MODE_PER_CATEGORY
-    v = (value or "").strip().lower()
-    if "singlepass" in v or "single pass" in v or v == REPORT_MODE_SINGLE_PASS:
-        return REPORT_MODE_SINGLE_PASS
-    return REPORT_MODE_PER_CATEGORY
-
-
-def _normalize_content_level(value: str | None) -> str:
-    """Normalize dropdown value to content level constant."""
-    if not value:
-        return CONTENT_LEVEL_SUMMARY
-    v = (value or "").strip()
-    if v == CONTENT_LEVEL_LABEL_MINIMAL or v == CONTENT_LEVEL_MINIMAL:
-        return CONTENT_LEVEL_MINIMAL
-    if v == CONTENT_LEVEL_LABEL_SUMMARY or v == CONTENT_LEVEL_SUMMARY:
-        return CONTENT_LEVEL_SUMMARY
-    if v == CONTENT_LEVEL_LABEL_FULL or v == CONTENT_LEVEL_FULL:
-        return CONTENT_LEVEL_FULL
-    return CONTENT_LEVEL_SUMMARY
 
 
 def _default_max_posts(content_level: str) -> int:
@@ -232,15 +211,6 @@ def _format_other_section(
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
-def _format_post_for_single_pass(
-    m: dict,
-    content_level: str = CONTENT_LEVEL_SUMMARY,
-    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
-) -> str:
-    """Format post for single-pass. Same structure as _format_post_for_prompt."""
-    return _format_post_for_prompt(m, content_level, max_full_post_chars)
-
-
 _SINGLE_PASS_SYSTEM = (
     "You are a concise analyst. The user shares LinkedIn posts. "
     "Each has URL, category/tags, and optionally summary or full content.\n\n"
@@ -301,8 +271,7 @@ def _generate_single_pass_report(
 ) -> str:
     """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
     blocks = "\n\n".join(
-        _format_post_for_single_pass(m, content_level, max_full_post_chars)
-        for m in metas
+        _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
     )
     prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
     _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
@@ -863,12 +832,12 @@ def create_pipeline_interface():
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
             report_mode = gr.Dropdown(
                 choices=REPORT_MODE_CHOICES,
-                value=REPORT_MODE_LABEL_SINGLE_PASS,
+                value=REPORT_MODE_SINGLE_PASS,
                 label="Report mode",
             )
             content_level = gr.Dropdown(
                 choices=CONTENT_LEVEL_CHOICES,
-                value=CONTENT_LEVEL_LABEL_MINIMAL,
+                value=CONTENT_LEVEL_MINIMAL,
                 label="Content level",
             )
             max_posts_report = gr.Number(
@@ -889,7 +858,7 @@ def create_pipeline_interface():
             )
 
         def suggest_max_posts(content_lvl: str):
-            return _default_max_posts(_normalize_content_level(content_lvl))
+            return _default_max_posts(content_lvl or CONTENT_LEVEL_SUMMARY)
 
         content_level.change(
             fn=suggest_max_posts,
@@ -1085,8 +1054,8 @@ def create_pipeline_interface():
             yield _render_pipeline_status(
                 step_label, stage_progress
             ), gr.update(), cache, gr.update(interactive=False), gr.update()
-            report_mode_val = _normalize_report_mode(mode)
-            content_level_val = _normalize_content_level(content_lvl)
+            report_mode_val = mode or REPORT_MODE_PER_CATEGORY
+            content_level_val = content_lvl or CONTENT_LEVEL_SUMMARY
             try:
                 max_posts_int = (
                     int(max_posts_val)
