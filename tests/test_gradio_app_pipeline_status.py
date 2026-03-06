@@ -1,10 +1,14 @@
 """Unit tests for pipeline progress rendering in gradio_app."""
 
 from linkedin_api.gradio_app import (
+    CONTENT_LEVEL_LABEL_SUMMARY,
+    CONTENT_LEVEL_MINIMAL,
+    CONTENT_LEVEL_SUMMARY,
     PIPELINE_HINT_TEXT,
     REPORT_MODE_LABEL_SINGLE_PASS,
     REPORT_MODE_PER_CATEGORY,
     REPORT_MODE_SINGLE_PASS,
+    _normalize_content_level,
     _normalize_report_mode,
     _render_pipeline_status,
     _status_from_pipeline_line,
@@ -57,3 +61,9 @@ def test_normalize_report_mode_value_returns_single_pass():
 def test_normalize_report_mode_per_category():
     assert _normalize_report_mode("Per category summary") == REPORT_MODE_PER_CATEGORY
     assert _normalize_report_mode(None) == REPORT_MODE_PER_CATEGORY
+
+
+def test_normalize_content_level_summary_label():
+    """Summary (minimal + post summary) must not match Minimal due to 'minimal' substring."""
+    assert _normalize_content_level(CONTENT_LEVEL_LABEL_SUMMARY) == CONTENT_LEVEL_SUMMARY
+    assert _normalize_content_level("Minimal (link + tags)") == CONTENT_LEVEL_MINIMAL

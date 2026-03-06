@@ -111,10 +111,12 @@ def _normalize_content_level(value: str | None) -> str:
     if not value:
         return CONTENT_LEVEL_SUMMARY
     v = (value or "").strip().lower()
-    if "minimal" in v or "link" in v or "tag" in v or v == CONTENT_LEVEL_MINIMAL:
-        return CONTENT_LEVEL_MINIMAL
-    if "full" in v or v == CONTENT_LEVEL_FULL:
+    if v.startswith("summary") or v == CONTENT_LEVEL_SUMMARY:
+        return CONTENT_LEVEL_SUMMARY
+    if v.startswith("full") or "full" in v or v == CONTENT_LEVEL_FULL:
         return CONTENT_LEVEL_FULL
+    if v.startswith("minimal") or "minimal" in v or v == CONTENT_LEVEL_MINIMAL:
+        return CONTENT_LEVEL_MINIMAL
     return CONTENT_LEVEL_SUMMARY
 
 
@@ -354,57 +356,6 @@ def _report_signature(
 _REPORT_CACHE_FILE = "report_cache.json"
 _REPORT_CACHE_VERSION = 2
 _REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
-
-
-def _build_report_prompt_for_debug(
-    report_mode: str,
-    content_level: str,
-    max_posts: int | None,
-    max_full_post_chars: int,
-) -> None:
-    """Build and save the prompt that would be sent for the report. No LLM call."""
-    all_metas = list_summarized_metadata()
-    if not all_metas:
-        return
-    all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
-    limit = _resolve_max_posts(max_posts, content_level)
-    metas = all_metas[:limit]
-    if report_mode == REPORT_MODE_SINGLE_PASS:
-        blocks = "\n\n".join(
-            _format_post_for_single_pass(m, content_level, max_full_post_chars)
-            for m in metas
-        )
-        prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
-        _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
-        return
-    by_category: dict[str, list[dict]] = {}
-    for m in metas:
-        cat = (m.get("category") or "").strip().lower() or "other"
-        if cat not in REPORT_CATEGORIES:
-            cat = "other"
-        by_category.setdefault(cat, []).append(m)
-    prompts_collected: list[str] = []
-    for cat in REPORT_CATEGORIES:
-        category_metas = by_category.get(cat)
-        if not category_metas or cat == "other":
-            continue
-        label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
-        batches = _batches_by_char_limit(
-            category_metas,
-            REPORT_BATCH_CHAR_LIMIT,
-            content_level,
-            max_full_post_chars,
-        )
-        for batch in batches:
-            block = "\n\n".join(
-                _format_post_for_prompt(m, content_level, max_full_post_chars)
-                for m in batch
-            )
-            prompts_collected.append(
-                f"Posts in '{label}' ({len(batch)}):\n\n---\n{block}\n---"
-            )
-    if prompts_collected:
-        _save_report_prompt_debug("per-category", _BATCH_SYSTEM, prompts_collected)
 
 
 def _save_report_prompt_debug(mode: str, system: str, prompts: list[str]) -> None:
@@ -1189,21 +1140,9 @@ def create_pipeline_interface():
                 result = disk[0]
                 logger.info("Report cache hit (disk)")
                 cache = (result, sig)
-                _build_report_prompt_for_debug(
-                    report_mode_val,
-                    content_level_val,
-                    max_posts_int,
-                    max_full_chars_int,
-                )
             elif cache is not None and _is_cache_valid(cache[1]):
                 result = cache[0]
                 logger.info("Report cache hit (session)")
-                _build_report_prompt_for_debug(
-                    report_mode_val,
-                    content_level_val,
-                    max_posts_int,
-                    max_full_chars_int,
-                )
             else:
                 try:
                     result = generate_activity_report(
