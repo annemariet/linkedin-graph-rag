@@ -81,6 +81,6 @@ def test_fetch_mammouth_models_success():
         result = fetch_mammouth_models()
     assert len(result) == 2
     assert result[0][1] == "gpt-4o"
-    assert "openai" in result[0][0]
+    assert "OpenAI" in result[0][0]  # inferred from id when owned_by is "openai"
     assert "2.50" in result[0][0] and "10.00" in result[0][0]
-    assert result[1] == ("no-cost · other", "no-cost")
+    assert result[1] == ("no-cost · other", "no-cost")  # owned_by "other" kept as-is

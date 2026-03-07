@@ -61,6 +61,37 @@ def fetch_anthropic_models() -> list[str]:
         return []
 
 
+def _mammouth_owner_display(m: dict, mid: str) -> str:
+    """Display owner from owned_by; if API returns 'openai' for all, infer from model id."""
+    raw = (m.get("owned_by") or "").strip()
+    if raw and raw.lower() != "openai":
+        return raw
+    mid_lower = mid.lower()
+    if mid_lower.startswith("claude"):
+        return "Anthropic"
+    if mid_lower.startswith("gemini"):
+        return "Google"
+    if mid_lower.startswith("gpt") or mid_lower.startswith("text-embedding"):
+        return "OpenAI"
+    if mid_lower.startswith("grok"):
+        return "xAI"
+    if mid_lower.startswith("llama"):
+        return "Meta"
+    if mid_lower.startswith("mistral") or mid_lower.startswith("codestral"):
+        return "Mistral"
+    if mid_lower.startswith("deepseek"):
+        return "DeepSeek"
+    if mid_lower.startswith("qwen"):
+        return "Alibaba"
+    if mid_lower.startswith("kimi"):
+        return "Moonshot"
+    if mid_lower.startswith("sonar"):
+        return "Perplexity"
+    if mid_lower.startswith("glm"):
+        return "Zhipu"
+    return raw or "—"
+
+
 def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
     """List models from Mammouth API GET /public/models. Returns (label, id) with owner and $/M."""
     base = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
@@ -87,7 +118,7 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
             if not mid:
                 continue
             mid = str(mid)
-            owner = (m.get("owned_by") or "").strip() or "—"
+            owner = _mammouth_owner_display(m, mid)
             info = m.get("model_info") or {}
             try:
                 inc = float(info.get("input_cost_per_token") or 0) * 1e6
