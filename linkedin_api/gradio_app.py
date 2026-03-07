@@ -871,17 +871,22 @@ def create_pipeline_interface():
             provider_choices = ["ollama", "anthropic", "mammouth"]
 
             models_by_provider = fetch_all_provider_models()
-            models_by_provider_state = gr.State(value=models_by_provider)
+            for prov in (sp, rp):
+                if not models_by_provider.get(prov, []):
+                    models_by_provider[prov] = fetch_models_for_provider(prov) or []
+
+            def _choice_ids(choices: list) -> list[str]:
+                """Extract model ids from choices (str or (label, id) tuples)."""
+                return [c[1] if isinstance(c, tuple) else str(c) for c in choices]
 
             def _choices_for(
-                d: dict[str, list[str]], provider: str, default_model: str
-            ) -> tuple[list[str], str]:
+                d: dict, provider: str, default_model: str
+            ) -> tuple[list, str]:
                 models = d.get(provider, [])
                 choices = models if models else [default_model]
+                ids = _choice_ids(choices)
                 value = (
-                    default_model
-                    if default_model in choices
-                    else (choices[0] if choices else "")
+                    default_model if default_model in ids else (ids[0] if ids else "")
                 )
                 return choices, value
 
@@ -915,45 +920,28 @@ def create_pipeline_interface():
                         label="Model",
                         allow_custom_value=True,
                     )
-            refresh_models_btn = gr.Button("Refresh models", size="sm")
 
-            def refresh_summary_models(provider, models_dict):
-                choices = models_dict.get(provider, []) or [sm]
-                value = sm if sm in choices else (choices[0] if choices else "")
+            def refresh_summary_models(provider):
+                choices = fetch_models_for_provider(provider) or [sm]
+                ids = _choice_ids(choices)
+                value = sm if sm in ids else (ids[0] if ids else "")
                 return gr.update(choices=choices, value=value)
 
-            def refresh_report_models(provider, models_dict):
-                choices = models_dict.get(provider, []) or [rm]
-                value = rm if rm in choices else (choices[0] if choices else "")
+            def refresh_report_models(provider):
+                choices = fetch_models_for_provider(provider) or [rm]
+                ids = _choice_ids(choices)
+                value = rm if rm in ids else (ids[0] if ids else "")
                 return gr.update(choices=choices, value=value)
 
             summary_provider.change(
                 refresh_summary_models,
-                inputs=[summary_provider, models_by_provider_state],
+                inputs=[summary_provider],
                 outputs=[summary_model],
             )
             report_provider.change(
                 refresh_report_models,
-                inputs=[report_provider, models_by_provider_state],
+                inputs=[report_provider],
                 outputs=[report_model],
-            )
-
-            def refresh_all(summary_prov, report_prov):
-                new_models = fetch_all_provider_models()
-                s_choices = new_models.get(summary_prov, []) or [sm]
-                r_choices = new_models.get(report_prov, []) or [rm]
-                s_val = sm if sm in s_choices else (s_choices[0] if s_choices else "")
-                r_val = rm if rm in r_choices else (r_choices[0] if r_choices else "")
-                return (
-                    new_models,
-                    gr.update(choices=s_choices, value=s_val),
-                    gr.update(choices=r_choices, value=r_val),
-                )
-
-            refresh_models_btn.click(
-                refresh_all,
-                inputs=[summary_provider, report_provider],
-                outputs=[models_by_provider_state, summary_model, report_model],
             )
         run_btn = gr.Button("Get latest news report", variant="primary")
         pipeline_status = gr.HTML(

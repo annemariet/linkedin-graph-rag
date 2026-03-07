@@ -14,14 +14,18 @@ import urllib.request
 from linkedin_api.llm_config import (
     MAMMOUTH_BASE_URL,
     OLLAMA_DEFAULT_URL,
+    _ensure_ollama_running,
     _resolve_api_key,
     _resolve_anthropic_api_key,
 )
 
 
 def fetch_ollama_models(base_url: str | None = None) -> list[str]:
-    """List models available in Ollama. Returns model names."""
-    url = (base_url or OLLAMA_DEFAULT_URL).rstrip("/") + "/api/tags"
+    """List models available in Ollama. Returns model names. Starts Ollama if needed."""
+    base = base_url or OLLAMA_DEFAULT_URL
+    if not _ensure_ollama_running(base):
+        return []
+    url = base.rstrip("/") + "/api/tags"
     try:
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
