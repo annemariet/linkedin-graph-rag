@@ -12,14 +12,14 @@ import os
 import urllib.error
 import urllib.request
 
-logger = logging.getLogger(__name__)
-
 from linkedin_api.llm_config import (
     MAMMOUTH_BASE_URL,
     OLLAMA_DEFAULT_URL,
     _ensure_ollama_running,
     _resolve_anthropic_api_key,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_ollama_models(base_url: str | None = None) -> list[str]:
