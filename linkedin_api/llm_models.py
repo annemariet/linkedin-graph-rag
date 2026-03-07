@@ -7,9 +7,12 @@ Supports Ollama (local), Anthropic API, Mammouth API (OpenAI-compatible).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 from linkedin_api.llm_config import (
     MAMMOUTH_BASE_URL,
@@ -63,12 +66,18 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
     base = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
     api_root = base.removesuffix("/v1") if base.endswith("/v1") else base
     url = f"{api_root}/public/models"
+    logger.info("Mammouth models: GET %s", url)
     try:
-        req = urllib.request.Request(url, method="GET")
+        req = urllib.request.Request(
+            url,
+            method="GET",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; LinkedInGraphRAG/1.0)"},
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         items = data.get("data", data.get("models", data.get("list", [])))
         if not isinstance(items, list) or not items:
+            logger.warning("Mammouth models: empty or invalid data")
             return []
         out: list[tuple[str, str]] = []
         for m in items:
@@ -88,14 +97,18 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
                 cost = ""
             label = f"{mid} · {owner}" + (f" · {cost}" if cost else "")
             out.append((label, mid))
+        logger.info("Mammouth models: got %d models", len(out))
         return out
+    except urllib.error.HTTPError as e:
+        logger.warning("Mammouth models: HTTP %s %s", e.code, e.reason)
+        return []
     except (
         urllib.error.URLError,
         OSError,
-        urllib.error.HTTPError,
         json.JSONDecodeError,
         KeyError,
-    ):
+    ) as e:
+        logger.warning("Mammouth models: %s: %s", type(e).__name__, e)
         return []
 
 
