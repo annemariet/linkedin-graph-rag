@@ -92,7 +92,9 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
             try:
                 inc = float(info.get("input_cost_per_token") or 0) * 1e6
                 outc = float(info.get("output_cost_per_token") or 0) * 1e6
-                cost = f"${inc:.2f} / ${outc:.2f} per M" if (inc or outc) else ""
+                cost = (
+                    f"${inc:.2f} / ${outc:.2f} per M (in/out)" if (inc or outc) else ""
+                )
             except (TypeError, ValueError):
                 cost = ""
             label = f"{mid} · {owner}" + (f" · {cost}" if cost else "")
