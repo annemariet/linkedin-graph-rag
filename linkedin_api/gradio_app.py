@@ -7,10 +7,13 @@ Tab 2: GraphRAG query — lazy-init Neo4j and Vertex AI on demand.
 """
 
 import html
+import json
 import logging
 import os
 import tempfile
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import dotenv
 
@@ -18,7 +21,6 @@ dotenv.load_dotenv()
 from typing import TYPE_CHECKING
 
 import gradio as gr
-import json
 from neo4j import GraphDatabase
 from neo4j_graphrag.generation.graphrag import GraphRAG
 
@@ -42,8 +44,8 @@ from linkedin_api.query_graphrag import (
     create_vector_cypher_retriever,
     create_vector_retriever,
 )
-from linkedin_api.run_pipeline import run_pipeline_ui_streaming
-from linkedin_api.summarize_activity import _parse_last
+from linkedin_api.run_pipeline import DEFAULT_ACTIVITIES, run_pipeline_ui_streaming
+from linkedin_api.summarize_activity import _format_timestamp, _parse_last
 
 _REPORT_SYSTEM = (
     "You are a concise analyst. Summarize the user's LinkedIn activity globally. "
@@ -114,12 +116,75 @@ def _truncate(s: str, max_len: int) -> str:
     return s[: max_len - 3].rstrip() + "..."
 
 
+def _format_period_dates(period: str) -> str | None:
+    """Format period (e.g. 7d) as human-readable date range. Returns None if invalid."""
+    start_ms = _parse_last(period)
+    if start_ms is None:
+        return None
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+    end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
+    return f"{start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
+
+
+def _get_posts_for_period(
+    period: str,
+    activities_path: Path,
+    max_posts: int,
+) -> tuple[list[dict], str | None]:
+    """
+    Return posts scoped to the fetched period (only posts with reactions in period).
+    Orders by reaction time ascending. Returns (metas, period_dates_str or None).
+    """
+    period_dates = _format_period_dates(period)
+    if not activities_path.exists():
+        all_metas = list_summarized_metadata()
+        all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+        return all_metas[:max_posts], period_dates
+    try:
+        activities = json.loads(activities_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        all_metas = list_summarized_metadata()
+        all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+        return all_metas[:max_posts], period_dates
+    urn_to_activity: dict[str, dict] = {}
+    for a in activities:
+        urn = (a.get("post_urn") or "").strip()
+        if urn:
+            urn_to_activity[urn] = a
+    if not urn_to_activity:
+        all_metas = list_summarized_metadata()
+        all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+        return all_metas[:max_posts], period_dates
+    all_metas = list_summarized_metadata()
+    scoped = []
+    for m in all_metas:
+        urn = (m.get("urn") or "").strip()
+        if urn not in urn_to_activity:
+            continue
+        act = urn_to_activity[urn]
+        ts = act.get("timestamp")
+        m = dict(m)
+        m["reaction_time"] = _format_timestamp(ts) if ts else ""
+        m["post_time"] = (act.get("post_created_at") or "").strip() or "unknown"
+        scoped.append(m)
+
+    def _sort_key(m: dict) -> int:
+        a = urn_to_activity.get((m.get("urn") or "").strip(), {})
+        t = a.get("timestamp")
+        return int((t if isinstance(t, (int, float)) else 0) or 0)
+
+    scoped.sort(key=_sort_key)
+    return scoped[:max_posts], period_dates
+
+
 def _format_post_for_prompt(
     m: dict,
     content_level: str = CONTENT_LEVEL_SUMMARY,
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> str:
-    """Format post for LLM. Always includes link. Minimal=link+tags, Summary=+full summary, Full=+truncated content."""
+    """Format post for LLM. Always includes link. Minimal=link+tags, Summary=+full summary, Full=+truncated content.
+    When reaction_time/post_time are present (period-scoped), includes them."""
     url = (m.get("post_url") or "").strip()
     cat = (m.get("category") or "").strip() or "other"
     parts: list[str] = []
@@ -129,6 +194,12 @@ def _format_post_for_prompt(
         parts.append(f"Tech: {', '.join(m['technologies'])}")
     tag_part = " | ".join(parts) if parts else ""
     tag_part = f"Category: {cat}" + (f" | {tag_part}" if tag_part else "")
+    time_part = ""
+    if m.get("reaction_time") or m.get("post_time"):
+        rt = (m.get("reaction_time") or "").strip()
+        pt = (m.get("post_time") or "").strip() or "unknown"
+        time_part = f"Reacted: {rt} | Posted: {pt}"
+        tag_part = f"{tag_part} | {time_part}" if tag_part else time_part
 
     if content_level == CONTENT_LEVEL_MINIMAL:
         body = tag_part
@@ -176,7 +247,10 @@ def _batches_by_char_limit(
 
 _BATCH_SYSTEM = (
     "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
-    "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
+    "Highlight main themes, recurring topics, and any patterns. "
+    "Take temporality into account: if a post was published several weeks before the user reacted to it, "
+    "add a brief note that it is 'late news' and assess whether it is still relevant. "
+    "Posts are ordered by reaction time (earliest first). Output plain text, no preamble."
 )
 
 
@@ -187,12 +261,14 @@ def _summarize_batch(
     content_level: str = CONTENT_LEVEL_SUMMARY,
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     prompts_out: list[str] | None = None,
+    period_dates: str | None = None,
 ) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
     block = "\n\n".join(
         _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
     )
-    prompt = f"Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
+    header = f"Period: {period_dates}\n\n" if period_dates else ""
+    prompt = f"{header}Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
     if prompts_out is not None:
         prompts_out.append(prompt)
     response = llm.invoke(prompt, system_instruction=_BATCH_SYSTEM)
@@ -212,8 +288,8 @@ def _format_other_section(
 
 
 _SINGLE_PASS_SYSTEM = (
-    "You are a concise analyst. The user shares LinkedIn posts. "
-    "Each has URL, category/tags, and optionally summary or full content.\n\n"
+    "You are a concise analyst. The user shares LinkedIn posts from a specific period. "
+    "Each has URL, category/tags, reaction time, post time, and optionally summary or full content.\n\n"
     """Produce a markdown report with:
 1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,
    Papers & research, Experiments & benchmarks, Company & career news, Other. Put each post into the right category
@@ -224,7 +300,10 @@ _SINGLE_PASS_SYSTEM = (
    (eg competing models, similar subdomains, etc).
 3. Cite the post as the source of the information, with the Author name if it's a person, otherwise it can be inlined
    with the entity name making the announcement.
-4. Output valid markdown only. No preamble.
+4. Take temporality into account: if a post was published several weeks before the user reacted to it,
+   add a brief note that it is 'late news' and assess whether it is still relevant.
+   Posts are ordered by reaction time (earliest first).
+5. Output valid markdown only. No preamble.
 
 Example input (keeping only the links for brevity):
 **Posts**:
@@ -268,12 +347,14 @@ def _generate_single_pass_report(
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
+    period_dates: str | None = None,
 ) -> str:
     """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
     blocks = "\n\n".join(
         _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
     )
-    prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
+    header = f"Period: {period_dates}\n\n" if period_dates else ""
+    prompt = f"{header}Posts ({len(metas)} total):\n\n{blocks}"
     _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
     llm = create_llm(
         stage="report",
@@ -299,31 +380,33 @@ def _report_signature(
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
-) -> tuple[str, int, tuple[str, ...], str, str, int, int] | None:
-    """Signature of post set + report model + report mode + content_level + max_posts + max_full_post_chars."""
-    all_metas = list_summarized_metadata()
-    if not all_metas:
-        return None
-    all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+    period: str = "7d",
+    activities_path: Path | None = None,
+) -> tuple[str, int, tuple[str, ...], str, str, int, int, str] | None:
+    """Signature of post set + report model + report mode + content_level + max_posts + max_full_post_chars + period."""
     limit = _resolve_max_posts(max_posts, content_level)
-    metas = all_metas[:limit]
+    path = activities_path or DEFAULT_ACTIVITIES
+    metas, _ = _get_posts_for_period(period or "7d", path, limit)
+    if not metas:
+        return None
     model_id = get_report_model_id(
         provider_override=report_provider,
         model_override=report_model,
     )
     return (
         model_id,
-        len(all_metas),
+        len(metas),
         tuple((m.get("summarized_at") or "") for m in metas),
         report_mode,
         content_level,
         limit,
         max_full_post_chars,
+        period or "7d",
     )
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
-_REPORT_CACHE_VERSION = 2
+_REPORT_CACHE_VERSION = 3
 _REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
 
 
@@ -361,7 +444,8 @@ def _load_report_cache(
     content_level: str,
     max_posts: int,
     max_full_post_chars: int,
-) -> tuple[str, tuple[str, int, tuple[str, ...], str, str, int, int]] | None:
+    period: str = "7d",
+) -> tuple[str, tuple[str, int, tuple[str, ...], str, str, int, int, str]] | None:
     """Load cached report from disk. Returns (report, signature) or None if params mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
@@ -382,11 +466,13 @@ def _load_report_cache(
         cached_full_chars = data.get(
             "max_full_post_chars", REPORT_MAX_FULL_POST_CHARS_DEFAULT
         )
+        cached_period = data.get("period", "7d")
         if (
             cached_mode != report_mode
             or cached_level != content_level
             or cached_max != max_posts
             or cached_full_chars != max_full_post_chars
+            or cached_period != (period or "7d")
         ):
             return None
         report = data.get("report", "")
@@ -394,14 +480,23 @@ def _load_report_cache(
             return None
         return (
             report,
-            (model_id, n, at, cached_mode, cached_level, cached_max, cached_full_chars),
+            (
+                model_id,
+                n,
+                at,
+                cached_mode,
+                cached_level,
+                cached_max,
+                cached_full_chars,
+                cached_period,
+            ),
         )
     except (json.JSONDecodeError, OSError):
         return None
 
 
 def _save_report_cache(
-    report: str, sig: tuple[str, int, tuple[str, ...], str, str, int, int]
+    report: str, sig: tuple[str, int, tuple[str, ...], str, str, int, int, str]
 ) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
@@ -417,6 +512,7 @@ def _save_report_cache(
                     "content_level": sig[4],
                     "max_posts": sig[5],
                     "max_full_post_chars": sig[6],
+                    "period": sig[7] if len(sig) > 7 else "7d",
                     "report": report,
                 },
                 ensure_ascii=False,
@@ -434,17 +530,19 @@ def generate_activity_report(
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
+    period: str = "7d",
+    activities_path: Path | None = None,
 ) -> str:
     """Build report. Per-category: batches per category; 'other' is summaries+links.
     Single-pass: one LLM call with all links. Content: Minimal, Summary, or Full.
+    When period and activities_path are set, scopes to posts with reactions in that period.
     """
     setup_gcp_credentials()
-    all_metas = list_summarized_metadata()
-    if not all_metas:
-        return "No summarized posts found. Run the pipeline first (collect → enrich → summarize)."
-    all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     limit = _resolve_max_posts(max_posts, content_level)
-    metas = all_metas[:limit]
+    path = activities_path or DEFAULT_ACTIVITIES
+    metas, period_dates = _get_posts_for_period(period or "7d", path, limit)
+    if not metas:
+        return "No summarized posts found. Run the pipeline first (collect → enrich → summarize)."
     if report_mode == REPORT_MODE_SINGLE_PASS:
         try:
             return _generate_single_pass_report(
@@ -453,6 +551,7 @@ def generate_activity_report(
                 max_full_post_chars=max_full_post_chars,
                 report_provider=report_provider,
                 report_model=report_model,
+                period_dates=period_dates,
             )
         except Exception as e:
             logger.exception("Single-pass report failed")
@@ -496,6 +595,7 @@ def generate_activity_report(
                     content_level,
                     max_full_post_chars=max_full_post_chars,
                     prompts_out=prompts_collected,
+                    period_dates=period_dates,
                 )
                 for batch in batches
             ]
@@ -1093,12 +1193,15 @@ def create_pipeline_interface():
                 max_full_post_chars=max_full_chars_int,
                 report_provider=rep_prov or None,
                 report_model=rep_mod or None,
+                period=last_clean,
+                activities_path=DEFAULT_ACTIVITIES,
             )
             disk = _load_report_cache(
                 report_mode=report_mode_val,
                 content_level=content_level_val,
                 max_posts=max_posts_resolved,
                 max_full_post_chars=max_full_chars_int,
+                period=last_clean,
             )
 
             def _is_cache_valid(cached_sig: tuple) -> bool:
@@ -1129,6 +1232,8 @@ def create_pipeline_interface():
                         max_full_post_chars=max_full_chars_int,
                         report_provider=rep_prov or None,
                         report_model=rep_mod or None,
+                        period=last_clean,
+                        activities_path=DEFAULT_ACTIVITIES,
                     )
                     cache = (result, sig) if sig else None
                     if sig is not None:

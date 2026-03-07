@@ -65,6 +65,7 @@ class ActivityRecord:
     comment_urn: str = ""
     reaction_type: str | None = None
     post_url: str = ""
+    post_created_at: str = ""  # ISO when post was originally published (when available)
 
 
 def _parse_last(value: str) -> int | None:
@@ -270,6 +271,7 @@ def collect_activities(
         comment_text: str = "",
         comment_urn: str = "",
         reaction_type: str | None = None,
+        post_created_at: str = "",
     ):
         key = (post_urn, interaction_type)
         if key in seen:
@@ -288,6 +290,7 @@ def collect_activities(
                 comment_urn=comment_urn,
                 reaction_type=reaction_type,
                 post_url=_urn_to_url(post_urn),
+                post_created_at=post_created_at,
             )
         )
 
@@ -306,6 +309,7 @@ def collect_activities(
             urls = post_props.get("extracted_urls", [])
             if content and not urls:
                 urls = extract_urls_from_text(content)
+            post_created = post_props.get("created_at") or ""
             add_record(
                 post_urn,
                 content,
@@ -313,6 +317,7 @@ def collect_activities(
                 "reaction",
                 ts,
                 reaction_type=reaction_type,
+                post_created_at=post_created,
             )
 
     # Reposts: (user)-[:REPOSTS]->(repost_share_post); original in original_post_urn
@@ -333,15 +338,21 @@ def collect_activities(
             if content and not urls:
                 urls = extract_urls_from_text(content)
             ts = repost_props.get("timestamp")
+            post_created = ""
             if not content and original_urn:
                 orig_node = nodes_by_id.get(original_urn, {})
                 orig_props = orig_node.get("properties", {})
                 content = orig_props.get("content", "")
+                post_created = orig_props.get("created_at") or ""
                 if not urls:
                     urls = orig_props.get(
                         "extracted_urls", []
                     ) or extract_urls_from_text(content)
-            add_record(target_urn, content, urls, "repost", ts)
+            else:
+                post_created = repost_props.get("created_at") or ""
+            add_record(
+                target_urn, content, urls, "repost", ts, post_created_at=post_created
+            )
 
     # Comments: (user)-[:CREATES]->(comment)-[:COMMENTS_ON]->(post)
     if "comment" in types:
@@ -365,6 +376,7 @@ def collect_activities(
                 post_node = nodes_by_id.get(post_urn, {})
                 post_props = post_node.get("properties", {})
                 content = post_props.get("content", "")
+                post_created = post_props.get("created_at") or ""
                 if not urls and content:
                     urls = post_props.get(
                         "extracted_urls", []
@@ -377,6 +389,7 @@ def collect_activities(
                     ts,
                     comment_text=comment_text,
                     comment_urn=comment_urn,
+                    post_created_at=post_created,
                 )
 
     return records
@@ -463,6 +476,7 @@ def main() -> int:
             "comment_text": r.comment_text,
             "timestamp": r.timestamp,
             "created_at": _format_timestamp(r.timestamp),
+            "post_created_at": r.post_created_at,
         }
         for r in records
     ]

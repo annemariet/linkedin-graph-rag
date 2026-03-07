@@ -81,6 +81,7 @@ def _collect_activities(args) -> tuple[Path, int]:
             "comment_text": r.comment_text,
             "timestamp": r.timestamp,
             "created_at": _format_timestamp(r.timestamp),
+            "post_created_at": getattr(r, "post_created_at", "") or "",
         }
         for r in records
     ]
