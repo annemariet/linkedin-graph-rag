@@ -80,7 +80,9 @@ def test_fetch_mammouth_models_success():
         ).encode()
         result = fetch_mammouth_models()
     assert len(result) == 2
-    assert result[0][1] == "gpt-4o"
-    assert "OpenAI" in result[0][0]  # inferred from id when owned_by is "openai"
-    assert "2.50" in result[0][0] and "10.00" in result[0][0]
-    assert result[1] == ("no-cost · other", "no-cost")  # owned_by "other" kept as-is
+    # Sorted by input cost: no-cost (0) first, then gpt-4o (2.5/M)
+    assert result[0][1] == "no-cost"
+    assert result[0] == ("no-cost · other", "no-cost")
+    assert result[1][1] == "gpt-4o"
+    assert "OpenAI" in result[1][0]
+    assert "2.50" in result[1][0] and "10.00" in result[1][0]

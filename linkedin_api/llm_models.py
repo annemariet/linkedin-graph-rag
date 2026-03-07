@@ -110,7 +110,7 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
         if not isinstance(items, list) or not items:
             logger.warning("Mammouth models: empty or invalid data")
             return []
-        out: list[tuple[str, str]] = []
+        out: list[tuple[str, str, float]] = []
         for m in items:
             if not isinstance(m, dict):
                 continue
@@ -127,11 +127,12 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
                     f"${inc:.2f} / ${outc:.2f} per M (in/out)" if (inc or outc) else ""
                 )
             except (TypeError, ValueError):
-                cost = ""
+                inc, outc, cost = 0.0, 0.0, ""
             label = f"{mid} · {owner}" + (f" · {cost}" if cost else "")
-            out.append((label, mid))
+            out.append((label, mid, inc))
+        out.sort(key=lambda x: x[2])
         logger.info("Mammouth models: got %d models", len(out))
-        return out
+        return [(label, mid) for label, mid, _ in out]
     except urllib.error.HTTPError as e:
         logger.warning("Mammouth models: HTTP %s %s", e.code, e.reason)
         return []
