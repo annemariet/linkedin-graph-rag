@@ -196,13 +196,25 @@ def get_default_provider_model(stage: Literal["summary", "report"]) -> tuple[str
     return provider, model
 
 
+def _mammouth_model_id_from_ui(value: str) -> str:
+    """Extract API model id from Mammouth dropdown value (may be 'id · owner · $...' or plain id)."""
+    if " · " in value:
+        return value.split(" · ")[0].strip()
+    return value.strip()
+
+
 def get_report_model_id(
     provider_override: str | None = None,
     model_override: str | None = None,
 ) -> str:
     """Report stage model identifier for cache invalidation. Format: provider:model."""
     if provider_override and model_override:
-        return f"{provider_override}:{model_override}"
+        model = (
+            _mammouth_model_id_from_ui(model_override)
+            if provider_override == "mammouth"
+            else model_override
+        )
+        return f"{provider_override}:{model}"
     provider, model = _resolve_provider_model("report")
     return f"{provider}:{model}"
 
@@ -234,7 +246,11 @@ def create_llm(
     """
     if provider_override and model_override:
         provider = "openai" if provider_override == "mammouth" else provider_override
-        model = model_override
+        model = (
+            _mammouth_model_id_from_ui(model_override)
+            if provider_override == "mammouth"
+            else model_override
+        )
     else:
         provider, model = _resolve_provider_model(stage)
 
