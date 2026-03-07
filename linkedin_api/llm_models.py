@@ -58,8 +58,8 @@ def fetch_anthropic_models() -> list[str]:
         return []
 
 
-def fetch_mammouth_models() -> list[str]:
-    """List models from Mammouth API GET /public/models (no auth)."""
+def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
+    """List models from Mammouth API GET /public/models. Returns (label, id) with owner and $/M."""
     base = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
     api_root = base.removesuffix("/v1") if base.endswith("/v1") else base
     url = f"{api_root}/public/models"
@@ -70,12 +70,25 @@ def fetch_mammouth_models() -> list[str]:
         items = data.get("data", data.get("models", data.get("list", [])))
         if not isinstance(items, list) or not items:
             return []
-        return [
-            str(m.get("id") or m.get("model_id") or m.get("name", ""))
-            for m in items
-            if isinstance(m, dict)
-            and (m.get("id") or m.get("model_id") or m.get("name"))
-        ]
+        out: list[tuple[str, str]] = []
+        for m in items:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("id") or m.get("model_id") or m.get("name")
+            if not mid:
+                continue
+            mid = str(mid)
+            owner = (m.get("owned_by") or "").strip() or "—"
+            info = m.get("model_info") or {}
+            try:
+                inc = float(info.get("input_cost_per_token") or 0) * 1e6
+                outc = float(info.get("output_cost_per_token") or 0) * 1e6
+                cost = f"${inc:.2f} / ${outc:.2f} per M" if (inc or outc) else ""
+            except (TypeError, ValueError):
+                cost = ""
+            label = f"{mid} · {owner}" + (f" · {cost}" if cost else "")
+            out.append((label, mid))
+        return out
     except (
         urllib.error.URLError,
         OSError,
@@ -86,8 +99,8 @@ def fetch_mammouth_models() -> list[str]:
         return []
 
 
-def fetch_models_for_provider(provider: str) -> list[str]:
-    """Fetch model list for the given provider. Returns empty list on error."""
+def fetch_models_for_provider(provider: str) -> list[str] | list[tuple[str, str]]:
+    """Fetch model list for the given provider. Returns list of id strings, or (label, id) for Mammouth."""
     if provider == "ollama":
         return fetch_ollama_models()
     if provider == "anthropic":

@@ -57,3 +57,30 @@ def test_fetch_mammouth_models_failure():
     with patch("urllib.request.urlopen", side_effect=OSError("network unreachable")):
         result = fetch_mammouth_models()
     assert result == []
+
+
+def test_fetch_mammouth_models_success():
+    """Mammouth returns list of (label, id) with owner and cost per M."""
+    mock_resp = {
+        "data": [
+            {
+                "id": "gpt-4o",
+                "owned_by": "openai",
+                "model_info": {
+                    "input_cost_per_token": 2.5e-06,
+                    "output_cost_per_token": 1e-05,
+                },
+            },
+            {"id": "no-cost", "owned_by": "other"},
+        ]
+    }
+    with patch("urllib.request.urlopen") as m:
+        m.return_value.__enter__.return_value.read.return_value = json.dumps(
+            mock_resp
+        ).encode()
+        result = fetch_mammouth_models()
+    assert len(result) == 2
+    assert result[0][1] == "gpt-4o"
+    assert "openai" in result[0][0]
+    assert "2.50" in result[0][0] and "10.00" in result[0][0]
+    assert result[1] == ("no-cost · other", "no-cost")
