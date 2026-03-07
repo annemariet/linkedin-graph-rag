@@ -13,6 +13,7 @@ from linkedin_api.content_store import (
     save_content,
     save_metadata,
     update_summary_metadata,
+    update_urls_metadata,
 )
 
 
@@ -148,6 +149,38 @@ class TestListPostsNeedingSummary:
         assert len(posts) == 1
         assert posts[0]["urn"] == "urn:li:ugcPost:a"
         assert posts[0]["content"] == "a" * 100
+
+
+class TestUpdateUrlsMetadata:
+    def test_sets_urls_on_new_urn(self):
+        urn = "urn:li:ugcPost:urls_new"
+        update_urls_metadata(urn, ["https://example.com"])
+        meta = load_metadata(urn)
+        assert meta is not None
+        assert meta["urls"] == ["https://example.com"]
+
+    def test_preserves_existing_summary(self):
+        urn = "urn:li:ugcPost:urls_preserve"
+        save_content(urn, "Post text")
+        save_metadata(urn, summary="Keep me", topics=["AI"])
+        update_urls_metadata(urn, ["https://arxiv.org/abs/123"])
+        meta = load_metadata(urn)
+        assert meta["summary"] == "Keep me"
+        assert meta["topics"] == ["AI"]
+        assert meta["urls"] == ["https://arxiv.org/abs/123"]
+
+    def test_overwrites_existing_urls(self):
+        urn = "urn:li:ugcPost:urls_overwrite"
+        save_metadata(urn, urls=["https://old.example.com"])
+        update_urls_metadata(urn, ["https://new.example.com"])
+        meta = load_metadata(urn)
+        assert meta["urls"] == ["https://new.example.com"]
+
+    def test_empty_list(self):
+        urn = "urn:li:ugcPost:urls_empty"
+        update_urls_metadata(urn, [])
+        meta = load_metadata(urn)
+        assert meta["urls"] == []
 
 
 class TestDeduplication:

@@ -50,10 +50,12 @@ _REPORT_SYSTEM = (
     "Highlight main themes, recurring topics, technologies, and any patterns. "
     "Output a short report in markdown (sections, bullet points). No preamble."
 )
-REPORT_MAX_POSTS = 50
+REPORT_MAX_POSTS = 50  # fallback when max_posts not set
+REPORT_MAX_POSTS_MINIMAL = 100
+REPORT_MAX_POSTS_SUMMARY = 50
+REPORT_MAX_POSTS_FULL = 20
 REPORT_BATCH_CHAR_LIMIT = 4000
-REPORT_MAX_SUMMARY_CHARS = 400
-REPORT_MAX_FULL_POST_CHARS = 1500
+REPORT_MAX_FULL_POST_CHARS_DEFAULT = 1500
 
 # Order defines report sections. "other" gets summaries + links only (no LLM).
 REPORT_CATEGORIES = (
@@ -75,6 +77,36 @@ CATEGORY_LABELS = {
     "other": "Other (uncategorized — review to improve categorization)",
 }
 
+REPORT_MODE_PER_CATEGORY = "per_category"
+REPORT_MODE_SINGLE_PASS = "single_pass"
+REPORT_MODE_LABEL_PER_CATEGORY = "Per category summary"
+REPORT_MODE_LABEL_SINGLE_PASS = "Single pass (all posts)"
+REPORT_MODE_CHOICES = [
+    (REPORT_MODE_LABEL_PER_CATEGORY, REPORT_MODE_PER_CATEGORY),
+    (REPORT_MODE_LABEL_SINGLE_PASS, REPORT_MODE_SINGLE_PASS),
+]
+
+CONTENT_LEVEL_MINIMAL = "minimal"
+CONTENT_LEVEL_SUMMARY = "summary"
+CONTENT_LEVEL_FULL = "full"
+CONTENT_LEVEL_LABEL_MINIMAL = "Minimal (link + tags)"
+CONTENT_LEVEL_LABEL_SUMMARY = "Summary (minimal + post summary)"
+CONTENT_LEVEL_LABEL_FULL = "Full (minimal + full post content)"
+CONTENT_LEVEL_CHOICES = [
+    (CONTENT_LEVEL_LABEL_MINIMAL, CONTENT_LEVEL_MINIMAL),
+    (CONTENT_LEVEL_LABEL_SUMMARY, CONTENT_LEVEL_SUMMARY),
+    (CONTENT_LEVEL_LABEL_FULL, CONTENT_LEVEL_FULL),
+]
+
+
+def _default_max_posts(content_level: str) -> int:
+    """Default max posts per report by content level."""
+    if content_level == CONTENT_LEVEL_MINIMAL:
+        return REPORT_MAX_POSTS_MINIMAL
+    if content_level == CONTENT_LEVEL_FULL:
+        return REPORT_MAX_POSTS_FULL
+    return REPORT_MAX_POSTS_SUMMARY
+
 
 def _truncate(s: str, max_len: int) -> str:
     if len(s) <= max_len:
@@ -82,34 +114,55 @@ def _truncate(s: str, max_len: int) -> str:
     return s[: max_len - 3].rstrip() + "..."
 
 
-def _format_post_for_prompt(m: dict, use_full_posts: bool = True) -> str:
-    """Format post for LLM prompt. Uses full content or summary."""
-    text: str
-    if use_full_posts and m.get("urn"):
-        content = load_content(m["urn"])
-        if content:
-            text = _truncate(content, REPORT_MAX_FULL_POST_CHARS)
-        else:
-            text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    else:
-        text = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-    parts = [f"- {text}"]
+def _format_post_for_prompt(
+    m: dict,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
+) -> str:
+    """Format post for LLM. Always includes link. Minimal=link+tags, Summary=+full summary, Full=+truncated content."""
+    url = (m.get("post_url") or "").strip()
+    cat = (m.get("category") or "").strip() or "other"
+    parts: list[str] = []
     if m.get("topics"):
-        parts.append(f"  Topics: {', '.join(m['topics'])}")
+        parts.append(f"Topics: {', '.join(m['topics'])}")
     if m.get("technologies"):
-        parts.append(f"  Tech: {', '.join(m['technologies'])}")
-    return "\n".join(parts)
+        parts.append(f"Tech: {', '.join(m['technologies'])}")
+    tag_part = " | ".join(parts) if parts else ""
+    tag_part = f"Category: {cat}" + (f" | {tag_part}" if tag_part else "")
+
+    if content_level == CONTENT_LEVEL_MINIMAL:
+        body = tag_part
+    elif content_level == CONTENT_LEVEL_FULL and m.get("urn"):
+        content = load_content(m["urn"])
+        full_text = (
+            _truncate(content, max_full_post_chars) if content else (m["summary"] or "")
+        )
+        body = (
+            f"{tag_part} | Content: {full_text}"
+            if tag_part
+            else f"Content: {full_text}"
+        )
+    else:
+        summary = (m["summary"] or "").strip()
+        body = f"{tag_part} | Summary: {summary}" if tag_part else f"Summary: {summary}"
+
+    if url:
+        return f"- [{url}]: {body}"
+    return f"- (no link): {body}"
 
 
 def _batches_by_char_limit(
-    metas: list[dict], char_limit: int, use_full_posts: bool = True
+    metas: list[dict],
+    char_limit: int,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> list[list[dict]]:
     """Split metas into batches; start a new batch when adding the next post would exceed char_limit."""
     batches: list[list[dict]] = []
     current: list[dict] = []
     current_len = 0
     for m in metas:
-        block = _format_post_for_prompt(m, use_full_posts)
+        block = _format_post_for_prompt(m, content_level, max_full_post_chars)
         if current and current_len + len(block) > char_limit:
             batches.append(current)
             current = []
@@ -121,52 +174,139 @@ def _batches_by_char_limit(
     return batches
 
 
+_BATCH_SYSTEM = (
+    "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
+    "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
+)
+
+
 def _summarize_batch(
-    llm, metas: list[dict], category_label: str, use_full_posts: bool = True
+    llm,
+    metas: list[dict],
+    category_label: str,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
+    prompts_out: list[str] | None = None,
 ) -> str:
     """One LLM call for this batch. Returns 2–4 sentence summary."""
-    block = "\n\n".join(_format_post_for_prompt(m, use_full_posts) for m in metas)
-    system = (
-        "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
-        "Highlight main themes, recurring topics, and any patterns. Output plain text, no preamble."
+    block = "\n\n".join(
+        _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
     )
     prompt = f"Posts in '{category_label}' ({len(metas)}):\n\n---\n{block}\n---"
-    response = llm.invoke(prompt, system_instruction=system)
+    if prompts_out is not None:
+        prompts_out.append(prompt)
+    response = llm.invoke(prompt, system_instruction=_BATCH_SYSTEM)
     return (response.content if hasattr(response, "content") else str(response)).strip()
 
 
-def _format_other_section(metas: list[dict], use_full_posts: bool = True) -> str:
-    """Format 'other' category as summary + link (no LLM). Use full content only when post < summary."""
-    lines = []
-    for m in metas:
-        summary = _truncate(m["summary"], REPORT_MAX_SUMMARY_CHARS)
-        if use_full_posts and m.get("urn"):
-            content = load_content(m["urn"])
-            if content and len(content) <= len(m["summary"]):
-                text = content
-            else:
-                text = summary
-        else:
-            text = summary
-        url = (m.get("post_url") or "").strip()
-        if url:
-            lines.append(f"- {text} — [post]({url})")
-        else:
-            lines.append(f"- {text}")
+def _format_other_section(
+    metas: list[dict],
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
+) -> str:
+    """Format 'other' category. Always includes link."""
+    lines = [
+        _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
+    ]
     return "\n".join(lines) if lines else "_No posts in this category._"
 
 
-def _report_signature(
-    use_full_posts: bool = True,
+_SINGLE_PASS_SYSTEM = (
+    "You are a concise analyst. The user shares LinkedIn posts. "
+    "Each has URL, category/tags, and optionally summary or full content.\n\n"
+    """Produce a markdown report with:
+1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,
+   Papers & research, Experiments & benchmarks, Company & career news, Other. Put each post into the right category
+   based on content.
+2. For each section: bullet points with the most important news for the category, with inline **links**
+   to the relevant content as well as the source. See the example below for how links can be inserted.
+   A bullet point may group articles if they cite the same product/idea/technology/etc. or are closely related
+   (eg competing models, similar subdomains, etc).
+3. Cite the post as the source of the information, with the Author name if it's a person, otherwise it can be inlined
+   with the entity name making the announcement.
+4. Output valid markdown only. No preamble.
+
+Example input (keeping only the links for brevity):
+**Posts**:
+- https://www.linkedin.com/feed/update/urn:li:ugcPost:7432397932697481216
+- https://www.linkedin.com/feed/update/urn:li:ugcPost:7432135776701693952
+- https://www.linkedin.com/feed/update/urn:li:activity:7430628329965137920
+- https://www.linkedin.com/feed/update/urn:li:activity:7427799631356473344
+- https://www.linkedin.com/feed/update/urn:li:activity:7432043070642290688
+- https://www.linkedin.com/feed/update/urn:li:activity:7432412067652943872
+
+Example output (showing only the Product Announcements section):
+The period saw several significant product launches and infrastructure releases.
+
+- **Data visualization**: It looks like there is a new player in town in the datavis world!
+  [Graphy](https://graphy.dev/) launched its Developer Platform as the first charting
+  infrastructure for AI-native products, targeting the growing need for data visualization in AI applications
+  ([from Andrey Vinitsky](https://www.linkedin.com/feed/update/urn:li:ugcPost:7432397932697481216)).
+- **Agentic coding**:
+    * [Cursor announced](https://www.linkedin.com/feed/update/urn:li:ugcPost:7432135776701693952/)
+      a major capability upgrade allowing agents to setup their own VM and control their own computers and send videos
+      of their work (get started [here](https://cursor.com/onboard)).
+    * [LightOn](https://lighton.ai/) [released](https://huggingface.co/blog/lightonai/colgrep-lateon-code) 2 new
+      LateOn-code models on HuggingFace, and ColGREP, a Rust-based multi-vector search tool for coding agents (from
+      [Tom Aarsen](https://www.linkedin.com/feed/update/urn:li:activity:7427799631356473344/)).
+- **Data and MCPs**: [data.gouv.fr](https://www.linkedin.com/feed/update/urn:li:activity:7432412067652943872/)
+  announced an experimental MCP server to make public datasets accessible to AI chatbots.
+  Check it out on Github: https://github.com/datagouv/datagouv-mcp.
+
+
+https://www.linkedin.com/feed/update/urn:li:activity:7432043070642290688/ should be either in the Company & career
+news or with Research news.
+https://www.linkedin.com/feed/update/urn:li:activity:7430628329965137920/ can be skipped because it's not not so
+relevant, an inference provider adding a new model must happen regularly.
+"""
+)
+
+
+def _generate_single_pass_report(
+    metas: list[dict],
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
-) -> tuple[str, int, tuple[str, ...], bool] | None:
-    """Signature of post set + report model + use_full_posts. None if no posts. Used for cache invalidation."""
+) -> str:
+    """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
+    blocks = "\n\n".join(
+        _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
+    )
+    prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
+    _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
+    llm = create_llm(
+        stage="report",
+        json_mode=False,
+        provider_override=report_provider,
+        model_override=report_model,
+    )
+    response = llm.invoke(prompt, system_instruction=_SINGLE_PASS_SYSTEM)
+    return (response.content if hasattr(response, "content") else str(response)).strip()
+
+
+def _resolve_max_posts(max_posts: int | None, content_level: str) -> int:
+    """Use max_posts if set, else default for content level."""
+    if max_posts is not None and max_posts > 0:
+        return int(max_posts)
+    return _default_max_posts(content_level)
+
+
+def _report_signature(
+    report_mode: str = REPORT_MODE_PER_CATEGORY,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_posts: int | None = None,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
+    report_provider: str | None = None,
+    report_model: str | None = None,
+) -> tuple[str, int, tuple[str, ...], str, str, int, int] | None:
+    """Signature of post set + report model + report mode + content_level + max_posts + max_full_post_chars."""
     all_metas = list_summarized_metadata()
     if not all_metas:
         return None
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
-    metas = all_metas[:REPORT_MAX_POSTS]
+    limit = _resolve_max_posts(max_posts, content_level)
+    metas = all_metas[:limit]
     model_id = get_report_model_id(
         provider_override=report_provider,
         model_override=report_model,
@@ -175,38 +315,93 @@ def _report_signature(
         model_id,
         len(all_metas),
         tuple((m.get("summarized_at") or "") for m in metas),
-        use_full_posts,
+        report_mode,
+        content_level,
+        limit,
+        max_full_post_chars,
     )
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
+_REPORT_CACHE_VERSION = 2
+_REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
+
+
+def _save_report_prompt_debug(mode: str, system: str, prompts: list[str]) -> None:
+    """Save report prompt(s) to a local file for debugging. Viewable as Markdown."""
+    path = get_data_dir() / _REPORT_PROMPT_DEBUG_FILE
+    try:
+        parts = [
+            f"# Report prompt ({mode})\n\n## System instruction\n\n```\n{system}\n```\n"
+        ]
+        for i, p in enumerate(prompts):
+            sep = "\n\n---\n\n" if i > 0 else ""
+            parts.append(
+                f"{sep}## User prompt{' ' + str(i + 1) if len(prompts) > 1 else ''}\n\n```\n{p}\n```"
+            )
+        path.write_text("\n".join(parts), encoding="utf-8")
+        logger.info("Report prompt saved to %s", path)
+    except OSError as e:
+        logger.warning("Could not save report prompt: %s", e)
+
+
+def _load_report_prompt_debug() -> str:
+    """Load last report prompt from file. Returns content or placeholder."""
+    path = get_data_dir() / _REPORT_PROMPT_DEBUG_FILE
+    if not path.exists():
+        return "_No prompt saved yet. Run the pipeline to generate a report._"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return "_Could not read prompt file._"
 
 
 def _load_report_cache(
-    use_full_posts: bool,
-) -> tuple[str, tuple[str, int, tuple[str, ...], bool]] | None:
-    """Load cached report from disk. Returns (report, signature) or None if mode mismatch."""
+    report_mode: str,
+    content_level: str,
+    max_posts: int,
+    max_full_post_chars: int,
+) -> tuple[str, tuple[str, int, tuple[str, ...], str, str, int, int]] | None:
+    """Load cached report from disk. Returns (report, signature) or None if params mismatch."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
+            return None
         model_id = data.get("model_id", "legacy")
         n = data.get("n", 0)
         at = tuple(data.get("summarized_at", []))
-        cached_full = data.get("use_full_posts", True)
-        if cached_full != use_full_posts:
+        cached_mode = data.get("report_mode", REPORT_MODE_PER_CATEGORY)
+        cached_level = data.get("content_level")
+        if cached_level is None:
+            use_full = data.get("use_full_posts", True)
+            cached_level = CONTENT_LEVEL_FULL if use_full else CONTENT_LEVEL_SUMMARY
+        cached_max = data.get("max_posts", REPORT_MAX_POSTS)
+        cached_full_chars = data.get(
+            "max_full_post_chars", REPORT_MAX_FULL_POST_CHARS_DEFAULT
+        )
+        if (
+            cached_mode != report_mode
+            or cached_level != content_level
+            or cached_max != max_posts
+            or cached_full_chars != max_full_post_chars
+        ):
             return None
         report = data.get("report", "")
         if not report:
             return None
-        return (report, (model_id, n, at, use_full_posts))
+        return (
+            report,
+            (model_id, n, at, cached_mode, cached_level, cached_max, cached_full_chars),
+        )
     except (json.JSONDecodeError, OSError):
         return None
 
 
 def _save_report_cache(
-    report: str, sig: tuple[str, int, tuple[str, ...], bool]
+    report: str, sig: tuple[str, int, tuple[str, ...], str, str, int, int]
 ) -> None:
     """Persist report and signature to disk so cache survives page refresh."""
     path = get_data_dir() / _REPORT_CACHE_FILE
@@ -214,10 +409,14 @@ def _save_report_cache(
         path.write_text(
             json.dumps(
                 {
+                    "report_cache_version": _REPORT_CACHE_VERSION,
                     "model_id": sig[0],
                     "n": sig[1],
                     "summarized_at": list(sig[2]),
-                    "use_full_posts": sig[3],
+                    "report_mode": sig[3],
+                    "content_level": sig[4],
+                    "max_posts": sig[5],
+                    "max_full_post_chars": sig[6],
                     "report": report,
                 },
                 ensure_ascii=False,
@@ -229,17 +428,35 @@ def _save_report_cache(
 
 
 def generate_activity_report(
-    use_full_posts: bool = True,
+    report_mode: str = REPORT_MODE_PER_CATEGORY,
+    content_level: str = CONTENT_LEVEL_SUMMARY,
+    max_posts: int | None = None,
+    max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
 ) -> str:
-    """Build report by category. Batches by char limit per category; 'other' is summaries + links only."""
+    """Build report. Per-category: batches per category; 'other' is summaries+links.
+    Single-pass: one LLM call with all links. Content: Minimal, Summary, or Full.
+    """
     setup_gcp_credentials()
     all_metas = list_summarized_metadata()
     if not all_metas:
         return "No summarized posts found. Run the pipeline first (collect → enrich → summarize)."
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
-    metas = all_metas[:REPORT_MAX_POSTS]
+    limit = _resolve_max_posts(max_posts, content_level)
+    metas = all_metas[:limit]
+    if report_mode == REPORT_MODE_SINGLE_PASS:
+        try:
+            return _generate_single_pass_report(
+                metas,
+                content_level,
+                max_full_post_chars=max_full_post_chars,
+                report_provider=report_provider,
+                report_model=report_model,
+            )
+        except Exception as e:
+            logger.exception("Single-pass report failed")
+            return _report_error_message(e)
     by_category: dict[str, list[dict]] = {}
     for m in metas:
         cat = (m.get("category") or "").strip().lower() or "other"
@@ -254,6 +471,7 @@ def generate_activity_report(
             model_override=report_model,
         )
         parts = []
+        prompts_collected: list[str] = []
         for cat in REPORT_CATEGORIES:
             category_metas = by_category.get(cat)
             if not category_metas:
@@ -261,16 +479,29 @@ def generate_activity_report(
             label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title())
             if cat == "other":
                 parts.append(
-                    f"## {label}\n\n{_format_other_section(category_metas, use_full_posts)}"
+                    f"## {label}\n\n{_format_other_section(category_metas, content_level, max_full_post_chars)}"
                 )
                 continue
             batches = _batches_by_char_limit(
-                category_metas, REPORT_BATCH_CHAR_LIMIT, use_full_posts
+                category_metas,
+                REPORT_BATCH_CHAR_LIMIT,
+                content_level,
+                max_full_post_chars,
             )
             batch_summaries = [
-                _summarize_batch(llm, batch, label, use_full_posts) for batch in batches
+                _summarize_batch(
+                    llm,
+                    batch,
+                    label,
+                    content_level,
+                    max_full_post_chars=max_full_post_chars,
+                    prompts_out=prompts_collected,
+                )
+                for batch in batches
             ]
             parts.append(f"## {label}\n\n" + "\n\n".join(batch_summaries))
+        if prompts_collected:
+            _save_report_prompt_debug("per-category", _BATCH_SYSTEM, prompts_collected)
         if not parts:
             return "No posts to summarize."
         return "\n\n".join(parts)
@@ -312,63 +543,99 @@ PERIOD_SYNTAX = "e.g. 1d, 7d, 14d, 30d, 1w, 2w, 1m"
 
 
 def _render_pipeline_status(
-    step_label: str | None = None, progress: float | None = None
+    step_label: str | None = None,
+    stage_progress: tuple[int, float] | None = None,
 ) -> str:
-    """Render status below the run button: hint when idle, label + progress bar while running."""
-    if step_label is None or progress is None:
+    """
+    Render status below the run button: hint when idle, stage label + 5-segment bar while running.
+    stage_progress: (stage_index 0-4, progress_in_stage 0-1). Bar splits into 5 segments.
+    """
+    if step_label is None or stage_progress is None:
         return (
             '<div style="color: #6b7280; margin: 0.25rem 0 0.5rem 0;">'
             f"{html.escape(PIPELINE_HINT_TEXT)}"
             "</div>"
         )
-    width = int(round(max(0.0, min(1.0, progress)) * 100))
+    stage_idx, prog = stage_progress
+    stage_idx = max(0, min(4, stage_idx))
+    prog = max(0.0, min(1.0, prog))
+    segments: list[float] = []
+    for i in range(5):
+        if i < stage_idx:
+            segments.append(1.0)
+        elif i == stage_idx:
+            segments.append(prog)
+        else:
+            segments.append(0.0)
+    pct = [int(round(s * 100)) for s in segments]
+    segment_css = (
+        "flex: 1; min-width: 0; height: 100%; background: #e5e7eb; "
+        "overflow: hidden; display: flex;"
+    )
+    fill_css = "height: 100%; background: #f97316; transition: width 200ms ease;"
     return (
         f'<div style="margin: 0.25rem 0; color: #111827;">{html.escape(step_label)}</div>'
-        '<div style="width: 100%; height: 10px; background: #e5e7eb; '
-        'border-radius: 9999px; overflow: hidden;">'
-        f'<div style="width: {width}%; height: 100%; background: #f97316; '
-        'transition: width 200ms ease;"></div>'
+        '<div style="display: flex; width: 100%; height: 10px; gap: 2px; '
+        'border-radius: 4px; overflow: hidden;">'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[0]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[1]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[2]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[3]}%;"></div></div>'
+        f'<div style="{segment_css}">'
+        f'<div style="{fill_css} width: {pct[4]}%;"></div></div>'
         "</div>"
     )
 
 
-def _parse_fraction_status(
-    line: str, prefix: str, base: float, span: float, step_label: str
-) -> tuple[float, str] | None:
+def _parse_fraction(line: str, prefix: str) -> tuple[int, int] | None:
+    """Extract (done, total) from lines like 'Enriching 3/10…' or 'Summarizing batch 2/5…'."""
     if not line.startswith(prefix) or "/" not in line:
         return None
     try:
         done_str, total_str = line.removeprefix(prefix).rstrip("…").split("/")
-        done, total = int(done_str), int(total_str)
-        if total <= 0:
-            return base, step_label
-        return (base + span * done / total), step_label
+        return int(done_str), int(total_str)
     except (ValueError, IndexError):
         return None
 
 
-def _status_from_pipeline_line(line: str) -> tuple[float, str] | None:
-    """Map pipeline stream lines to concise UI steps + normalized progress."""
-    enrich = _parse_fraction_status(line, "Enriching ", 0.2, 0.2, "Enriching…")
-    if enrich is not None:
-        return enrich
-    summarize = _parse_fraction_status(
-        line, "Summarizing batch ", 0.4, 0.2, "Summarizing…"
-    )
-    if summarize is not None:
-        return summarize
+def _status_from_pipeline_line(line: str) -> tuple[tuple[int, float], str] | None:
+    """
+    Map pipeline stream lines to (stage_index, progress_in_stage), label.
+    Stages: 0=fetching, 1=enriching, 2=fetch linked URLs, 3=summarizing, 4=preparing report.
+    """
     if line.startswith("Starting pipeline"):
-        return 0.0, "Fetching…"
+        return (0, 0.0), "fetching…"
     if "Collected" in line:
-        return 0.2, "Enriching…"
+        return (0, 1.0), "fetching…"
+    frac = _parse_fraction(line, "Enriching ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (1, p), f"enriching [{done}/{total}]…"
     if "Enriched" in line:
-        return 0.4, "Summarizing…"
+        return (1, 1.0), "enriching…"
+    frac = _parse_fraction(line, "Fetching linked URLs ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (2, p), f"fetching linked URLs [{done}/{total}]…"
+    if "Fetched" in line and "URL" in line:
+        return (2, 1.0), "fetching linked URLs…"
+    frac = _parse_fraction(line, "Summarizing batch ")
+    if frac is not None:
+        done, total = frac
+        p = (done / total) if total > 0 else 1.0
+        return (3, p), f"summarizing [{done}/{total}]…"
     if "Summarized" in line:
-        return 0.6, "Finishing up…"
+        return (3, 1.0), "summarizing…"
     if "✅ Done" in line:
-        return 0.75, "Generating report…"
+        return (4, 0.0), "preparing report…"
     if line.startswith("❌"):
-        return 1.0, "Failed."
+        return (4, 1.0), "Failed."
     return None
 
 
@@ -563,11 +830,41 @@ def create_pipeline_interface():
                 info="No LinkedIn API call; use only previously fetched data.",
             )
             limit = gr.Number(value=None, label="Limit (optional)", precision=0)
-            use_full_posts = gr.Checkbox(
-                value=True,
-                label="Use full post content",
-                info="Default: use full posts. Uncheck to use short summaries (legacy).",
+            report_mode = gr.Dropdown(
+                choices=REPORT_MODE_CHOICES,
+                value=REPORT_MODE_SINGLE_PASS,
+                label="Report mode",
             )
+            content_level = gr.Dropdown(
+                choices=CONTENT_LEVEL_CHOICES,
+                value=CONTENT_LEVEL_MINIMAL,
+                label="Content level",
+            )
+            max_posts_report = gr.Number(
+                value=REPORT_MAX_POSTS_MINIMAL,
+                label="Max posts (report)",
+                minimum=1,
+                maximum=500,
+                precision=0,
+                info="Defaults: 100 (minimal), 50 (summary), 20 (full).",
+            )
+            max_full_post_chars = gr.Number(
+                value=REPORT_MAX_FULL_POST_CHARS_DEFAULT,
+                label="Max post content length",
+                minimum=100,
+                maximum=10000,
+                precision=0,
+                info="Chars per post when Full. Ignored for Minimal/Summary.",
+            )
+
+        def suggest_max_posts(content_lvl: str):
+            return _default_max_posts(content_lvl or CONTENT_LEVEL_SUMMARY)
+
+        content_level.change(
+            fn=suggest_max_posts,
+            inputs=[content_level],
+            outputs=[max_posts_report],
+        )
         with gr.Accordion("Model selection", open=False):
             sp, sm = get_default_provider_model("summary")
             rp, rm = get_default_provider_model("report")
@@ -667,21 +964,41 @@ def create_pipeline_interface():
             label="Report",
             elem_id="report-output",
         )
+        with gr.Accordion("Debug: Last report prompt", open=False):
+            prompt_debug_btn = gr.Button("View last prompt", size="sm")
+            prompt_debug_output = gr.Markdown(
+                value=_load_report_prompt_debug(),
+                label="Prompt",
+                elem_id="prompt-debug-output",
+            )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
+
+        def load_prompt_debug():
+            return _load_report_prompt_debug()
+
+        prompt_debug_btn.click(
+            fn=load_prompt_debug,
+            inputs=[],
+            outputs=[prompt_debug_output],
+        )
 
         def prepare_run(cache):
             return (
-                _render_pipeline_status("Fetching…", 0.0),
+                _render_pipeline_status("fetching…", (0, 0.0)),
                 gr.update(),
                 cache,
                 gr.update(interactive=False),
+                gr.update(),
             )
 
         def run_all(
             last: str,
             from_cache: bool,
             lim,
-            use_full: bool,
+            mode: str,
+            content_lvl: str,
+            max_posts_val,
+            max_full_chars_val,
             sum_prov,
             sum_mod,
             rep_prov,
@@ -698,8 +1015,8 @@ def create_pipeline_interface():
             if _parse_last(last_clean) is None:
                 err = f"Invalid period '{last}'. {PERIOD_SYNTAX}"
                 yield _render_pipeline_status(
-                    "Invalid period", 0.0
-                ), err, cache, gr.update(interactive=True)
+                    "Invalid period", (0, 0.0)
+                ), err, cache, gr.update(interactive=True), gr.update()
                 return
             started_at = time.monotonic()
 
@@ -714,8 +1031,8 @@ def create_pipeline_interface():
             except (TypeError, ValueError):
                 lim_int = None
 
-            progress_value = 0.0
-            step_label = "Fetching…"
+            stage_progress: tuple[int, float] = (0, 0.0)
+            step_label = "fetching…"
             try:
                 for chunk in run_pipeline_ui_streaming(
                     last=last_clean,
@@ -727,46 +1044,106 @@ def create_pipeline_interface():
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
                     if status_update is not None:
-                        progress_value, step_label = status_update
+                        stage_progress, step_label = status_update
                     if last.startswith("❌"):
                         _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
-                            step_label, progress_value
+                            step_label, stage_progress
                         ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
                             interactive=True
-                        )
+                        ), gr.update()
                         return
                     yield _render_pipeline_status(
-                        step_label, progress_value
-                    ), gr.update(), cache, gr.update(interactive=False)
+                        step_label, stage_progress
+                    ), gr.update(), cache, gr.update(interactive=False), gr.update()
             except Exception as e:
                 logger.exception("Pipeline failed")
                 err_msg = str(e)[:200]
                 _ensure_min_progress_visibility()
                 yield _render_pipeline_status(
-                    "Failed.", 1.0
-                ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(interactive=True)
+                    "Failed.", (4, 1.0)
+                ), f"⚠️ Pipeline failed: {err_msg}", cache, gr.update(
+                    interactive=True
+                ), gr.update()
                 return
 
-            progress_value, step_label = 0.75, "Generating report…"
+            stage_progress, step_label = (4, 0.0), "preparing report…"
             yield _render_pipeline_status(
-                step_label, progress_value
-            ), gr.update(), cache, gr.update(interactive=False)
-            sig = _report_signature(
-                use_full, report_provider=rep_prov or None, report_model=rep_mod or None
+                step_label, stage_progress
+            ), gr.update(), cache, gr.update(interactive=False), gr.update()
+            report_mode_val = mode or REPORT_MODE_PER_CATEGORY
+            content_level_val = content_lvl or CONTENT_LEVEL_SUMMARY
+            try:
+                max_posts_int = (
+                    int(max_posts_val)
+                    if max_posts_val not in (None, "", float("nan"))
+                    else None
+                )
+            except (TypeError, ValueError):
+                max_posts_int = None
+            try:
+                max_full_chars_int = (
+                    int(max_full_chars_val)
+                    if max_full_chars_val not in (None, "", float("nan"))
+                    else REPORT_MAX_FULL_POST_CHARS_DEFAULT
+                )
+            except (TypeError, ValueError):
+                max_full_chars_int = REPORT_MAX_FULL_POST_CHARS_DEFAULT
+            max_full_chars_int = max(
+                100,
+                min(10000, max_full_chars_int or REPORT_MAX_FULL_POST_CHARS_DEFAULT),
             )
-            disk = _load_report_cache(use_full)
-            if disk is not None and disk[1] == sig:
+            max_posts_resolved = _resolve_max_posts(max_posts_int, content_level_val)
+            logger.info(
+                "Report mode: raw=%r → %s; content: raw=%r → %s; max_posts=%s; max_full=%s",
+                mode,
+                report_mode_val,
+                content_lvl,
+                content_level_val,
+                max_posts_resolved,
+                max_full_chars_int,
+            )
+            sig = _report_signature(
+                report_mode=report_mode_val,
+                content_level=content_level_val,
+                max_posts=max_posts_int,
+                max_full_post_chars=max_full_chars_int,
+                report_provider=rep_prov or None,
+                report_model=rep_mod or None,
+            )
+            disk = _load_report_cache(
+                report_mode=report_mode_val,
+                content_level=content_level_val,
+                max_posts=max_posts_resolved,
+                max_full_post_chars=max_full_chars_int,
+            )
+
+            def _is_cache_valid(cached_sig: tuple) -> bool:
+                if cached_sig != sig:
+                    return False
+                if len(cached_sig) > 4 and cached_sig[4] != content_level_val:
+                    logger.info(
+                        "Cache invalid: content_level mismatch %r vs %r",
+                        cached_sig[4],
+                        content_level_val,
+                    )
+                    return False
+                return True
+
+            if disk is not None and _is_cache_valid(disk[1]):
                 result = disk[0]
                 logger.info("Report cache hit (disk)")
                 cache = (result, sig)
-            elif cache is not None and cache[1] == sig:
+            elif cache is not None and _is_cache_valid(cache[1]):
                 result = cache[0]
                 logger.info("Report cache hit (session)")
             else:
                 try:
                     result = generate_activity_report(
-                        use_full_posts=use_full,
+                        report_mode=report_mode_val,
+                        content_level=content_level_val,
+                        max_posts=max_posts_int,
+                        max_full_post_chars=max_full_chars_int,
                         report_provider=rep_prov or None,
                         report_model=rep_mod or None,
                     )
@@ -777,14 +1154,21 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
+            prompt_content = _load_report_prompt_debug()
             yield _render_pipeline_status(None, None), result, cache, gr.update(
                 interactive=True
-            )
+            ), prompt_content
 
         run_btn.click(
             fn=prepare_run,
             inputs=[report_cache_state],
-            outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            outputs=[
+                pipeline_status,
+                report_output,
+                report_cache_state,
+                run_btn,
+                prompt_debug_output,
+            ],
             queue=False,
         ).then(
             fn=run_all,
@@ -792,14 +1176,23 @@ def create_pipeline_interface():
                 period,
                 from_cache,
                 limit,
-                use_full_posts,
+                report_mode,
+                content_level,
+                max_posts_report,
+                max_full_post_chars,
                 summary_provider,
                 summary_model,
                 report_provider,
                 report_model,
                 report_cache_state,
             ],
-            outputs=[pipeline_status, report_output, report_cache_state, run_btn],
+            outputs=[
+                pipeline_status,
+                report_output,
+                report_cache_state,
+                run_btn,
+                prompt_debug_output,
+            ],
             show_progress="hidden",
         )
     return block

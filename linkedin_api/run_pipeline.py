@@ -23,6 +23,7 @@ from linkedin_api.enrich_activities import (
     enrich_activities,
     enrich_activities_streaming,
 )
+from linkedin_api.fetch_linked_content import fetch_linked_content_streaming
 from linkedin_api.summarize_activity import (
     _format_timestamp,
     collect_activities,
@@ -145,6 +146,19 @@ def _enrich_activities_streaming(activities_path: Path, args):
     return out_path, count
 
 
+def _fetch_linked_content_streaming(args):
+    """
+    Generator: fetch content from URLs linked in posts. Yields (done, total).
+    Returns urls_fetched via StopIteration.
+    """
+    gen = fetch_linked_content_streaming(limit=args.limit, skip_cached=True)
+    try:
+        while True:
+            yield next(gen)
+    except StopIteration as e:
+        return e.value or 0
+
+
 def _summarize_posts_streaming(
     args, enriched_path: Path | None = None, summary_provider=None, summary_model=None
 ):
@@ -204,6 +218,8 @@ def run_pipeline_ui(
         sys.stdout = out
         activities_path, _ = _collect_activities(args)
         enriched_path, _ = _enrich_activities(activities_path, args)
+        for _ in _fetch_linked_content_streaming(args):
+            pass  # exhaust generator
         _summarize_posts(args, enriched_path)
         return True, out.getvalue()
     except SystemExit as e:
@@ -274,6 +290,20 @@ def run_pipeline_ui_streaming(
         lines[-1] = f"Enriched {n2} activities."
         yield _snapshot()
 
+        # Fetch linked URL content (posts with urls in metadata)
+        n_urls = 0
+        lines.append("Fetching linked URLs…")
+        gen = _fetch_linked_content_streaming(args)
+        try:
+            while True:
+                done, total = next(gen)
+                lines[-1] = f"Fetching linked URLs {done}/{total}…"
+                yield _snapshot()
+        except StopIteration as e:
+            n_urls = e.value or 0
+        lines[-1] = f"Fetched {n_urls} URL(s) from linked posts."
+        yield _snapshot()
+
         # Summarize with per-batch progress (placeholder updated in-place)
         n3 = 0
         lines.append("Summarizing…")
@@ -338,6 +368,8 @@ def main() -> int:
     try:
         activities_path, _ = _collect_activities(args)
         enriched_path, _ = _enrich_activities(activities_path, args)
+        for _ in _fetch_linked_content_streaming(args):
+            pass
         _summarize_posts(args, enriched_path)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1

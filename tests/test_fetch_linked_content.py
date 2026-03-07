@@ -1,0 +1,404 @@
+"""Tests for fetch_linked_content module."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from linkedin_api.fetch_linked_content import (
+    FetchResult,
+    fetch_linked_content,
+    has_resource,
+    load_resource,
+    process_post_linked_content,
+    save_resource,
+)
+
+
+@pytest.fixture(autouse=True)
+def use_tmp_data_dir(monkeypatch, tmp_path):
+    """Redirect data dir so tests don't touch ~/.linkedin_api."""
+    monkeypatch.setenv("LINKEDIN_DATA_DIR", str(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# FetchResult
+# ---------------------------------------------------------------------------
+
+
+class TestFetchResult:
+    def test_ok_with_content(self):
+        r = FetchResult(url="https://example.com", content="body text", title="Title")
+        assert r.ok is True
+
+    def test_ok_with_title_only(self):
+        r = FetchResult(url="https://example.com", title="Title only", content="")
+        assert r.ok is True
+
+    def test_not_ok_with_error(self):
+        r = FetchResult(url="https://example.com", content="body", error="HTTP 403")
+        assert r.ok is False
+
+    def test_not_ok_empty(self):
+        r = FetchResult(url="https://example.com")
+        assert r.ok is False
+
+
+# ---------------------------------------------------------------------------
+# fetch_linked_content — unit tests (HTTP mocked)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchLinkedContent:
+    def test_ignores_linkedin_profile_urls(self):
+        result = fetch_linked_content(
+            "https://www.linkedin.com/in/johndoe", resolve_redirects=False
+        )
+        assert result.error == "ignored"
+        assert result.ok is False
+
+    def test_ignores_linkedin_hashtag_urls(self):
+        result = fetch_linked_content(
+            "https://www.linkedin.com/feed/hashtag/ai", resolve_redirects=False
+        )
+        assert result.error == "ignored"
+
+    def test_skips_image_url(self):
+        """Image URLs (detected by extension) should be skipped without an HTTP fetch."""
+        result = fetch_linked_content(
+            "https://example.com/photo.png", resolve_redirects=False
+        )
+        assert "skipped" in result.error
+        assert result.ok is False
+
+    def test_skips_pdf_document(self):
+        """PDF URLs should be skipped without an HTTP fetch."""
+        result = fetch_linked_content(
+            "https://example.com/report.pdf", resolve_redirects=False
+        )
+        assert "skipped" in result.error
+        assert result.ok is False
+
+    def test_successful_html_fetch(self):
+        html = (
+            "<html><head>"
+            '<meta property="og:title" content="Great Article"/>'
+            "</head><body><p>Hello world</p></body></html>"
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        with patch("requests.get", return_value=mock_resp):
+            result = fetch_linked_content(
+                "https://medium.com/some-article", resolve_redirects=False
+            )
+
+        assert result.ok is True
+        assert result.title == "Great Article"
+        assert "Hello world" in result.content
+        assert result.url_type == "article"
+
+    def test_http_error_returns_error_result(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+
+        with patch("requests.get", return_value=mock_resp):
+            result = fetch_linked_content(
+                "https://example.com/gone", resolve_redirects=False
+            )
+
+        assert result.ok is False
+        assert "404" in result.error
+
+    def test_network_exception_returns_error_result(self):
+        with patch("requests.get", side_effect=ConnectionError("timeout")):
+            result = fetch_linked_content(
+                "https://example.com/timeout", resolve_redirects=False
+            )
+
+        assert result.ok is False
+        assert result.error  # non-empty error message
+
+    def test_metadata_only_strategy_for_video(self):
+        html = (
+            "<html><head>"
+            '<meta property="og:title" content="My Video"/>'
+            "</head><body><p>lots of content</p></body></html>"
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = html
+
+        with patch("requests.get", return_value=mock_resp):
+            result = fetch_linked_content(
+                "https://www.youtube.com/watch?v=abc123", resolve_redirects=False
+            )
+
+        assert result.url_type == "video"
+        assert result.title == "My Video"
+        assert result.content == ""  # metadata-only: no body
+
+
+# ---------------------------------------------------------------------------
+# Short URL resolution → classification
+# ---------------------------------------------------------------------------
+
+
+class TestShortUrlResolution:
+    """Verify that URL type classification uses the *resolved* URL, not the
+    raw lnkd.in short URL (which has no classifiable domain)."""
+
+    def _mock_html(self, title: str = "Title", body: str = "Body") -> str:
+        return (
+            f"<html><head>"
+            f'<meta property="og:title" content="{title}"/>'
+            f"</head><body><p>{body}</p></body></html>"
+        )
+
+    def test_lnkd_in_to_github_classified_as_repository(self):
+        """lnkd.in → github.com must be dispatched as 'repository'."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://github.com/user/repo",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("Some Repo")
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "repository"
+        assert result.resolved_url == "https://github.com/user/repo"
+        # metadata-only strategy → no body content
+        assert result.content == ""
+        assert result.title == "Some Repo"
+
+    def test_lnkd_in_to_youtube_classified_as_video(self):
+        """lnkd.in → youtube.com must be dispatched as 'video' (metadata-only)."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("My Video")
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "video"
+        assert result.content == ""  # metadata-only
+        assert result.title == "My Video"
+
+    def test_lnkd_in_to_medium_article_classified_as_article(self):
+        """lnkd.in → medium.com must be classified as 'article' and body-fetched."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://medium.com/@author/some-article-abc123",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                text=self._mock_html("Great Article", "Article body here"),
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "article"
+        assert "Article body here" in result.content
+
+    def test_lnkd_in_to_image_is_skipped(self):
+        """lnkd.in resolving to an image URL should be skipped without fetching."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://example.com/diagram.png",
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        mock_get.assert_not_called()
+        assert "skipped" in result.error
+        assert result.ok is False
+
+    def test_failed_redirect_falls_back_gracefully(self):
+        """If resolve_redirect returns the original lnkd.in URL (resolution
+        failed), fetch_linked_content should still attempt a fetch rather
+        than crash — lnkd.in has no special type so it defaults to 'article'."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://lnkd.in/erbBvi7E",  # unchanged = failed
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(status_code=200, text="<html></html>")
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        # Should attempt fetch (not crash), resolved_url stays at lnkd.in
+        assert result.resolved_url == "https://lnkd.in/erbBvi7E"
+        assert result.url_type == "article"  # default for unknown domain
+
+    def test_resolved_url_stored_in_result(self):
+        """result.resolved_url must reflect the final URL, not the short one."""
+        final = "https://arxiv.org/abs/2401.00000"
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value=final,
+            ),
+            patch("requests.get") as mock_get,
+        ):
+            mock_get.return_value = MagicMock(
+                status_code=200, text=self._mock_html("Paper")
+            )
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url == "https://lnkd.in/erbBvi7E"  # original preserved
+        assert result.resolved_url == final
+
+    @pytest.mark.integration
+    def test_real_lnkd_in_resolves_and_classifies(self):
+        """Live: https://lnkd.in/erbBvi7E resolves via LinkedIn interstitial page
+        to presse.economie.gouv.fr and is classified + fetched as an article."""
+        result = fetch_linked_content(
+            "https://lnkd.in/erbBvi7E", resolve_redirects=True
+        )
+        assert result.url == "https://lnkd.in/erbBvi7E"
+        assert "presse.economie.gouv.fr" in result.resolved_url
+        assert result.url_type == "article"
+        assert result.ok
+
+
+# ---------------------------------------------------------------------------
+# Resource store
+# ---------------------------------------------------------------------------
+
+
+class TestResourceStore:
+    def test_not_stored_initially(self):
+        assert has_resource("https://example.com/new") is False
+
+    def test_save_and_has_resource(self):
+        url = "https://example.com/article"
+        result = FetchResult(
+            url=url,
+            resolved_url=url,
+            title="Test",
+            content="Body text",
+            url_type="article",
+        )
+        save_resource(url, result)
+        assert has_resource(url) is True
+
+    def test_save_and_load_roundtrip(self):
+        url = "https://example.com/roundtrip"
+        result = FetchResult(
+            url=url,
+            resolved_url=url,
+            title="My Title",
+            content="My Content",
+            url_type="article",
+            domain="example.com",
+        )
+        save_resource(url, result)
+        loaded = load_resource(url)
+        assert loaded is not None
+        assert loaded.title == "My Title"
+        assert loaded.content == "My Content"
+        assert loaded.domain == "example.com"
+
+    def test_load_missing_returns_none(self):
+        assert load_resource("https://example.com/missing") is None
+
+    def test_save_writes_md_file(self, tmp_path):
+        url = "https://example.com/md-test"
+        result = FetchResult(url=url, content="markdown content", title="T")
+        json_path = save_resource(url, result)
+        md_path = json_path.with_suffix(".md")
+        assert md_path.exists()
+        assert md_path.read_text() == "markdown content"
+
+    def test_different_urls_different_files(self, tmp_path):
+        url_a = "https://example.com/a"
+        url_b = "https://example.com/b"
+        res_a = FetchResult(url=url_a, content="A")
+        res_b = FetchResult(url=url_b, content="B")
+        path_a = save_resource(url_a, res_a)
+        path_b = save_resource(url_b, res_b)
+        assert path_a != path_b
+
+
+# ---------------------------------------------------------------------------
+# process_post_linked_content
+# ---------------------------------------------------------------------------
+
+
+class TestProcessPostLinkedContent:
+    def test_skips_ignored_urls(self):
+        urls = ["https://www.linkedin.com/in/user"]
+        results = process_post_linked_content(urls)
+        assert len(results) == 1
+        assert results[0].error == "ignored"
+
+    def test_uses_cache_when_skip_cached(self):
+        url = "https://example.com/cached"
+        cached = FetchResult(
+            url=url, content="cached body", title="Cached", fetched_at="2024-01-01"
+        )
+        save_resource(url, cached)
+
+        with patch(
+            "linkedin_api.fetch_linked_content.fetch_linked_content"
+        ) as mock_fetch:
+            results = process_post_linked_content([url], skip_cached=True)
+
+        mock_fetch.assert_not_called()
+        assert results[0].title == "Cached"
+
+    def test_refetches_when_not_skip_cached(self):
+        url = "https://example.com/refetch"
+        # Pre-store a result
+        save_resource(url, FetchResult(url=url, content="old", title="Old"))
+
+        fresh = FetchResult(url=url, content="fresh body", title="Fresh")
+        with patch(
+            "linkedin_api.fetch_linked_content.fetch_linked_content",
+            return_value=fresh,
+        ):
+            results = process_post_linked_content([url], skip_cached=False)
+
+        assert results[0].title == "Fresh"
+
+    def test_failed_fetch_not_stored(self):
+        url = "https://example.com/fail"
+        fail = FetchResult(url=url, error="HTTP 500")
+        with patch(
+            "linkedin_api.fetch_linked_content.fetch_linked_content",
+            return_value=fail,
+        ):
+            process_post_linked_content([url], skip_cached=False)
+
+        assert not has_resource(url)
+
+    def test_empty_list_returns_empty(self):
+        assert process_post_linked_content([]) == []
