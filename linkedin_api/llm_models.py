@@ -15,7 +15,6 @@ from linkedin_api.llm_config import (
     MAMMOUTH_BASE_URL,
     OLLAMA_DEFAULT_URL,
     _ensure_ollama_running,
-    _resolve_api_key,
     _resolve_anthropic_api_key,
 )
 
@@ -60,38 +59,31 @@ def fetch_anthropic_models() -> list[str]:
 
 
 def fetch_mammouth_models() -> list[str]:
-    """List models from Mammouth API. Tries /public/models then /v1/models (OpenAI)."""
-    api_key, _ = _resolve_api_key(quiet=True)
-    if not api_key:
-        return []
+    """List models from Mammouth API GET /public/models (no auth)."""
     base = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
     api_root = base.removesuffix("/v1") if base.endswith("/v1") else base
-
-    def _ids_from(items: list) -> list[str]:
+    url = f"{api_root}/public/models"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        items = data.get("data", data.get("models", data.get("list", [])))
+        if not isinstance(items, list) or not items:
+            return []
         return [
             str(m.get("id") or m.get("model_id") or m.get("name", ""))
             for m in items
             if isinstance(m, dict)
             and (m.get("id") or m.get("model_id") or m.get("name"))
         ]
-
-    for url in [f"{api_root}/public/models", f"{base}/models"]:
-        try:
-            req = urllib.request.Request(
-                url,
-                method="GET",
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            items = data.get("data", data.get("models", data.get("list", [])))
-            if isinstance(items, list) and items:
-                ids = _ids_from(items)
-                if ids:
-                    return ids
-        except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
-            continue
-    return []
+    except (
+        urllib.error.URLError,
+        OSError,
+        urllib.error.HTTPError,
+        json.JSONDecodeError,
+        KeyError,
+    ):
+        return []
 
 
 def fetch_models_for_provider(provider: str) -> list[str]:

@@ -52,9 +52,8 @@ def test_fetch_all_provider_models_returns_all_keys():
         assert isinstance(v, list)
 
 
-def test_fetch_mammouth_models_no_key(monkeypatch):
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with patch("linkedin_api.llm_models._resolve_api_key", return_value=(None, None)):
+def test_fetch_mammouth_models_failure():
+    """When /public/models request fails, return []."""
+    with patch("urllib.request.urlopen", side_effect=OSError("network unreachable")):
         result = fetch_mammouth_models()
     assert result == []
