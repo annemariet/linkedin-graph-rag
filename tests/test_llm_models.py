@@ -22,7 +22,10 @@ def test_fetch_ollama_models_success():
             mock_resp
         ).encode()
         result = fetch_ollama_models()
-    assert result == ["llama3.2:3b", "nomic-embed-text"]
+    assert result == [
+        ("llama3.2:3b", "llama3.2:3b"),
+        ("nomic-embed-text", "nomic-embed-text"),
+    ]
 
 
 def test_fetch_ollama_models_empty():
@@ -31,7 +34,7 @@ def test_fetch_ollama_models_empty():
             {"models": []}
         ).encode()
         result = fetch_ollama_models()
-    assert result == []
+    assert result == []  # list of (label, id), empty
 
 
 def test_fetch_anthropic_models_no_key(monkeypatch):

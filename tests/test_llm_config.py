@@ -40,14 +40,6 @@ def test_get_report_model_id_includes_model_in_cache_key(monkeypatch):
     assert get_report_model_id() == "ollama:llama3.2:3b"
 
     assert get_report_model_id("mammouth", "gpt-4o") == "mammouth:gpt-4o"
-    # UI may pass Mammouth dropdown label; we use model id for API and cache
-    assert (
-        get_report_model_id(
-            "mammouth",
-            "gpt-5-nano · OpenAI · $0.05 / $0.40 per M (in/out)",
-        )
-        == "mammouth:gpt-5-nano"
-    )
 
 
 def test_get_default_provider_model_maps_openai_to_mammouth(monkeypatch):

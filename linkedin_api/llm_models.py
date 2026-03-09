@@ -22,8 +22,8 @@ from linkedin_api.llm_config import (
 logger = logging.getLogger(__name__)
 
 
-def fetch_ollama_models(base_url: str | None = None) -> list[str]:
-    """List models available in Ollama. Returns model names. Starts Ollama if needed."""
+def fetch_ollama_models(base_url: str | None = None) -> list[tuple[str, str]]:
+    """List models available in Ollama. Returns (label, model_id); label same as id. Starts Ollama if needed."""
     base = base_url or OLLAMA_DEFAULT_URL
     if not _ensure_ollama_running(base):
         return []
@@ -33,13 +33,14 @@ def fetch_ollama_models(base_url: str | None = None) -> list[str]:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
         models = data.get("models", [])
-        return [m.get("name", "") for m in models if m.get("name")]
+        names = [m.get("name", "") for m in models if m.get("name")]
+        return [(n, n) for n in names]
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
         return []
 
 
-def fetch_anthropic_models() -> list[str]:
-    """List models from Anthropic API. Requires ANTHROPIC_API_KEY."""
+def fetch_anthropic_models() -> list[tuple[str, str]]:
+    """List models from Anthropic API. Returns (label, model_id); label same as id. Requires ANTHROPIC_API_KEY."""
     api_key, _ = _resolve_anthropic_api_key(quiet=True)
     if not api_key:
         return []
@@ -56,7 +57,8 @@ def fetch_anthropic_models() -> list[str]:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
         items = data.get("data", [])
-        return [m.get("id", "") for m in items if m.get("id")]
+        ids = [m.get("id", "") for m in items if m.get("id")]
+        return [(i, i) for i in ids]
     except (urllib.error.URLError, OSError, json.JSONDecodeError, KeyError):
         return []
 
@@ -92,7 +94,7 @@ def _mammouth_owner_display(m: dict, mid: str) -> str:
     return raw or "—"
 
 
-def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
+def fetch_mammouth_models() -> list[tuple[str, str]]:
     """List models from Mammouth API GET /public/models. Returns (label, id) with owner and $/M."""
     base = os.getenv("LLM_BASE_URL", MAMMOUTH_BASE_URL).rstrip("/")
     api_root = base.removesuffix("/v1") if base.endswith("/v1") else base
@@ -146,8 +148,8 @@ def fetch_mammouth_models() -> list[str] | list[tuple[str, str]]:
         return []
 
 
-def fetch_models_for_provider(provider: str) -> list[str] | list[tuple[str, str]]:
-    """Fetch model list for the given provider. Returns list of id strings, or (label, id) for Mammouth."""
+def fetch_models_for_provider(provider: str) -> list[tuple[str, str]]:
+    """Fetch model list for the given provider. Returns (label, model_id) for all; Mammouth uses rich labels."""
     if provider == "ollama":
         return fetch_ollama_models()
     if provider == "anthropic":
@@ -157,12 +159,12 @@ def fetch_models_for_provider(provider: str) -> list[str] | list[tuple[str, str]
     return []
 
 
-def fetch_all_provider_models() -> dict[str, list[str]]:
-    """Fetch models for all providers in parallel. Returns {provider: [models]}."""
+def fetch_all_provider_models() -> dict[str, list[tuple[str, str]]]:
+    """Fetch models for all providers in parallel. Returns {provider: [(label, model_id)]}."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     providers = ["ollama", "anthropic", "mammouth"]
-    result: dict[str, list[str]] = {}
+    result: dict[str, list[tuple[str, str]]] = {}
 
     with ThreadPoolExecutor(max_workers=3) as ex:
         futures = {ex.submit(fetch_models_for_provider, p): p for p in providers}

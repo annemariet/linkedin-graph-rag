@@ -875,15 +875,15 @@ def create_pipeline_interface():
                 if not models_by_provider.get(prov, []):
                     models_by_provider[prov] = fetch_models_for_provider(prov) or []
 
-            def _choice_ids(choices: list) -> list[str]:
-                """Extract model ids from choices (str or (label, id) tuples)."""
-                return [c[1] if isinstance(c, tuple) else str(c) for c in choices]
+            def _choice_ids(choices: list[tuple[str, str]]) -> list[str]:
+                """Extract model ids from (label, model_id) choices."""
+                return [c[1] for c in choices]
 
             def _choices_for(
                 d: dict, provider: str, default_model: str
-            ) -> tuple[list, str]:
+            ) -> tuple[list[tuple[str, str]], str]:
                 models = d.get(provider, [])
-                choices = models if models else [default_model]
+                choices = models if models else [(default_model, default_model)]
                 ids = _choice_ids(choices)
                 value = (
                     default_model if default_model in ids else (ids[0] if ids else "")
@@ -922,16 +922,24 @@ def create_pipeline_interface():
                     )
 
             def refresh_summary_models(provider):
-                choices = fetch_models_for_provider(provider) or [sm]
+                choices = fetch_models_for_provider(provider) or [(sm, sm)]
                 ids = _choice_ids(choices)
                 value = sm if sm in ids else (ids[0] if ids else "")
                 return gr.update(choices=choices, value=value)
 
             def refresh_report_models(provider):
-                choices = fetch_models_for_provider(provider) or [rm]
+                choices = fetch_models_for_provider(provider) or [(rm, rm)]
                 ids = _choice_ids(choices)
                 value = rm if rm in ids else (ids[0] if ids else "")
                 return gr.update(choices=choices, value=value)
+
+            def _model_id_for_api(provider: str | None, model_val: str | None) -> str:
+                """Dropdown value is (label, id); with allow_custom_value it may be label. Return model id for API."""
+                if not model_val:
+                    return ""
+                if provider == "mammouth" and " · " in model_val:
+                    return model_val.split(" · ")[0].strip()
+                return model_val.strip()
 
             summary_provider.change(
                 refresh_summary_models,
@@ -1019,6 +1027,9 @@ def create_pipeline_interface():
             except (TypeError, ValueError):
                 lim_int = None
 
+            sum_mod_id = _model_id_for_api(sum_prov, sum_mod)
+            rep_mod_id = _model_id_for_api(rep_prov, rep_mod)
+
             stage_progress: tuple[int, float] = (0, 0.0)
             step_label = "fetching…"
             try:
@@ -1027,7 +1038,7 @@ def create_pipeline_interface():
                     from_cache=from_cache,
                     limit=lim_int,
                     summary_provider=sum_prov or None,
-                    summary_model=sum_mod or None,
+                    summary_model=sum_mod_id or None,
                 ):
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
@@ -1097,7 +1108,7 @@ def create_pipeline_interface():
                 max_posts=max_posts_int,
                 max_full_post_chars=max_full_chars_int,
                 report_provider=rep_prov or None,
-                report_model=rep_mod or None,
+                report_model=rep_mod_id or None,
             )
             disk = _load_report_cache(
                 report_mode=report_mode_val,
@@ -1133,7 +1144,7 @@ def create_pipeline_interface():
                         max_posts=max_posts_int,
                         max_full_post_chars=max_full_chars_int,
                         report_provider=rep_prov or None,
-                        report_model=rep_mod or None,
+                        report_model=rep_mod_id or None,
                     )
                     cache = (result, sig) if sig else None
                     if sig is not None:
