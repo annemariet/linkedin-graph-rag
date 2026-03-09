@@ -341,7 +341,7 @@ def _create_ollama_llm(
         OLLAMA_DEFAULT_LLM_MODEL
         if is_fallback
         else (model_override or os.getenv("LLM_MODEL", OLLAMA_DEFAULT_LLM_MODEL))
-    )
+    ) or OLLAMA_DEFAULT_LLM_MODEL
 
     if not _ensure_ollama_running(base_url):
         raise RuntimeError(
