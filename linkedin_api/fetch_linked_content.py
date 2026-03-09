@@ -43,7 +43,17 @@ import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.activity_csv import get_data_dir
-from linkedin_api.utils.urls import categorize_url, resolve_redirect, should_ignore_url
+from linkedin_api.content_store import (
+    _content_dir,
+    _load_registry,
+    update_urls_metadata,
+)
+from linkedin_api.utils.urls import (
+    categorize_url,
+    extract_urls_from_text,
+    resolve_redirect,
+    should_ignore_url,
+)
 
 # ---------------------------------------------------------------------------
 # Request headers
@@ -341,13 +351,6 @@ def _iter_posts_with_urls():
     extracting URLs from the ``.md`` content file and persists them so future
     runs skip re-extraction.
     """
-    from linkedin_api.content_store import (
-        _content_dir,
-        _load_registry,
-        update_urls_metadata,
-    )
-    from linkedin_api.utils.urls import extract_urls_from_text
-
     content_dir = _content_dir()
     registry = _load_registry()
 
