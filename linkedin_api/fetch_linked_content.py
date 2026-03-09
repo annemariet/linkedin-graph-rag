@@ -108,7 +108,7 @@ def _fetch_soup(url: str, timeout: int = 15) -> tuple[BeautifulSoup, str]:
         headers=_HEADERS,
         verify=_ssl_verify(),
     )
-    if resp.status_code != 200:
+    if resp.status_code >= 500 or not resp.text:
         raise ValueError(f"HTTP {resp.status_code}")
     soup = BeautifulSoup(resp.text, "html.parser")
     og = soup.find("meta", property="og:title")

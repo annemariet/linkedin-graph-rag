@@ -102,17 +102,37 @@ class TestFetchLinkedContent:
         assert "Hello world" in result.content
         assert result.url_type == "article"
 
-    def test_http_error_returns_error_result(self):
+    def test_server_error_returns_error_result(self):
         mock_resp = MagicMock()
-        mock_resp.status_code = 404
+        mock_resp.status_code = 500
+        mock_resp.text = ""
 
         with patch("requests.get", return_value=mock_resp):
             result = fetch_linked_content(
-                "https://example.com/gone", resolve_redirects=False
+                "https://example.com/broken", resolve_redirects=False
             )
 
         assert result.ok is False
-        assert "404" in result.error
+        assert "500" in result.error
+
+    def test_4xx_with_html_is_parsed(self):
+        """4xx responses (e.g. GitHub 406) still contain useful HTML — parse them."""
+        html = (
+            "<html><head>"
+            '<meta property="og:title" content="Repo Title"/>'
+            "</head><body></body></html>"
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 406
+        mock_resp.text = html
+
+        with patch("requests.get", return_value=mock_resp):
+            result = fetch_linked_content(
+                "https://github.com/org/repo", resolve_redirects=False
+            )
+
+        assert result.ok is True
+        assert result.title == "Repo Title"
 
     def test_network_exception_returns_error_result(self):
         with patch("requests.get", side_effect=ConnectionError("timeout")):
