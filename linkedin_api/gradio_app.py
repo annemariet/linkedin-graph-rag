@@ -821,7 +821,6 @@ def create_pipeline_interface():
                 choices=["1d", "2d", "7d", "14d", "30d", "1w", "2w", "1m"],
                 value="7d",
                 label="Period",
-                allow_custom_value=True,
                 info=PERIOD_SYNTAX,
             )
             from_cache = gr.Checkbox(
@@ -905,7 +904,6 @@ def create_pipeline_interface():
                         choices=s_choices,
                         value=s_val,
                         label="Model",
-                        allow_custom_value=True,
                     )
                 with gr.Column():
                     gr.Markdown("**Report** (batch summaries & final report)")
@@ -918,7 +916,6 @@ def create_pipeline_interface():
                         choices=r_choices,
                         value=r_val,
                         label="Model",
-                        allow_custom_value=True,
                     )
 
             def refresh_summary_models(provider):
@@ -932,14 +929,6 @@ def create_pipeline_interface():
                 ids = _choice_ids(choices)
                 value = rm if rm in ids else (ids[0] if ids else "")
                 return gr.update(choices=choices, value=value)
-
-            def _model_id_for_api(provider: str | None, model_val: str | None) -> str:
-                """Dropdown value is (label, id); with allow_custom_value it may be label. Return model id for API."""
-                if not model_val:
-                    return ""
-                if provider == "mammouth" and " · " in model_val:
-                    return model_val.split(" · ")[0].strip()
-                return model_val.strip()
 
             summary_provider.change(
                 refresh_summary_models,
@@ -1027,9 +1016,6 @@ def create_pipeline_interface():
             except (TypeError, ValueError):
                 lim_int = None
 
-            sum_mod_id = _model_id_for_api(sum_prov, sum_mod)
-            rep_mod_id = _model_id_for_api(rep_prov, rep_mod)
-
             stage_progress: tuple[int, float] = (0, 0.0)
             step_label = "fetching…"
             try:
@@ -1038,7 +1024,7 @@ def create_pipeline_interface():
                     from_cache=from_cache,
                     limit=lim_int,
                     summary_provider=sum_prov or None,
-                    summary_model=sum_mod_id or None,
+                    summary_model=sum_mod or None,
                 ):
                     last = chunk.strip().split("\n")[-1] if chunk.strip() else ""
                     status_update = _status_from_pipeline_line(last)
@@ -1108,7 +1094,7 @@ def create_pipeline_interface():
                 max_posts=max_posts_int,
                 max_full_post_chars=max_full_chars_int,
                 report_provider=rep_prov or None,
-                report_model=rep_mod_id or None,
+                report_model=rep_mod or None,
             )
             disk = _load_report_cache(
                 report_mode=report_mode_val,
@@ -1144,7 +1130,7 @@ def create_pipeline_interface():
                         max_posts=max_posts_int,
                         max_full_post_chars=max_full_chars_int,
                         report_provider=rep_prov or None,
-                        report_model=rep_mod_id or None,
+                        report_model=rep_mod or None,
                     )
                     cache = (result, sig) if sig else None
                     if sig is not None:
