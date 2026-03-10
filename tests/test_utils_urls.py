@@ -141,12 +141,11 @@ class TestResolveRedirect:
         assert "presse.economie.gouv.fr" in result
 
     @pytest.mark.integration
-    def test_real_lnkd_in_eAWEsmVw_resolves_to_datagouv(self):
-        """Live: lnkd.in/eAWEsmVw redirects (may be GitHub or mcp.data.gouv.fr).
-        We should resolve to a final URL, not lnkd.in."""
+    def test_real_lnkd_in_eAWEsmVw_resolves_to_github_datagouv_mcp(self):
+        """Live: lnkd.in/eAWEsmVw gives HTTP 406 (no interstitial) but redirects to GitHub.
+        We should resolve to https://github.com/datagouv/datagouv-mcp."""
         result = resolve_redirect("https://lnkd.in/eAWEsmVw")
-        assert "lnkd.in" not in result
-        assert "data.gouv.fr" in result or "github.com" in result
+        assert result == "https://github.com/datagouv/datagouv-mcp"
 
     @pytest.mark.integration
     def test_real_lnkd_in_eMcHSAFH_resolves_to_stats_agriculture_with_ssl_verify_off(
