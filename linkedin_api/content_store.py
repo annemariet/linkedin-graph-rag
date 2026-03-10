@@ -91,6 +91,8 @@ _META_KEYS = (
     "urls",
     "post_url",
     "summarized_at",
+    "reaction_timestamp_ms",
+    "post_created_at",
 )
 
 
@@ -128,6 +130,17 @@ def update_urls_metadata(urn: str, urls: list[str]) -> Path:
     """
     meta = dict(load_metadata(urn) or {})
     meta["urls"] = urls
+    path = _meta_path(urn)
+    path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
+    return path
+
+
+def update_metadata_fields(urn: str, **kwargs: Any) -> Path:
+    """Merge specified metadata fields, preserving others. Only _META_KEYS are applied."""
+    meta = dict(load_metadata(urn) or {})
+    for k, v in kwargs.items():
+        if k in _META_KEYS:
+            meta[k] = v
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
     return path
@@ -211,6 +224,8 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
                     "category": meta.get("category") or "",
                     "summarized_at": meta.get("summarized_at") or "",
                     "post_url": meta.get("post_url") or "",
+                    "reaction_timestamp_ms": meta.get("reaction_timestamp_ms"),
+                    "post_created_at": (meta.get("post_created_at") or "").strip(),
                 }
             )
             if limit and len(out) >= limit:

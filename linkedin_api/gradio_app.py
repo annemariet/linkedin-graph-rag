@@ -137,15 +137,36 @@ def _get_posts_for_period(
     Orders by reaction time ascending. Returns (metas, period_dates_str or None).
     """
     period_dates = _format_period_dates(period)
+
+    def _sort_by_api_timestamp(metas: list[dict]) -> None:
+        """Sort by reaction_timestamp_ms (API) ascending; missing goes last."""
+        def _key(m: dict) -> int:
+            ts = m.get("reaction_timestamp_ms")
+            if ts is None:
+                return 2**63
+            return int(ts) if isinstance(ts, (int, float)) else 2**63
+        metas.sort(key=_key)
+
+    def _add_times_from_metadata(metas: list[dict]) -> None:
+        for m in metas:
+            if m.get("reaction_time") or m.get("post_time"):
+                continue
+            ts = m.get("reaction_timestamp_ms")
+            if ts is not None:
+                m["reaction_time"] = _format_timestamp(ts)
+            m["post_time"] = (m.get("post_created_at") or "").strip() or "unknown"
+
     if not activities_path.exists():
         all_metas = list_summarized_metadata()
-        all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+        _sort_by_api_timestamp(all_metas)
+        _add_times_from_metadata(all_metas)
         return all_metas[:max_posts], period_dates
     try:
         activities = json.loads(activities_path.read_text())
     except (json.JSONDecodeError, OSError):
         all_metas = list_summarized_metadata()
-        all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+        _sort_by_api_timestamp(all_metas)
+        _add_times_from_metadata(all_metas)
         return all_metas[:max_posts], period_dates
     urn_to_activity: dict[str, dict] = {}
     for a in activities:
@@ -154,7 +175,8 @@ def _get_posts_for_period(
             urn_to_activity[urn] = a
     if not urn_to_activity:
         all_metas = list_summarized_metadata()
-        all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
+        _sort_by_api_timestamp(all_metas)
+        _add_times_from_metadata(all_metas)
         return all_metas[:max_posts], period_dates
     all_metas = list_summarized_metadata()
     scoped = []

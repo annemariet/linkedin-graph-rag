@@ -21,6 +21,7 @@ from linkedin_api.content_store import (
     load_metadata,
     save_content,
     save_metadata,
+    update_metadata_fields,
 )
 from linkedin_api.extract_resources import extract_urls_from_text
 
@@ -93,12 +94,21 @@ def _run_enrichment(to_enrich: list[dict]):
         urn = rec.get("post_urn", "")
         url = rec.get("post_url", "")
         if urn and url:
+            ts = rec.get("timestamp")
+            ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+            post_created = (rec.get("post_created_at") or "").strip() or None
             # 1) Prefer existing content in the store
             stored = load_content(urn)
             if stored and len(stored) >= 50:
                 rec["content"] = stored
                 meta = load_metadata(urn)
                 rec["urls"] = list(meta.get("urls", [])) if meta else []
+                if ts_ms is not None or post_created:
+                    update_metadata_fields(
+                        urn,
+                        reaction_timestamp_ms=ts_ms,
+                        post_created_at=post_created,
+                    )
                 enriched_count += 1
             else:
                 # 2) Try simple HTTP fetch
@@ -108,7 +118,13 @@ def _run_enrichment(to_enrich: list[dict]):
                     rec["content"] = content
                     rec["urls"] = urls
                     save_content(urn, content)
-                    save_metadata(urn, urls=urls, post_url=url)
+                    save_metadata(
+                        urn,
+                        urls=urls,
+                        post_url=url,
+                        reaction_timestamp_ms=ts_ms,
+                        post_created_at=post_created,
+                    )
                     enriched_count += 1
                 else:
                     needs_browser.append(rec)
