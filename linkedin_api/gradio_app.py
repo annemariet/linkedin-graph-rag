@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import (
+    _iso_to_ms,
+    _ms_to_iso,
     list_summarized_metadata,
     load_content,
     update_metadata_fields,
@@ -50,6 +52,7 @@ from linkedin_api.query_graphrag import (
 )
 from linkedin_api.run_pipeline import DEFAULT_ACTIVITIES, run_pipeline_ui_streaming
 from linkedin_api.summarize_activity import _format_timestamp, _parse_last
+from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 
 _REPORT_SYSTEM = (
     "You are a concise analyst. Summarize the user's LinkedIn activity globally. "
@@ -143,13 +146,11 @@ def _get_posts_for_period(
     period_dates = _format_period_dates(period)
 
     def _sort_by_api_timestamp(metas: list[dict]) -> None:
-        """Sort by reaction_timestamp_ms (API) ascending; missing goes last."""
+        """Sort by reaction_created_at (ISO) ascending; missing goes last."""
 
         def _key(m: dict) -> int:
-            ts = m.get("reaction_timestamp_ms")
-            if ts is None:
-                return 2**63
-            return int(ts) if isinstance(ts, (int, float)) else 2**63
+            ms = _iso_to_ms(m.get("reaction_created_at"))
+            return ms if ms is not None else 2**63
 
         metas.sort(key=_key)
 
@@ -157,9 +158,9 @@ def _get_posts_for_period(
         for m in metas:
             if m.get("reaction_time") or m.get("post_time"):
                 continue
-            ts = m.get("reaction_timestamp_ms")
-            if ts is not None:
-                m["reaction_time"] = _format_timestamp(ts)
+            iso = (m.get("reaction_created_at") or "").strip()
+            if iso:
+                m["reaction_time"] = iso
             m["post_time"] = (m.get("post_created_at") or "").strip() or "unknown"
 
     if not activities_path.exists():
@@ -193,18 +194,22 @@ def _get_posts_for_period(
         act = urn_to_activity[urn]
         ts = act.get("timestamp")
         post_created = (act.get("post_created_at") or "").strip() or None
+        # Fallback: Snowflake ID in URN encodes creation time (no API/HTTP needed)
+        if not post_created:
+            post_created = post_created_at_from_urn(urn)
         ts_ms = int(ts) if isinstance(ts, (int, float)) else None
 
         m = dict(m)
-        m["reaction_time"] = _format_timestamp(ts) if ts else ""
+        reaction_iso = _ms_to_iso(ts_ms) if ts_ms else ""
+        m["reaction_time"] = reaction_iso or ""
         m["post_time"] = post_created or "unknown"
         scoped.append(m)
 
         # Backfill metadata only when fields are empty (never overwrite summary etc.)
         existing = m.copy()
         kwargs: dict = {}
-        if ts_ms is not None and existing.get("reaction_timestamp_ms") in (None, ""):
-            kwargs["reaction_timestamp_ms"] = ts_ms
+        if reaction_iso and not (existing.get("reaction_created_at") or "").strip():
+            kwargs["reaction_created_at"] = reaction_iso
         if post_created and not (existing.get("post_created_at") or "").strip():
             kwargs["post_created_at"] = post_created
         if kwargs:
@@ -238,9 +243,9 @@ def _format_post_for_prompt(
     # Always show temporal context when we have it (enables "late news" assessment)
     rt = (m.get("reaction_time") or "").strip()
     pt = (m.get("post_time") or "").strip() or "unknown"
-    if rt or pt or "reaction_timestamp_ms" in m or "post_created_at" in m:
-        if not rt and m.get("reaction_timestamp_ms") is not None:
-            rt = _format_timestamp(m["reaction_timestamp_ms"])
+    if rt or pt or "reaction_created_at" in m or "post_created_at" in m:
+        if not rt and (m.get("reaction_created_at") or "").strip():
+            rt = (m.get("reaction_created_at") or "").strip()
         if not pt and m.get("post_created_at"):
             pt = (m.get("post_created_at") or "").strip() or "unknown"
         time_part = f"Reacted: {rt or 'unknown'} | Posted: {pt or 'unknown'}"

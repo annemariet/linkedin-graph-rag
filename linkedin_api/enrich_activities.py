@@ -23,6 +23,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.content_store import (
+    _ms_to_iso,
     has_metadata,
     load_content,
     save_content,
@@ -146,7 +147,7 @@ def _run_enrichment(to_enrich: list[dict]):
                     urls=rec["urls"],
                     post_url=url,
                     post_author=post_author or "",
-                    reaction_timestamp_ms=ts_ms,
+                    reaction_created_at=_ms_to_iso(ts_ms),
                     post_created_at=post_created,
                 )
                 enriched_count += 1
@@ -170,7 +171,7 @@ def _run_enrichment(to_enrich: list[dict]):
                         urls=all_urls,
                         post_url=url,
                         post_author=post_author or "",
-                        reaction_timestamp_ms=ts_ms,
+                        reaction_created_at=_ms_to_iso(ts_ms),
                         post_created_at=post_created,
                     )
                     enriched_count += 1
@@ -182,7 +183,7 @@ def _run_enrichment(to_enrich: list[dict]):
                         urls=urls_from_api,
                         post_url=url,
                         post_author=post_author or "",
-                        reaction_timestamp_ms=ts_ms,
+                        reaction_created_at=_ms_to_iso(ts_ms),
                         post_created_at=post_created,
                     )
                     enriched_count += 1

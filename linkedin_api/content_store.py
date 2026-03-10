@@ -92,9 +92,38 @@ _META_KEYS = (
     "post_url",
     "post_author",
     "summarized_at",
-    "reaction_timestamp_ms",
+    "reaction_created_at",
     "post_created_at",
 )
+
+
+def _ms_to_iso(ts_ms: int | float | None) -> str:
+    """Convert epoch ms to ISO string (human-readable)."""
+    if ts_ms is None:
+        return ""
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
+
+
+def _normalize_reaction_created_at(meta: dict) -> str:
+    """Return reaction_created_at (ISO). Backward compat: convert from reaction_timestamp_ms."""
+    iso = (meta.get("reaction_created_at") or "").strip()
+    if iso:
+        return iso
+    ts = meta.get("reaction_timestamp_ms")
+    if ts is not None and isinstance(ts, (int, float)):
+        return _ms_to_iso(int(ts))
+    return ""
+
+
+def _iso_to_ms(iso_str: str | None) -> int | None:
+    """Parse ISO string to epoch ms for sorting. Returns None if invalid."""
+    if not (iso_str or "").strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return int(dt.timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
 
 
 def save_metadata(
@@ -226,7 +255,7 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
                     "summarized_at": meta.get("summarized_at") or "",
                     "post_url": meta.get("post_url") or "",
                     "post_author": (meta.get("post_author") or "").strip(),
-                    "reaction_timestamp_ms": meta.get("reaction_timestamp_ms"),
+                    "reaction_created_at": _normalize_reaction_created_at(meta),
                     "post_created_at": (meta.get("post_created_at") or "").strip(),
                 }
             )
