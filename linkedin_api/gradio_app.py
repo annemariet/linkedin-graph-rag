@@ -28,7 +28,11 @@ if TYPE_CHECKING:
     from neo4j import Driver
 
 from linkedin_api.activity_csv import get_data_dir
-from linkedin_api.content_store import list_summarized_metadata, load_content
+from linkedin_api.content_store import (
+    list_summarized_metadata,
+    load_content,
+    update_metadata_fields,
+)
 from linkedin_api.llm_config import (
     create_embedder,
     create_llm,
@@ -140,11 +144,13 @@ def _get_posts_for_period(
 
     def _sort_by_api_timestamp(metas: list[dict]) -> None:
         """Sort by reaction_timestamp_ms (API) ascending; missing goes last."""
+
         def _key(m: dict) -> int:
             ts = m.get("reaction_timestamp_ms")
             if ts is None:
                 return 2**63
             return int(ts) if isinstance(ts, (int, float)) else 2**63
+
         metas.sort(key=_key)
 
     def _add_times_from_metadata(metas: list[dict]) -> None:
@@ -186,10 +192,23 @@ def _get_posts_for_period(
             continue
         act = urn_to_activity[urn]
         ts = act.get("timestamp")
+        post_created = (act.get("post_created_at") or "").strip() or None
+        ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+
         m = dict(m)
         m["reaction_time"] = _format_timestamp(ts) if ts else ""
-        m["post_time"] = (act.get("post_created_at") or "").strip() or "unknown"
+        m["post_time"] = post_created or "unknown"
         scoped.append(m)
+
+        # Backfill metadata only when fields are empty (never overwrite summary etc.)
+        existing = m.copy()
+        kwargs: dict = {}
+        if ts_ms is not None and existing.get("reaction_timestamp_ms") in (None, ""):
+            kwargs["reaction_timestamp_ms"] = ts_ms
+        if post_created and not (existing.get("post_created_at") or "").strip():
+            kwargs["post_created_at"] = post_created
+        if kwargs:
+            update_metadata_fields(urn, **kwargs)
 
     def _sort_key(m: dict) -> int:
         a = urn_to_activity.get((m.get("urn") or "").strip(), {})
@@ -216,11 +235,15 @@ def _format_post_for_prompt(
         parts.append(f"Tech: {', '.join(m['technologies'])}")
     tag_part = " | ".join(parts) if parts else ""
     tag_part = f"Category: {cat}" + (f" | {tag_part}" if tag_part else "")
-    time_part = ""
-    if m.get("reaction_time") or m.get("post_time"):
-        rt = (m.get("reaction_time") or "").strip()
-        pt = (m.get("post_time") or "").strip() or "unknown"
-        time_part = f"Reacted: {rt} | Posted: {pt}"
+    # Always show temporal context when we have it (enables "late news" assessment)
+    rt = (m.get("reaction_time") or "").strip()
+    pt = (m.get("post_time") or "").strip() or "unknown"
+    if rt or pt or "reaction_timestamp_ms" in m or "post_created_at" in m:
+        if not rt and m.get("reaction_timestamp_ms") is not None:
+            rt = _format_timestamp(m["reaction_timestamp_ms"])
+        if not pt and m.get("post_created_at"):
+            pt = (m.get("post_created_at") or "").strip() or "unknown"
+        time_part = f"Reacted: {rt or 'unknown'} | Posted: {pt or 'unknown'}"
         tag_part = f"{tag_part} | {time_part}" if tag_part else time_part
 
     if content_level == CONTENT_LEVEL_MINIMAL:
@@ -270,6 +293,7 @@ def _batches_by_char_limit(
 _BATCH_SYSTEM = (
     "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
     "Highlight main themes, recurring topics, and any patterns. "
+    "Each post includes 'Reacted: <date>' and 'Posted: <date>' (or 'unknown'). "
     "Take temporality into account: if a post was published several weeks before the user reacted to it, "
     "add a brief note that it is 'late news' and assess whether it is still relevant. "
     "Posts are ordered by reaction time (earliest first). Output plain text, no preamble."
@@ -311,7 +335,8 @@ def _format_other_section(
 
 _SINGLE_PASS_SYSTEM = (
     "You are a concise analyst. The user shares LinkedIn posts from a specific period. "
-    "Each has URL, category/tags, reaction time, post time, and optionally summary or full content.\n\n"
+    "Each post includes 'Reacted: <date>' and 'Posted: <date>' (or 'unknown'), plus URL, category/tags, "
+    "and optionally summary or full content.\n\n"
     """Produce a markdown report with:
 1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,
    Papers & research, Experiments & benchmarks, Company & career news, Other. Put each post into the right category

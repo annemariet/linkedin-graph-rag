@@ -90,6 +90,7 @@ _META_KEYS = (
     "category",
     "urls",
     "post_url",
+    "post_author",
     "summarized_at",
     "reaction_timestamp_ms",
     "post_created_at",
@@ -224,6 +225,7 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
                     "category": meta.get("category") or "",
                     "summarized_at": meta.get("summarized_at") or "",
                     "post_url": meta.get("post_url") or "",
+                    "post_author": (meta.get("post_author") or "").strip(),
                     "reaction_timestamp_ms": meta.get("reaction_timestamp_ms"),
                     "post_created_at": (meta.get("post_created_at") or "").strip(),
                 }
