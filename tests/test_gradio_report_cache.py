@@ -74,6 +74,15 @@ class TestReportCache:
         assert len(data["reports"]) == 1
         assert data["reports"][0]["report"] == "test"
 
+    def test_cache_does_not_exceed_max_entries(self, monkeypatch, tmp_path):
+        """Adding more than max_entries distinct reports evicts lowest-hit and stays at limit."""
+        monkeypatch.setenv("REPORT_CACHE_MAX_ENTRIES", "3")
+        for i in range(5):
+            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0)
+            _save_report_cache(f"Report {i}", sig)
+        data = json.loads((tmp_path / _REPORT_CACHE_FILE).read_text())
+        assert len(data["reports"]) <= 3
+
 
 class TestReportPromptDebug:
     def test_save_and_load_prompt(self):
@@ -112,6 +121,15 @@ class TestReportPromptDebug:
         formatted = _format_post_for_prompt(meta, CONTENT_LEVEL_MINIMAL)
         assert "Summary:" not in formatted
         assert "transformers" not in formatted
+
+    def test_prompts_cache_does_not_exceed_max_entries(self, monkeypatch, tmp_path):
+        """Adding more than max_entries distinct prompts evicts and stays at limit."""
+        monkeypatch.setenv("REPORT_CACHE_MAX_ENTRIES", "3")
+        for i in range(5):
+            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0)
+            _save_report_prompt_debug("mode", "sys", [f"p{i}"], sig)
+        data = json.loads((tmp_path / _REPORT_CACHE_FILE).read_text())
+        assert len(data["prompts"]) <= 3
 
     def test_prompt_stored_in_cache_file(self, tmp_path):
         sig = ("test", 1, (), "per", "minimal", 50, 1500)

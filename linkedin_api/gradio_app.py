@@ -341,7 +341,10 @@ def _get_report_cache_max_entries() -> int:
 
 
 def _sig_to_key(sig: ReportSignature) -> dict:
-    """Serialize signature to JSON-serializable dict."""
+    """Serialize signature to JSON-serializable dict for disk persistence.
+    Dict (not ReportSignature tuple) is required: cache is stored in JSON.
+    _key_matches provides custom equivalence (tuple=post set; max_full_post_chars
+    only when full; n/max_posts ignored when tuple matches)."""
     return {
         "model_id": sig[0],
         "n": sig[1],
