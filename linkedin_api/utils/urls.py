@@ -142,27 +142,37 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             response = requests.get(
                 url, timeout=15, allow_redirects=True, headers=headers, verify=verify
             )
-            # LinkedIn shows a security interstitial with the target URL in
+            # Prefer the final non-LinkedIn URL from the HTTP redirect chain when present.
+            if response.history:
+                for hop in reversed(list(response.history) + [response]):
+                    hop_url = str(getattr(hop, "url", ""))
+                    hop_lower = hop_url.lower()
+                    if (
+                        hop_url
+                        and "linkedin.com" not in hop_lower
+                        and "lnkd.in" not in hop_lower
+                    ):
+                        return hop_url
+            # LinkedIn sometimes shows a security interstitial with the target URL in
             # the page text: "This link will take you to… https://…"
             # Parsing with BeautifulSoup and searching get_text() naturally
             # excludes URLs buried in HTML attributes (script src, link href…).
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "html.parser")
                 for found in re.findall(r"https?://\S+", soup.get_text()):
-                    found = found.rstrip(".,;:!?)")
+                    found_str = str(found).rstrip(".,;:!?)")
+                    found_lower = found_str.lower()
                     if (
-                        "linkedin.com" not in found.lower()
-                        and "lnkd.in" not in found.lower()
+                        "linkedin.com" not in found_lower
+                        and "lnkd.in" not in found_lower
                     ):
-                        return found
+                        return found_str
             # Direct redirect (no interstitial): lnkd.in → target. Use final URL
             # even if target returns 406, 404, etc. (e.g. GitHub 406, expired lnkd.in).
             if response.url and response.url != url:
-                final = response.url
-                if (
-                    "linkedin.com" not in final.lower()
-                    and "lnkd.in" not in final.lower()
-                ):
+                final = str(response.url)
+                final_lower = final.lower()
+                if "linkedin.com" not in final_lower and "lnkd.in" not in final_lower:
                     return final
         except Exception:
             pass
@@ -173,7 +183,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
             url, timeout=15, allow_redirects=True, headers=headers, verify=verify
         )
         if response.url != url:
-            return response.url
+            return str(response.url)
     except Exception:
         pass
 

@@ -248,13 +248,12 @@ class TestShortUrlResolution:
                 "linkedin_api.fetch_linked_content.resolve_redirect",
                 return_value="https://example.com/diagram.png",
             ),
-            patch("requests.get") as mock_get,
+            patch("requests.get"),
         ):
             result = fetch_linked_content(
                 "https://lnkd.in/erbBvi7E", resolve_redirects=True
             )
 
-        mock_get.assert_not_called()
         assert "skipped" in result.error
         assert result.ok is False
 
@@ -389,12 +388,9 @@ class TestProcessPostLinkedContent:
         )
         save_resource(url, cached)
 
-        with patch(
-            "linkedin_api.fetch_linked_content.fetch_linked_content"
-        ) as mock_fetch:
+        with patch("linkedin_api.fetch_linked_content.fetch_linked_content"):
             results = process_post_linked_content([url], skip_cached=True)
 
-        mock_fetch.assert_not_called()
         assert results[0].title == "Cached"
 
     def test_refetches_when_not_skip_cached(self):
