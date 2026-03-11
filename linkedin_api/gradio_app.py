@@ -134,6 +134,41 @@ def _format_period_dates(period: str) -> str | None:
     return f"{start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
 
 
+def _backfill_timestamps(
+    all_metas: list[dict],
+    urn_to_activity: dict[str, dict],
+) -> None:
+    """
+    Backfill reaction_created_at and post_created_at in metadata files (and in-memory metas).
+    Runs for ALL posts: reaction from activities when matched, post from Snowflake when empty.
+    """
+    for m in all_metas:
+        urn = (m.get("urn") or "").strip()
+        if not urn:
+            continue
+        act = urn_to_activity.get(urn, {})
+        ts = act.get("timestamp")
+        ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+        reaction_iso = _ms_to_iso(ts_ms) if ts_ms else ""
+        post_created = (act.get("post_created_at") or "").strip() or None
+        if not post_created:
+            post_created = post_created_at_from_urn(urn)
+
+        existing_react = (m.get("reaction_created_at") or "").strip()
+        existing_post = (m.get("post_created_at") or "").strip()
+
+        kwargs: dict = {}
+        if reaction_iso and not existing_react:
+            kwargs["reaction_created_at"] = reaction_iso
+            m["reaction_created_at"] = reaction_iso
+        if post_created and not existing_post:
+            kwargs["post_created_at"] = post_created
+            m["post_created_at"] = post_created
+
+        if kwargs:
+            update_metadata_fields(urn, **kwargs)
+
+
 def _get_posts_for_period(
     period: str,
     activities_path: Path,
@@ -142,6 +177,7 @@ def _get_posts_for_period(
     """
     Return posts scoped to the fetched period (only posts with reactions in period).
     Orders by reaction time ascending. Returns (metas, period_dates_str or None).
+    Backfills reaction_created_at and post_created_at to metadata files for all posts.
     """
     period_dates = _format_period_dates(period)
 
@@ -163,64 +199,62 @@ def _get_posts_for_period(
                 m["reaction_time"] = iso
             m["post_time"] = (m.get("post_created_at") or "").strip() or "unknown"
 
-    if not activities_path.exists():
-        all_metas = list_summarized_metadata()
-        _sort_by_api_timestamp(all_metas)
-        _add_times_from_metadata(all_metas)
-        return all_metas[:max_posts], period_dates
-    try:
-        activities = json.loads(activities_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        all_metas = list_summarized_metadata()
-        _sort_by_api_timestamp(all_metas)
-        _add_times_from_metadata(all_metas)
-        return all_metas[:max_posts], period_dates
-    urn_to_activity: dict[str, dict] = {}
-    for a in activities:
-        urn = (a.get("post_urn") or "").strip()
-        if urn:
-            urn_to_activity[urn] = a
-    if not urn_to_activity:
-        all_metas = list_summarized_metadata()
-        _sort_by_api_timestamp(all_metas)
-        _add_times_from_metadata(all_metas)
-        return all_metas[:max_posts], period_dates
     all_metas = list_summarized_metadata()
-    scoped = []
-    for m in all_metas:
-        urn = (m.get("urn") or "").strip()
-        if urn not in urn_to_activity:
-            continue
-        act = urn_to_activity[urn]
-        ts = act.get("timestamp")
-        post_created = (act.get("post_created_at") or "").strip() or None
-        # Fallback: Snowflake ID in URN encodes creation time (no API/HTTP needed)
-        if not post_created:
-            post_created = post_created_at_from_urn(urn)
-        ts_ms = int(ts) if isinstance(ts, (int, float)) else None
 
-        m = dict(m)
-        reaction_iso = _ms_to_iso(ts_ms) if ts_ms else ""
-        m["reaction_time"] = reaction_iso or ""
-        m["post_time"] = post_created or "unknown"
-        scoped.append(m)
+    urn_to_activity: dict[str, dict] = {}
+    if activities_path.exists():
+        try:
+            activities = json.loads(activities_path.read_text())
+            for a in activities:
+                urn = (a.get("post_urn") or "").strip()
+                if not urn:
+                    continue
+                urn_to_activity[urn] = a
+                if "comment" in urn or "," in urn:
+                    continue
+                id_part = urn.split(":")[-1] if ":" in urn else ""
+                if id_part and id_part.isdigit():
+                    for prefix in (
+                        "urn:li:activity:",
+                        "urn:li:ugcPost:",
+                        "urn:li:share:",
+                    ):
+                        alt = f"{prefix}{id_part}"
+                        if alt != urn:
+                            urn_to_activity.setdefault(alt, a)
+        except (json.JSONDecodeError, OSError):
+            pass
 
-        # Backfill metadata only when fields are empty (never overwrite summary etc.)
-        existing = m.copy()
-        kwargs: dict = {}
-        if reaction_iso and not (existing.get("reaction_created_at") or "").strip():
-            kwargs["reaction_created_at"] = reaction_iso
-        if post_created and not (existing.get("post_created_at") or "").strip():
-            kwargs["post_created_at"] = post_created
-        if kwargs:
-            update_metadata_fields(urn, **kwargs)
+    if urn_to_activity:
+        _backfill_timestamps(all_metas, urn_to_activity)
+    else:
+        for m in all_metas:
+            urn = (m.get("urn") or "").strip()
+            if not urn:
+                continue
+            post_created = (
+                m.get("post_created_at") or ""
+            ).strip() or post_created_at_from_urn(urn)
+            if post_created and not (m.get("post_created_at") or "").strip():
+                update_metadata_fields(urn, post_created_at=post_created)
+                m["post_created_at"] = post_created
 
-    def _sort_key(m: dict) -> int:
-        a = urn_to_activity.get((m.get("urn") or "").strip(), {})
-        t = a.get("timestamp")
-        return int((t if isinstance(t, (int, float)) else 0) or 0)
+    _add_times_from_metadata(all_metas)
+    _sort_by_api_timestamp(all_metas)
 
-    scoped.sort(key=_sort_key)
+    if not urn_to_activity:
+        return all_metas[:max_posts], period_dates
+
+    scoped = [m for m in all_metas if (m.get("urn") or "").strip() in urn_to_activity]
+    scoped.sort(
+        key=lambda m: int(
+            (
+                urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp")
+                or 0
+            )
+            or 0
+        )
+    )
     return scoped[:max_posts], period_dates
 
 
