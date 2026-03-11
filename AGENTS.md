@@ -51,3 +51,4 @@ All commands use `uv run` as the project manages dependencies with `uv`. See `CL
 - If pipeline/report fails with `Cannot connect to Ollama` or `model ... not found`, verify `ollama list` shows `llama3.2:3b` and `nomic-embed-text`.
 - **zstd** is pre-installed as a system dependency (used by Ollama for model compression).
 - **Ollama serve must be started manually** in this VM since there is no systemd. Run `ollama serve &` and wait a few seconds before any LLM/embedding operations. The app's `_ensure_ollama_running()` in `llm_config.py` will also attempt auto-start.
+- **Pipeline local tests**: Use `--last 1d` to reduce API fetch volume; `--limit 2` keeps enrichment/summarization cheap. With `--skip-fetch`, ensure changelog cache timestamps fall within the selected period.

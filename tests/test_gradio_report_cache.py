@@ -34,6 +34,7 @@ class TestReportCache:
             CONTENT_LEVEL_SUMMARY,
             50,
             1500,
+            "7d",
         )
         report = "## Test Report\n\n- Item 1"
         _save_report_cache(report, sig)
@@ -42,6 +43,7 @@ class TestReportCache:
             content_level=CONTENT_LEVEL_SUMMARY,
             max_posts=50,
             max_full_post_chars=1500,
+            period="7d",
         )
         assert result is not None
         assert result[0] == report
@@ -56,6 +58,7 @@ class TestReportCache:
             CONTENT_LEVEL_MINIMAL,
             100,
             1500,
+            "7d",
         )
         _save_report_cache("Cached report", sig)
         result = _load_report_cache(
@@ -63,11 +66,12 @@ class TestReportCache:
             content_level=CONTENT_LEVEL_SUMMARY,
             max_posts=100,
             max_full_post_chars=1500,
+            period="7d",
         )
         assert result is None
 
     def test_cache_uses_tmp_path_not_user_home(self, tmp_path):
-        _save_report_cache("test", ("x", 1, (), "per", "minimal", 50, 1500))
+        _save_report_cache("test", ("x", 1, (), "per", "minimal", 50, 1500, "7d"))
         cache_file = tmp_path / _REPORT_CACHE_FILE
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
@@ -106,6 +110,18 @@ class TestReportPromptDebug:
         formatted = _format_post_for_prompt(meta, CONTENT_LEVEL_MINIMAL)
         assert "Summary:" not in formatted
         assert "transformers" not in formatted
+
+    def test_prompt_includes_reaction_and_post_time_when_present(self):
+        meta = {
+            "post_url": "https://linkedin.com/feed/update/123",
+            "category": "tutorial",
+            "summary": "A summary.",
+            "reaction_time": "2025-03-01T12:00:00+0000",
+            "post_time": "2025-02-15T10:00:00+0000",
+        }
+        formatted = _format_post_for_prompt(meta, CONTENT_LEVEL_SUMMARY)
+        assert "Activity: 2025-03-01T12:00:00+0000" in formatted
+        assert "Posted: 2025-02-15T10:00:00+0000" in formatted
 
     def test_prompt_file_in_tmp_path_not_user_home(self, tmp_path):
         _save_report_prompt_debug("test", "sys", ["prompt"])

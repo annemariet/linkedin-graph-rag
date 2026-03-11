@@ -90,8 +90,42 @@ _META_KEYS = (
     "category",
     "urls",
     "post_url",
+    "post_author",
     "summarized_at",
+    "activity_time_iso",
+    "post_created_at",
 )
+
+
+def _ms_to_iso(ts_ms: int | float | None) -> str:
+    """Convert epoch ms to ISO string (human-readable)."""
+    if ts_ms is None:
+        return ""
+    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
+
+
+def _normalize_activity_time_iso(meta: dict) -> str:
+    """Return activity_time_iso (ISO). Backward compat: reaction_created_at, reaction_timestamp_ms."""
+    iso = (
+        meta.get("activity_time_iso") or meta.get("reaction_created_at") or ""
+    ).strip()
+    if iso:
+        return iso
+    ts = meta.get("reaction_timestamp_ms")
+    if ts is not None and isinstance(ts, (int, float)):
+        return _ms_to_iso(int(ts))
+    return ""
+
+
+def _iso_to_ms(iso_str: str | None) -> int | None:
+    """Parse ISO string to epoch ms for sorting. Returns None if invalid."""
+    if not (iso_str or "").strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return int(dt.timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
 
 
 def save_metadata(
@@ -128,6 +162,17 @@ def update_urls_metadata(urn: str, urls: list[str]) -> Path:
     """
     meta = dict(load_metadata(urn) or {})
     meta["urls"] = urls
+    path = _meta_path(urn)
+    path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
+    return path
+
+
+def update_metadata_fields(urn: str, **kwargs: Any) -> Path:
+    """Merge specified metadata fields, preserving others. Only _META_KEYS are applied."""
+    meta = dict(load_metadata(urn) or {})
+    for k, v in kwargs.items():
+        if k in _META_KEYS:
+            meta[k] = v
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
     return path
@@ -211,6 +256,9 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
                     "category": meta.get("category") or "",
                     "summarized_at": meta.get("summarized_at") or "",
                     "post_url": meta.get("post_url") or "",
+                    "post_author": (meta.get("post_author") or "").strip(),
+                    "activity_time_iso": _normalize_activity_time_iso(meta),
+                    "post_created_at": (meta.get("post_created_at") or "").strip(),
                 }
             )
             if limit and len(out) >= limit:

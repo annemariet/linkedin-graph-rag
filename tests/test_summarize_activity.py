@@ -112,3 +112,32 @@ class TestCollectActivities:
         }
         records = collect_activities(data, types={"repost"})
         assert len(records) == 0
+
+    def test_post_created_at_from_post_node_properties(self):
+        """API-like data: post node has created_at in properties."""
+        data = {
+            "nodes": [
+                {"id": "urn:li:person:me", "labels": ["Person"], "properties": {}},
+                {
+                    "id": "urn:li:ugcPost:456",
+                    "labels": ["Post"],
+                    "properties": {
+                        "content": "Post body",
+                        "extracted_urls": [],
+                        "created_at": "2024-02-01T12:00:00Z",
+                    },
+                },
+            ],
+            "relationships": [
+                {
+                    "type": "REACTS_TO",
+                    "from": "urn:li:person:me",
+                    "to": "urn:li:ugcPost:456",
+                    "properties": {"timestamp": 1709300000000, "reaction_type": "LIKE"},
+                },
+            ],
+        }
+        records = collect_activities(data, types={"reaction"})
+        assert len(records) == 1
+        assert records[0].timestamp == 1709300000000
+        assert records[0].post_created_at == "2024-02-01T12:00:00Z"
