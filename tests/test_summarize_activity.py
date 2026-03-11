@@ -60,7 +60,7 @@ class TestCollectFromCsv:
         return path
 
     def test_reactions(self, csv_with_reaction):
-        records = collect_from_csv(types={"reaction"}, csv_path=csv_with_reaction)
+        records = collect_from_csv(csv_path=csv_with_reaction)
         assert len(records) == 1
         assert records[0].post_urn == "urn:li:activity:123"
         assert records[0].content == "Hello"
@@ -68,12 +68,8 @@ class TestCollectFromCsv:
         assert records[0].reaction_type == "INTEREST"
         assert records[0].created_at == "2023-11-14T22:13:20+0000"
 
-    def test_filters_by_type(self, csv_with_reaction):
-        records = collect_from_csv(types={"repost"}, csv_path=csv_with_reaction)
-        assert len(records) == 0
-
     def test_empty_csv(self, tmp_path):
         path = tmp_path / "empty.csv"
         path.touch()
-        records = collect_from_csv(types={"reaction"}, csv_path=path)
+        records = collect_from_csv(csv_path=path)
         assert records == []

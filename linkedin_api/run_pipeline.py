@@ -56,12 +56,11 @@ def _collect_activities(args) -> tuple[Path, int]:
             raise ValueError(f"Invalid --last '{last}'; use e.g. 7d, 14d, 30d")
         start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
         end_dt = datetime.now(timezone.utc)
-    types_set = {t.strip() for t in args.types.split(",") if t.strip()}
 
     ensure_csv_fetched(last, verbose=not args.quiet, skip_fetch=args.from_cache)
 
     records = collect_from_csv(
-        types=types_set, start=start_dt, end=end_dt, csv_path=get_default_csv_path()
+        start=start_dt, end=end_dt, csv_path=get_default_csv_path()
     )
     if not records and args.from_cache:
         raise SystemExit(
@@ -206,7 +205,6 @@ def run_pipeline_ui(
     args = SimpleNamespace(
         last=last,
         from_cache=from_cache,
-        types="reaction,repost,comment",
         output=None,
         enriched_output=None,
         seed_json=seed_json,
@@ -255,7 +253,6 @@ def run_pipeline_ui_streaming(
     args = SimpleNamespace(
         last=last,
         from_cache=from_cache,
-        types="reaction,repost,comment",
         output=None,
         enriched_output=None,
         seed_json=seed_json,
@@ -345,12 +342,7 @@ def main() -> int:
         "--skip-fetch",
         action="store_true",
         dest="from_cache",
-        help="Use only cached changelog data (no API fetch)",
-    )
-    parser.add_argument(
-        "--types",
-        default="reaction,repost,comment",
-        help="Activity types (default: reaction,repost,comment)",
+        help="Use only cached data from activities.csv (no API fetch)",
     )
     parser.add_argument("--output", "-o", help="Phase 1 output path")
     parser.add_argument("--enriched-output", help="Phase 2 output path")

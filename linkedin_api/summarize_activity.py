@@ -159,35 +159,19 @@ def ensure_csv_fetched(
 
 
 def collect_from_csv(
-    types: set[Literal["reaction", "repost", "comment"]],
     start: datetime | None = None,
     end: datetime | None = None,
     csv_path: Path | None = None,
 ) -> list[SummarizationRecord]:
     """
-    Load activities from CSV, filter by period and type, convert to summarization format.
+    Load activities from CSV, filter by period, convert to summarization format.
+    Includes reactions, reposts, and comments.
     """
     records = load_records_csv(csv_path)
     if not records:
         return []
     if start or end:
         records = filter_by_date(records, start=start, end=end)
-    type_filters: set[str] = set()
-    if "reaction" in types:
-        type_filters.update(
-            [
-                ActivityType.REACTION_TO_POST.value,
-                ActivityType.REACTION_TO_COMMENT.value,
-            ]
-        )
-    if "repost" in types:
-        type_filters.update(
-            [ActivityType.REPOST.value, ActivityType.INSTANT_REPOST.value]
-        )
-    if "comment" in types:
-        type_filters.add(ActivityType.COMMENT.value)
-    if type_filters:
-        records = [r for r in records if r.activity_type in type_filters]
     return [_to_summarization_record(r) for r in records]
 
 
@@ -204,11 +188,6 @@ def main() -> int:
         "--from-cache",
         action="store_true",
         help="Skip API fetch; use only activities.csv. Use with --last to filter by period.",
-    )
-    parser.add_argument(
-        "--types",
-        default="reaction,repost,comment",
-        help="Comma-separated: reaction, repost, comment (default: all)",
     )
     parser.add_argument(
         "--output",
@@ -231,7 +210,6 @@ def main() -> int:
     elif args.from_cache:
         pass  # Cache; --last optional to filter within cached data
 
-    types_set = {t.strip() for t in args.types.split(",") if t.strip()}
     last = args.last or "30d"
     start_dt = None
     end_dt = None
@@ -245,9 +223,7 @@ def main() -> int:
     ensure_csv_fetched(last, verbose=not args.quiet, skip_fetch=args.from_cache)
 
     csv_path = get_default_csv_path()
-    records = collect_from_csv(
-        types=types_set, start=start_dt, end=end_dt, csv_path=csv_path
-    )
+    records = collect_from_csv(start=start_dt, end=end_dt, csv_path=csv_path)
     if not records and args.from_cache:
         print(
             "No data in activities.csv. Run extract_graph_data or use --last to fetch."
