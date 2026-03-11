@@ -1,0 +1,31 @@
+flowchart LR
+    subgraph Source["Shared source"]
+        API[LinkedIn Portability API]
+    end
+
+    subgraph CLI["CLI path"]
+        EXTRACT["extract_graph_data"]
+        BUILD["build_graph"]
+        INDEX["index_content"]
+        GRAG["query_graphrag"]
+        EXTRACT --> BUILD --> INDEX --> GRAG
+    end
+
+    subgraph UI["UI path"]
+        COLLECT["summarize_activity"]
+        ENRICH["enrich_activities"]
+        SUMM["summarize_posts"]
+        RPT["Report"]
+        COLLECT --> ENRICH --> SUMM --> RPT
+    end
+
+    API --> EXTRACT
+    API --> COLLECT
+
+    subgraph Storage["Storage"]
+        CSV["CSV + Neo4j"]
+        FS["content_store (filesystem)"]
+    end
+
+    CLI --> CSV
+    UI --> FS

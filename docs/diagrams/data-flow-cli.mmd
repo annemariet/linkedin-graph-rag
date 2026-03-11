@@ -1,0 +1,16 @@
+flowchart TB
+    subgraph CLI["CLI Pipeline (GraphRAG)"]
+        API1[LinkedIn Portability API]
+        API1 --> FETCH["fetch_changelog_data"]
+        FETCH --> EXTRACT["extract_graph_data"]
+        EXTRACT --> CSV["Master CSV\n~/.linkedin_api/data/activities.csv"]
+        EXTRACT --> JSON["Legacy JSON\noutputs/neo4j_data_*.json"]
+        CSV --> BUILD["build_graph"]
+        JSON --> BUILD
+        BUILD --> NEO["Neo4j Graph\nPeople, Posts, Comments, Resources"]
+        NEO --> ENRICH["enrich_graph (optional)\nLLM extracts Technology, Concept, etc."]
+        ENRICH --> NEO2["Neo4j + Knowledge Nodes"]
+        NEO2 --> INDEX["index_content"]
+        INDEX --> CHUNKS["Chunk nodes + embeddings\nVector index"]
+        CHUNKS --> QUERY["query_graphrag\nSemantic search"]
+    end
