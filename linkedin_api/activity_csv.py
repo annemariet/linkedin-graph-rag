@@ -14,16 +14,19 @@ time             Epoch milliseconds
 reaction_type    LIKE | PRAISE | ... (empty for non-reactions)
 author_urn       Person who performed the action
 activity_urn     Post / Comment URN
+post_id          Original post ID (extract_urn_id of target post; empty if unknown)
 post_url         LinkedIn URL
 content          Post / comment text (from API)
 parent_urn       Parent post / comment URN (for comments, reposts)
 original_post_urn  Original post URN (for reposts)
+activity_id      Unique key per line: hash(post_id, activity_type, time, activity_urn)
 created_at       ISO timestamp
 """
 
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import os
 from dataclasses import asdict, dataclass, fields
@@ -56,12 +59,25 @@ CSV_COLUMNS = [
     "reaction_type",
     "author_urn",
     "activity_urn",
+    "post_id",
     "post_url",
     "content",
     "parent_urn",
     "original_post_urn",
+    "activity_id",
     "created_at",
 ]
+
+
+def make_activity_id(
+    post_id: str,
+    activity_type: str,
+    time: str,
+    activity_urn: str,
+) -> str:
+    """Generate a unique activity_id from post_id, type, time, and activity_urn."""
+    payload = f"{post_id}|{activity_type}|{time}|{activity_urn}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 @dataclass
@@ -74,10 +90,12 @@ class ActivityRecord:
     reaction_type: str = ""
     author_urn: str = ""
     activity_urn: str = ""
+    post_id: str = ""
     post_url: str = ""
     content: str = ""
     parent_urn: str = ""
     original_post_urn: str = ""
+    activity_id: str = ""
     created_at: str = ""
 
     def to_row(self) -> dict[str, str]:

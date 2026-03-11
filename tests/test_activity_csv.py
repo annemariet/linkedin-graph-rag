@@ -14,6 +14,7 @@ from linkedin_api.activity_csv import (
     filter_by_type,
     get_data_dir,
     load_records_csv,
+    make_activity_id,
     records_to_csv_string,
 )
 
@@ -23,6 +24,9 @@ from linkedin_api.activity_csv import (
 
 @pytest.fixture
 def sample_records():
+    r1_urn = "urn:li:share:111"
+    r2_urn = "urn:li:share:222"
+    r3_urn = "urn:li:comment:(ugcPost:333,444)"
     return [
         ActivityRecord(
             owner="urn:li:person:owner1",
@@ -30,11 +34,13 @@ def sample_records():
             time="1700000000000",
             reaction_type="",
             author_urn="urn:li:person:author1",
-            activity_urn="urn:li:share:111",
+            activity_urn=r1_urn,
+            post_id="111",
             post_url="https://linkedin.com/posts/111",
             content="Hello world",
             parent_urn="",
             original_post_urn="",
+            activity_id=make_activity_id("111", "post", "1700000000000", r1_urn),
             created_at="2023-11-14T22:13:20",
         ),
         ActivityRecord(
@@ -43,11 +49,15 @@ def sample_records():
             time="1700000060000",
             reaction_type="LIKE",
             author_urn="urn:li:person:owner1",
-            activity_urn="urn:li:share:222",
+            activity_urn=r2_urn,
+            post_id="222",
             post_url="https://linkedin.com/posts/222",
             content="",
             parent_urn="",
             original_post_urn="",
+            activity_id=make_activity_id(
+                "222", "reaction_to_post", "1700000060000", r2_urn
+            ),
             created_at="2023-11-14T22:14:20",
         ),
         ActivityRecord(
@@ -56,11 +66,13 @@ def sample_records():
             time="1700000120000",
             reaction_type="",
             author_urn="urn:li:person:owner1",
-            activity_urn="urn:li:comment:(ugcPost:333,444)",
+            activity_urn=r3_urn,
+            post_id="333",
             post_url="https://linkedin.com/posts/333",
             content="Great post!",
             parent_urn="urn:li:ugcPost:333",
             original_post_urn="",
+            activity_id=make_activity_id("333", "comment", "1700000120000", r3_urn),
             created_at="2023-11-14T22:15:20",
         ),
     ]

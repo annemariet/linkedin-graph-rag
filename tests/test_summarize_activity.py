@@ -1,11 +1,16 @@
 """Tests for summarize_activity module."""
 
-import json
+import pytest
 
+from linkedin_api.activity_csv import (
+    ActivityRecord,
+    ActivityType,
+    append_records_csv,
+    make_activity_id,
+)
 from linkedin_api.summarize_activity import (
     _parse_last,
-    collect_activities,
-    load_from_cache,
+    collect_from_csv,
 )
 
 
@@ -30,85 +35,45 @@ class TestParseLast:
         assert _parse_last("7") is None
 
 
-class TestLoadFromCache:
-    def test_empty_dir(self, tmp_path):
-        data = load_from_cache(path=tmp_path)
-        assert data["nodes"] == []
-        assert data["relationships"] == []
+class TestCollectFromCsv:
+    @pytest.fixture
+    def csv_with_reaction(self, tmp_path):
+        rec = ActivityRecord(
+            owner="urn:li:person:me",
+            activity_type=ActivityType.REACTION_TO_POST.value,
+            time="1700000000000",
+            reaction_type="INTEREST",
+            author_urn="urn:li:person:me",
+            activity_urn="urn:li:activity:123",
+            post_id="123",
+            post_url="https://www.linkedin.com/feed/update/urn:li:activity:123",
+            content="Hello",
+            parent_urn="",
+            original_post_urn="",
+            activity_id=make_activity_id(
+                "123", "reaction_to_post", "1700000000000", "urn:li:activity:123"
+            ),
+            created_at="2023-11-14T22:13:20+0000",
+        )
+        path = tmp_path / "activities.csv"
+        append_records_csv([rec], path=path)
+        return path
 
-    def test_valid_json(self, tmp_path):
-        neo4j = {
-            "nodes": [
-                {"id": "urn:li:person:me", "labels": ["Person"], "properties": {}},
-                {"id": "urn:li:activity:123", "labels": ["Post"], "properties": {}},
-            ],
-            "relationships": [
-                {
-                    "type": "REACTS_TO",
-                    "startNode": "urn:li:person:me",
-                    "endNode": "urn:li:activity:123",
-                    "properties": {"timestamp": 1700000000000},
-                },
-            ],
-        }
-        fp = tmp_path / "neo4j_data_test.json"
-        fp.write_text(json.dumps(neo4j))
-        data = load_from_cache(path=fp)
-        assert len(data["nodes"]) == 2
-        assert len(data["relationships"]) == 1
-        assert data["relationships"][0]["from"] == "urn:li:person:me"
-        assert data["relationships"][0]["to"] == "urn:li:activity:123"
-
-
-class TestCollectActivities:
-    def test_reactions(self):
-        data = {
-            "nodes": [
-                {"id": "urn:li:person:me", "labels": ["Person"], "properties": {}},
-                {
-                    "id": "urn:li:activity:123",
-                    "labels": ["Post"],
-                    "properties": {
-                        "content": "Hello",
-                        "extracted_urls": ["https://x.com"],
-                    },
-                },
-            ],
-            "relationships": [
-                {
-                    "type": "REACTS_TO",
-                    "from": "urn:li:person:me",
-                    "to": "urn:li:activity:123",
-                    "properties": {
-                        "timestamp": 1700000000000,
-                        "reaction_type": "INTEREST",
-                    },
-                },
-            ],
-        }
-        records = collect_activities(data, types={"reaction"})
+    def test_reactions(self, csv_with_reaction):
+        records = collect_from_csv(types={"reaction"}, csv_path=csv_with_reaction)
         assert len(records) == 1
         assert records[0].post_urn == "urn:li:activity:123"
         assert records[0].content == "Hello"
-        assert records[0].urls == ["https://x.com"]
         assert records[0].interaction_type == "reaction"
         assert records[0].reaction_type == "INTEREST"
-        assert records[0].post_url.startswith("https://www.linkedin.com")
+        assert records[0].created_at == "2023-11-14T22:13:20+0000"
 
-    def test_filters_by_type(self):
-        data = {
-            "nodes": [
-                {"id": "urn:li:person:me", "labels": ["Person"], "properties": {}},
-                {"id": "urn:li:activity:123", "labels": ["Post"], "properties": {}},
-            ],
-            "relationships": [
-                {
-                    "type": "REACTS_TO",
-                    "from": "urn:li:person:me",
-                    "to": "urn:li:activity:123",
-                    "properties": {"timestamp": 1700000000000},
-                },
-            ],
-        }
-        records = collect_activities(data, types={"repost"})
+    def test_filters_by_type(self, csv_with_reaction):
+        records = collect_from_csv(types={"repost"}, csv_path=csv_with_reaction)
         assert len(records) == 0
+
+    def test_empty_csv(self, tmp_path):
+        path = tmp_path / "empty.csv"
+        path.touch()
+        records = collect_from_csv(types={"reaction"}, csv_path=path)
+        assert records == []

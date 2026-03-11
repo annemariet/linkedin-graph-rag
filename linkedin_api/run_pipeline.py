@@ -24,10 +24,11 @@ from linkedin_api.enrich_activities import (
     enrich_activities_streaming,
 )
 from linkedin_api.fetch_linked_content import fetch_linked_content_streaming
+from linkedin_api.activity_csv import get_default_csv_path
 from linkedin_api.summarize_activity import (
     _format_timestamp,
-    collect_activities,
-    collect_from_live,
+    collect_from_csv,
+    ensure_csv_fetched,
 )
 from linkedin_api.summarize_posts import (
     load_from_json_and_save,
@@ -41,30 +42,32 @@ DEFAULT_ENRICHED = OUTPUT_DIR / "activities_enriched.json"
 
 
 def _collect_activities(args) -> tuple[Path, int]:
-    """Collect activities from changelog (or cache). Returns (path to activities JSON, count)."""
+    """Collect activities from CSV (fetch + append when not skip-fetch). Returns (path to activities JSON, count)."""
     from datetime import datetime, timezone
 
     from linkedin_api.summarize_activity import _parse_last
 
     last = args.last or "30d"
-    start_ms = _parse_last(last)
-    if start_ms is None:
-        raise ValueError(f"Invalid --last '{last}'; use e.g. 7d, 14d, 30d")
-    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    start_dt = None
+    end_dt = None
+    if last:
+        start_ms = _parse_last(last)
+        if start_ms is None:
+            raise ValueError(f"Invalid --last '{last}'; use e.g. 7d, 14d, 30d")
+        start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+        end_dt = datetime.now(timezone.utc)
     types_set = {t.strip() for t in args.types.split(",") if t.strip()}
 
-    data = collect_from_live(
-        last,
-        types_set,
-        verbose=not args.quiet,
-        skip_fetch=args.from_cache,
-    )
-    if not data["nodes"] and args.from_cache:
-        raise SystemExit('No changelog cache found. Run without "Skip fetch" first.')
+    ensure_csv_fetched(last, verbose=not args.quiet, skip_fetch=args.from_cache)
 
-    records = collect_activities(
-        data, types=types_set, start_ms=start_ms, end_ms=end_ms
+    records = collect_from_csv(
+        types=types_set, start=start_dt, end=end_dt, csv_path=get_default_csv_path()
     )
+    if not records and args.from_cache:
+        raise SystemExit(
+            'No data in activities.csv. Run extract_graph_data or use without "Skip fetch".'
+        )
+
     if not args.quiet:
         print(f"Collected {len(records)} activities")
 
@@ -79,8 +82,10 @@ def _collect_activities(args) -> tuple[Path, int]:
             "interaction_type": r.interaction_type,
             "reaction_type": r.reaction_type,
             "comment_text": r.comment_text,
+            "post_id": r.post_id,
+            "activity_id": r.activity_id,
             "timestamp": r.timestamp,
-            "created_at": _format_timestamp(r.timestamp),
+            "created_at": r.created_at or _format_timestamp(r.timestamp),
         }
         for r in records
     ]
