@@ -91,7 +91,7 @@ This installs Python 3.12 (if needed) and all dependencies.
 **Recommended: Store in Keychain (macOS)**
 
 ```bash
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 ```
 
 This securely stores your token in macOS Keychain.
@@ -359,13 +359,13 @@ RETURN post, resource, person, comment, ref, creates, comments
 If you see `401 Unauthorized` or `EXPIRED_ACCESS_TOKEN`:
 
 1. Get a new token from: https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t
-2. Update it: `uv run python setup_token.py`
+2. Update it: `uv run python scripts/setup_token.py`
 
 ### Neo4j Connection Issues
 
 ```bash
-# Check connection
-uv run python check_token.py
+# Check LinkedIn token
+uv run python scripts/check_token.py
 
 # Verify Neo4j is running
 # Check NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD environment variables

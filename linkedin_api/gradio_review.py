@@ -21,7 +21,7 @@ from linkedin_api.enrich_profiles import (
     is_author_enrichment_enabled,
     parse_comment_author_from_html,
 )
-from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urls import extract_urls_from_text
 from linkedin_api.extract_graph_data import get_all_post_activities
 from linkedin_api.extraction_preview import extract_element_preview
 from linkedin_api.utils.changelog import (
@@ -370,13 +370,13 @@ def load_and_sync(start_time: Optional[int] = None) -> tuple:
         return (
             queue,
             "**Token expired.**\n\n"
-            "1. Run `uv run python setup_token.py` and enter your new token.\n"
+            "1. Run `uv run python scripts/setup_token.py` and enter your new token.\n"
             "2. Set **LINKEDIN_ACCOUNT** the same everywhere (e.g. in `.env`: "
             "`LINKEDIN_ACCOUNT=your-email@example.com`). The app reads the token "
             "from keyring using this account; if it differs from when you ran "
             "setup_token, you get the old token.\n"
             "3. Restart the Gradio app, then Load again.\n"
-            "4. Verify with `uv run python check_token.py` in the same terminal/env as the app.",
+            "4. Verify with `uv run python scripts/check_token.py` in the same terminal/env as the app.",
         )
     except Exception as e:
         logger.exception("Load and sync failed")

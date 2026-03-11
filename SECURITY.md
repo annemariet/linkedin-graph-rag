@@ -10,7 +10,7 @@
 
 ```bash
 # Run the setup script (macOS only)
-python3 setup_token.py
+uv run python scripts/setup_token.py
 ```
 
 This securely stores your token in macOS Keychain. You only need to enter it once, and scripts will automatically retrieve it.
@@ -31,7 +31,7 @@ LINKEDIN_ACCESS_TOKEN=your_token_here python3 script.py
 2. **No `.env` files**: We don't use `python-dotenv` to avoid AI tools potentially accessing `.env` files
 3. **No token in code**: Token is never hardcoded or committed to git
 4. **No token in logs**: Scripts never print or log the token value
-5. **Validation only**: `check_token.py` only validates the token exists, never displays it
+5. **Validation only**: `scripts/check_token.py` only validates the token exists, never displays it
 6. **Keychain encryption**: macOS Keychain is encrypted and requires user authentication to access
 
 ### AI Tool Safety

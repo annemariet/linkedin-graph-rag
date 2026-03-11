@@ -27,10 +27,10 @@ uv sync --all-groups
 ### Authentication Setup
 ```bash
 # Store LinkedIn token in macOS Keychain (recommended)
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 
 # Check token validity
-uv run python check_token.py
+uv run python scripts/check_token.py
 ```
 
 ### Running Scripts
@@ -320,7 +320,7 @@ LinkedIn access tokens expire every ~60 days. When you see:
 
 Recreate token at https://www.linkedin.com/developers/tools/oauth and update via:
 ```bash
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 ```
 
 ## Important Notes
