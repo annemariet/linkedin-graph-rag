@@ -209,11 +209,18 @@ Web UI for GraphRAG queries:
 URL extraction and categorization utilities (extracted from `extract_resources.py`):
 - `extract_urls_from_text()`, `categorize_url()`, `should_ignore_url()`, `resolve_redirect()`
 
-#### `linkedin_api/urn_utils.py`
+#### `linkedin_api/utils/urns.py`
 URN parsing and URL conversion:
 - Extracts IDs from LinkedIn URNs
 - Converts URNs to public LinkedIn URLs
 - Handles various URN formats (posts, comments, people)
+
+#### `scripts/`
+Standalone and migration scripts:
+- `setup_token.py`, `check_token.py` – Token setup and validation
+- `migrate_comment_urns.py` – Fix Comment URN format in Neo4j
+- `fix_repost_authors.py` – Fix repost CREATES/REPOSTS from re-extracted JSON
+- `verify_vertex_ai.py` – Vertex AI smoke test
 
 ### Data Flow
 

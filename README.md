@@ -253,6 +253,18 @@ uv run python -m linkedin_api.build_graph   # merges by default
 uv run python -m linkedin_api.analyze_activity
 ```
 
+### Scripts (`scripts/`)
+
+| Script | Purpose |
+|--------|---------|
+| `setup_token.py` | Store LinkedIn token in keyring |
+| `check_token.py` | Validate token without exposing it |
+| `migrate_comment_urns.py` | Fix Comment URN format in Neo4j (`--dry-run` supported) |
+| `fix_repost_authors.py` | Fix repost authors from re-extracted JSON |
+| `verify_vertex_ai.py` | Smoke-test Vertex AI connectivity |
+
+Run with `uv run python scripts/<name>.py`.
+
 ## Graph Schema
 
 ### Nodes
