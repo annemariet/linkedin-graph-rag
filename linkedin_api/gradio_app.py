@@ -207,43 +207,31 @@ def _get_posts_for_period(
             activities = json.loads(activities_path.read_text())
             for a in activities:
                 urn = (a.get("post_urn") or "").strip()
-                if not urn:
-                    continue
-                urn_to_activity[urn] = a
-                if "comment" in urn or "," in urn:
-                    continue
-                id_part = urn.split(":")[-1] if ":" in urn else ""
-                if id_part and id_part.isdigit():
-                    for prefix in (
-                        "urn:li:activity:",
-                        "urn:li:ugcPost:",
-                        "urn:li:share:",
-                    ):
-                        alt = f"{prefix}{id_part}"
-                        if alt != urn:
-                            urn_to_activity.setdefault(alt, a)
+                if urn:
+                    urn_to_activity[urn] = a
         except (json.JSONDecodeError, OSError):
             pass
 
     if urn_to_activity:
         _backfill_timestamps(all_metas, urn_to_activity)
+        _add_times_from_metadata(all_metas)
+        _sort_by_api_timestamp(all_metas)
+        scoped = [
+            m for m in all_metas if (m.get("urn") or "").strip() in urn_to_activity
+        ]
     else:
         for m in all_metas:
             urn = (m.get("urn") or "").strip()
-            if not urn:
-                continue
-            post_created = (
-                m.get("post_created_at") or ""
-            ).strip() or post_created_at_from_urn(urn)
-            if post_created and not (m.get("post_created_at") or "").strip():
-                update_metadata_fields(urn, post_created_at=post_created)
-                m["post_created_at"] = post_created
-
-    _add_times_from_metadata(all_metas)
-    _sort_by_api_timestamp(all_metas)
-
-    if not urn_to_activity:
-        return all_metas[:max_posts], period_dates
+            if urn:
+                post_created = (
+                    m.get("post_created_at") or ""
+                ).strip() or post_created_at_from_urn(urn)
+                if post_created and not (m.get("post_created_at") or "").strip():
+                    update_metadata_fields(urn, post_created_at=post_created)
+                    m["post_created_at"] = post_created
+        _add_times_from_metadata(all_metas)
+        _sort_by_api_timestamp(all_metas)
+        return [], period_dates
 
     scoped = [m for m in all_metas if (m.get("urn") or "").strip() in urn_to_activity]
     scoped.sort(
