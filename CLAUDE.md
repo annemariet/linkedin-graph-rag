@@ -380,9 +380,6 @@ The project supports Scalingo deployment via Gradio:
 - Coverage configured to omit test files and examples
 - CI/CD via GitHub Actions (`.github/workflows/python-package.yml`)
 
-## DNS Fix for GCP
+## DNS / VPN and GCP
 
-The codebase includes a DNS fix for Google Cloud Platform connectivity issues:
-- `linkedin_api/dns_utils.py` (if present)
-- Applied before importing Google libraries in GraphRAG modules
-- See `DNS_VPN_FIX.md` for details
+For VPN-related DNS issues with Vertex AI, see `DNS_VPN_FIX.md`. Use `uv run python scripts/verify_vertex_ai.py` to smoke-test Vertex AI.
