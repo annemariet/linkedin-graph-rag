@@ -92,7 +92,7 @@ _META_KEYS = (
     "post_url",
     "post_author",
     "summarized_at",
-    "reaction_created_at",
+    "activity_time_iso",
     "post_created_at",
 )
 
@@ -104,9 +104,11 @@ def _ms_to_iso(ts_ms: int | float | None) -> str:
     return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
 
 
-def _normalize_reaction_created_at(meta: dict) -> str:
-    """Return reaction_created_at (ISO). Backward compat: convert from reaction_timestamp_ms."""
-    iso = (meta.get("reaction_created_at") or "").strip()
+def _normalize_activity_time_iso(meta: dict) -> str:
+    """Return activity_time_iso (ISO). Backward compat: reaction_created_at, reaction_timestamp_ms."""
+    iso = (
+        meta.get("activity_time_iso") or meta.get("reaction_created_at") or ""
+    ).strip()
     if iso:
         return iso
     ts = meta.get("reaction_timestamp_ms")
@@ -255,7 +257,7 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
                     "summarized_at": meta.get("summarized_at") or "",
                     "post_url": meta.get("post_url") or "",
                     "post_author": (meta.get("post_author") or "").strip(),
-                    "reaction_created_at": _normalize_reaction_created_at(meta),
+                    "activity_time_iso": _normalize_activity_time_iso(meta),
                     "post_created_at": (meta.get("post_created_at") or "").strip(),
                 }
             )

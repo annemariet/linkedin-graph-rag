@@ -139,8 +139,8 @@ def _backfill_timestamps(
     urn_to_activity: dict[str, dict],
 ) -> None:
     """
-    Backfill reaction_created_at and post_created_at in metadata files (and in-memory metas).
-    Runs for ALL posts: reaction from activities when matched, post from Snowflake when empty.
+    Backfill activity_time_iso and post_created_at in metadata files (and in-memory metas).
+    Runs for ALL posts: activity time from activities when matched, post from Snowflake when empty.
     """
     for m in all_metas:
         urn = (m.get("urn") or "").strip()
@@ -154,13 +154,13 @@ def _backfill_timestamps(
         if not post_created:
             post_created = post_created_at_from_urn(urn)
 
-        existing_react = (m.get("reaction_created_at") or "").strip()
+        existing_react = (m.get("activity_time_iso") or "").strip()
         existing_post = (m.get("post_created_at") or "").strip()
 
         kwargs: dict = {}
         if reaction_iso and not existing_react:
-            kwargs["reaction_created_at"] = reaction_iso
-            m["reaction_created_at"] = reaction_iso
+            kwargs["activity_time_iso"] = reaction_iso
+            m["activity_time_iso"] = reaction_iso
         if post_created and not existing_post:
             kwargs["post_created_at"] = post_created
             m["post_created_at"] = post_created
@@ -177,15 +177,15 @@ def _get_posts_for_period(
     """
     Return posts scoped to the fetched period (only posts with reactions in period).
     Orders by reaction time ascending. Returns (metas, period_dates_str or None).
-    Backfills reaction_created_at and post_created_at to metadata files for all posts.
+    Backfills activity_time_iso and post_created_at to metadata files for all posts.
     """
     period_dates = _format_period_dates(period)
 
     def _sort_by_api_timestamp(metas: list[dict]) -> None:
-        """Sort by reaction_created_at (ISO) ascending; missing goes last."""
+        """Sort by activity_time_iso (ISO) ascending; missing goes last."""
 
         def _key(m: dict) -> int:
-            ms = _iso_to_ms(m.get("reaction_created_at"))
+            ms = _iso_to_ms(m.get("activity_time_iso"))
             return ms if ms is not None else 2**63
 
         metas.sort(key=_key)
@@ -194,7 +194,7 @@ def _get_posts_for_period(
         for m in metas:
             if m.get("reaction_time") or m.get("post_time"):
                 continue
-            iso = (m.get("reaction_created_at") or "").strip()
+            iso = (m.get("activity_time_iso") or "").strip()
             if iso:
                 m["reaction_time"] = iso
             m["post_time"] = (m.get("post_created_at") or "").strip() or "unknown"
@@ -265,12 +265,12 @@ def _format_post_for_prompt(
     # Always show temporal context when we have it (enables "late news" assessment)
     rt = (m.get("reaction_time") or "").strip()
     pt = (m.get("post_time") or "").strip() or "unknown"
-    if rt or pt or "reaction_created_at" in m or "post_created_at" in m:
-        if not rt and (m.get("reaction_created_at") or "").strip():
-            rt = (m.get("reaction_created_at") or "").strip()
+    if rt or pt or "activity_time_iso" in m or "post_created_at" in m:
+        if not rt and (m.get("activity_time_iso") or "").strip():
+            rt = (m.get("activity_time_iso") or "").strip()
         if not pt and m.get("post_created_at"):
             pt = (m.get("post_created_at") or "").strip() or "unknown"
-        time_part = f"Reacted: {rt or 'unknown'} | Posted: {pt or 'unknown'}"
+        time_part = f"Activity: {rt or 'unknown'} | Posted: {pt or 'unknown'}"
         tag_part = f"{tag_part} | {time_part}" if tag_part else time_part
 
     if content_level == CONTENT_LEVEL_MINIMAL:
@@ -320,7 +320,7 @@ def _batches_by_char_limit(
 _BATCH_SYSTEM = (
     "You are a concise analyst. Summarize the following LinkedIn posts in 2–4 sentences. "
     "Highlight main themes, recurring topics, and any patterns. "
-    "Each post includes 'Reacted: <date>' and 'Posted: <date>' (or 'unknown'). "
+    "Each post includes 'Activity: <date>' and 'Posted: <date>' (or 'unknown'). "
     "Take temporality into account: if a post was published several weeks before the user reacted to it, "
     "add a brief note that it is 'late news' and assess whether it is still relevant. "
     "Posts are ordered by reaction time (earliest first). Output plain text, no preamble."
@@ -362,7 +362,7 @@ def _format_other_section(
 
 _SINGLE_PASS_SYSTEM = (
     "You are a concise analyst. The user shares LinkedIn posts from a specific period. "
-    "Each post includes 'Reacted: <date>' and 'Posted: <date>' (or 'unknown'), plus URL, category/tags, "
+    "Each post includes 'Activity: <date>' and 'Posted: <date>' (or 'unknown'), plus URL, category/tags, "
     "and optionally summary or full content.\n\n"
     """Produce a markdown report with:
 1. One section per category: Product announcements, Tutorials & how-to, Opinion & hot takes,

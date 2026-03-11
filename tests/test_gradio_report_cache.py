@@ -120,7 +120,7 @@ class TestReportPromptDebug:
             "post_time": "2025-02-15T10:00:00+0000",
         }
         formatted = _format_post_for_prompt(meta, CONTENT_LEVEL_SUMMARY)
-        assert "Reacted: 2025-03-01T12:00:00+0000" in formatted
+        assert "Activity: 2025-03-01T12:00:00+0000" in formatted
         assert "Posted: 2025-02-15T10:00:00+0000" in formatted
 
     def test_prompt_file_in_tmp_path_not_user_home(self, tmp_path):

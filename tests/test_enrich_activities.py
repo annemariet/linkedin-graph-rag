@@ -56,7 +56,7 @@ class TestEnrichSavesTimestamps:
 
         meta = load_metadata(urn)
         assert meta is not None
-        assert meta.get("reaction_created_at") == "2023-11-14T22:13:20+00:00"
+        assert meta.get("activity_time_iso") == "2023-11-14T22:13:20+00:00"
         assert meta.get("post_created_at") == post_created
 
     def test_activities_without_timestamps_save_none(self):
@@ -74,5 +74,5 @@ class TestEnrichSavesTimestamps:
 
         meta = load_metadata(urn)
         assert meta is not None
-        assert meta.get("reaction_created_at") in (None, "")
+        assert meta.get("activity_time_iso") in (None, "")
         assert meta.get("post_created_at") in (None, "")
