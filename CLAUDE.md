@@ -206,8 +206,8 @@ Web UI for GraphRAG queries:
 - Respects `$PORT` for cloud deployment (Scalingo)
 
 #### `linkedin_api/utils/urls.py`
-URL extraction and categorization utilities (extracted from `extract_resources.py`):
-- `extract_urls_from_text()`, `categorize_url()`, `should_ignore_url()`, `resolve_redirect()`
+URL extraction and categorization utilities:
+- `extract_urls_from_text()`, `is_comment_feed_url()`, `should_ignore_url()`, `resolve_redirect()`
 
 #### `linkedin_api/utils/urns.py`
 URN parsing and URL conversion:

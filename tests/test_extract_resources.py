@@ -3,12 +3,13 @@
 from unittest.mock import MagicMock, patch
 import pytest
 
+from linkedin_api.utils.urls import extract_urls_from_text
+
 from linkedin_api.extract_resources import (
-    extract_urls_from_text,
     categorize_url,
-    should_ignore_url,
-    resolve_redirect,
     extract_title_from_url,
+    resolve_redirect,
+    should_ignore_url,
 )
 
 
