@@ -1,7 +1,9 @@
-"""Tests for comment vs post routing (_is_comment_like_activity and extraction_preview)."""
+"""Tests for comment vs post routing (_is_comment_like_activity and extract_entities_and_relationships)."""
 
-from linkedin_api.extract_graph_data import _is_comment_like_activity
-from linkedin_api.extraction_preview import extract_element_preview
+from linkedin_api.extract_graph_data import (
+    _is_comment_like_activity,
+    extract_entities_and_relationships,
+)
 
 
 def test_is_comment_like_activity_comment_shape_returns_true():
@@ -27,7 +29,7 @@ def test_is_comment_like_activity_no_message_returns_false():
 
 
 def test_comment_like_under_post_resource_routes_to_comment():
-    """When resourceName is ugcPosts but activity is comment-like, primary is 'comment'."""
+    """When resourceName is ugcPosts but activity is comment-like, routes to process_comment."""
     element = {
         "resourceName": "ugcPosts",
         "actor": "urn:li:person:abc",
@@ -38,8 +40,7 @@ def test_comment_like_under_post_resource_routes_to_comment():
             "created": {"time": 1766750428159},
         },
     }
-    result = extract_element_preview(element)
-    assert result["extracted"]["primary"] == "comment"
-    nodes = result["extracted"]["nodes"]
+    result = extract_entities_and_relationships([element])
+    nodes = result["nodes"]
     comment_nodes = [n for n in nodes if n.get("label") == "Comment"]
     assert len(comment_nodes) >= 1
