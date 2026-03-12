@@ -308,6 +308,11 @@ Data directory:
 LINKEDIN_DATA_DIR=~/.linkedin_api/data  # Default; master CSV lives here
 ```
 
+Report/prompt cache (Gradio pipeline):
+```bash
+REPORT_CACHE_MAX_ENTRIES=100  # Max cached reports and prompts; evict by hits (default 100)
+```
+
 Linked content fetch (fetch_linked_content, resolve_redirect):
 ```bash
 REQUESTS_SSL_VERIFY=true  # Set to false to skip SSL verification for sites with cert issues (use with caution)
