@@ -45,7 +45,7 @@ from linkedin_api.analyze_activity import (
     print_statistics,
     save_statistics,
 )
-from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urls import extract_urls_from_text
 
 # Resource type constants
 RESOURCE_REACTIONS = "socialActions/likes"

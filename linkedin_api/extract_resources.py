@@ -18,6 +18,8 @@ import requests
 from bs4 import BeautifulSoup
 from neo4j import GraphDatabase
 
+from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
+
 
 # When set (1, true, yes), use only content from API/Neo4j; never read LinkedIn post URLs.
 USE_API_CONTENT_ONLY = os.getenv("USE_API_CONTENT_ONLY", "").lower() in (
@@ -25,11 +27,6 @@ USE_API_CONTENT_ONLY = os.getenv("USE_API_CONTENT_ONLY", "").lower() in (
     "true",
     "yes",
 )
-
-
-def _is_comment_feed_url(url: str) -> bool:
-    """True if URL is a feed/update with a comment URN (not a post); such URLs don't return post content."""
-    return bool(url and "urn:li:comment:" in url)
 
 
 def fetch_post_content_from_url(url: str) -> Optional[str]:
@@ -87,39 +84,6 @@ def fetch_post_content_from_url(url: str) -> Optional[str]:
         return None
     except Exception:
         return None
-
-
-def extract_urls_from_text(text: str) -> List[str]:
-    """
-    Extract all URLs from text using regex.
-
-    Args:
-        text: Text content to search for URLs
-
-    Returns:
-        List of unique URLs found
-    """
-    if not text:
-        return []
-
-    # URL pattern - matches http/https URLs
-    url_pattern = r"https?://[^\s<>\"'{}|\\^`\[\]]+[^\s<>\"'{}|\\^`\[\].,;:!?]"
-    urls = re.findall(url_pattern, text)
-
-    # Clean up URLs (remove trailing punctuation that might have been captured)
-    cleaned_urls = []
-    for url in urls:
-        # Remove trailing punctuation
-        url = url.rstrip(".,;:!?)")
-        # Ensure URL is valid
-        try:
-            parsed = urlparse(url)
-            if parsed.netloc:  # Has a valid domain
-                cleaned_urls.append(url)
-        except Exception:
-            continue
-
-    return list(set(cleaned_urls))  # Return unique URLs
 
 
 def categorize_url(url: str) -> Dict[str, Optional[str]]:
@@ -629,7 +593,7 @@ def extract_resources_from_json(json_file: str) -> Dict[str, Dict[str, List[str]
                 # Fallback 2: fetch from post URL only if allowed and content missing/truncated
                 if (not urls or is_truncated) and not USE_API_CONTENT_ONLY:
                     post_url = props.get("url", "")
-                    if post_url and not _is_comment_feed_url(post_url):
+                    if post_url and not is_comment_feed_url(post_url):
                         print(f"   🔄 Fetching content from post URL: {post_url}")
                         full_content = fetch_post_content_from_url(post_url)
                         if full_content:
@@ -781,7 +745,7 @@ def enrich_posts_with_resources(
             # Fallback: fetch from post URL only if allowed and content missing/truncated
             if (not urls or is_truncated) and not USE_API_CONTENT_ONLY:
                 post_url = post.get("url")
-                if post_url and not _is_comment_feed_url(post_url):
+                if post_url and not is_comment_feed_url(post_url):
                     print(f"   🔄 Fetching content from post URL: {post_url}")
                     full_content = fetch_post_content_from_url(post_url)
                     if full_content:

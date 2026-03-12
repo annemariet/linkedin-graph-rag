@@ -28,7 +28,7 @@ from linkedin_api.content_store import (
     save_content,
     save_metadata,
 )
-from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
@@ -60,11 +60,6 @@ def _parse_content_from_html(html: str) -> str:
         if " | " in t:
             content_text.append(t.split(" | ")[0])
     return "\n".join(content_text) if content_text else ""
-
-
-def _is_comment_feed_url(url: str) -> bool:
-    """True if URL targets a comment (not a post); skip for content extraction."""
-    return bool(url and "urn:li:comment:" in url)
 
 
 def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
@@ -149,7 +144,7 @@ def enrich_activities(
         a
         for a in activities
         if a.get("post_url")
-        and not _is_comment_feed_url(a.get("post_url", ""))
+        and not is_comment_feed_url(a.get("post_url", ""))
         and not has_metadata(a.get("post_urn", ""))
     ]
     if limit:
@@ -179,7 +174,7 @@ def enrich_activities_streaming(
         a
         for a in activities
         if a.get("post_url")
-        and not _is_comment_feed_url(a.get("post_url", ""))
+        and not is_comment_feed_url(a.get("post_url", ""))
         and not has_metadata(a.get("post_urn", ""))
     ]
     if limit:

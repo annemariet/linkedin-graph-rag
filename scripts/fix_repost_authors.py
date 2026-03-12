@@ -9,8 +9,8 @@ CREATES/REPOSTS from the original author and ensures REPOSTS from the correct
 reposter (from the JSON).
 
 Usage:
-  uv run python -m linkedin_api.fix_repost_authors [path_to_neo4j_data.json]
-  uv run python -m linkedin_api.fix_repost_authors  # uses latest in outputs/
+  uv run python scripts/fix_repost_authors [path_to_neo4j_data.json]
+  uv run python scripts/fix_repost_authors  # uses latest in outputs/
 
 Options:
   --dry-run  Report what would be changed without writing.
@@ -41,12 +41,7 @@ def load_extraction_json(path: Path) -> dict:
 
 
 def build_reposter_map(data: dict) -> dict:
-    """
-    Build map repost_share_urn -> reposter_urn from extraction JSON.
-
-    Repost shares are Post nodes with original_post_urn. In the fixed extraction,
-    REPOSTS from person to repost_share links the reposter.
-    """
+    """Build map repost_share_urn -> reposter_urn from extraction JSON."""
     nodes = data.get("nodes", [])
     relationships = data.get("relationships", [])
     repost_shares = set()
@@ -97,9 +92,7 @@ def get_current_author_of_post(driver, post_urn: str) -> Optional[str]:
 def fix_repost_author(
     driver, post_urn: str, correct_reposter_urn: str, dry_run: bool
 ) -> bool:
-    """
-    Remove existing CREATES/REPOSTS from any Person to this post, then MERGE (reposter)-[:REPOSTS]->(post).
-    """
+    """Remove existing CREATES/REPOSTS, then MERGE (reposter)-[:REPOSTS]->(post)."""
     if dry_run:
         return True
     person_id = (
@@ -145,16 +138,15 @@ def main():
     if args.json_path:
         path = Path(args.json_path)
     else:
-        # Check outputs/ relative to script location and git root
-        script_dir = Path(__file__).resolve().parent.parent
-        candidates = [script_dir / "outputs"]
-        # Try to find git root and check outputs/ there
+        # outputs/ relative to repo root
+        repo_root = Path(__file__).resolve().parent.parent
+        candidates = [repo_root / "outputs"]
         try:
             import subprocess
 
             git_root = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"],
-                cwd=script_dir,
+                cwd=repo_root,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -175,9 +167,9 @@ def main():
             print(
                 "No neo4j_data_*.json found in outputs/. Run extract_graph_data first."
             )
-            print("If running from a worktree, specify the path explicitly:")
+            print("Specify the path explicitly:")
             print(
-                "  python -m linkedin_api.fix_repost_authors /path/to/neo4j_data_*.json"
+                "  uv run python scripts/fix_repost_authors /path/to/neo4j_data_*.json"
             )
             if checked:
                 print(f"Checked: {', '.join(checked)}")

@@ -91,7 +91,7 @@ This installs Python 3.12 (if needed) and all dependencies.
 **Recommended: Store in Keychain (macOS)**
 
 ```bash
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 ```
 
 This securely stores your token in macOS Keychain.
@@ -253,6 +253,18 @@ uv run python -m linkedin_api.build_graph   # merges by default
 uv run python -m linkedin_api.analyze_activity
 ```
 
+### Scripts (`scripts/`)
+
+| Script | Purpose |
+|--------|---------|
+| `setup_token.py` | Store LinkedIn token in keyring |
+| `check_token.py` | Validate token without exposing it |
+| `migrate_comment_urns.py` | Fix Comment URN format in Neo4j (`--dry-run` supported) |
+| `fix_repost_authors.py` | Fix repost authors from re-extracted JSON |
+| `verify_vertex_ai.py` | Smoke-test Vertex AI connectivity |
+
+Run with `uv run python scripts/<name>.py`.
+
 ## Graph Schema
 
 ### Nodes
@@ -359,13 +371,13 @@ RETURN post, resource, person, comment, ref, creates, comments
 If you see `401 Unauthorized` or `EXPIRED_ACCESS_TOKEN`:
 
 1. Get a new token from: https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t
-2. Update it: `uv run python setup_token.py`
+2. Update it: `uv run python scripts/setup_token.py`
 
 ### Neo4j Connection Issues
 
 ```bash
-# Check connection
-uv run python check_token.py
+# Check LinkedIn token
+uv run python scripts/check_token.py
 
 # Verify Neo4j is running
 # Check NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD environment variables

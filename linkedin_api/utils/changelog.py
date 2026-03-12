@@ -111,7 +111,8 @@ def fetch_changelog_data(
         if verbose:
             print("❌ LINKEDIN_ACCESS_TOKEN not found")
             print(
-                "   Run 'uv run setup_token.py' to store it in Keychain, or set it as an environment variable"
+                "   Run 'uv run python scripts/setup_token.py' to store it in Keychain,"
+                " or set it as an environment variable"
             )
         return []
 
