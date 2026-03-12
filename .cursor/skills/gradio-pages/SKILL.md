@@ -14,8 +14,8 @@ Handlers that update the UI must return **quickly** (< ~1s). If a user action tr
 - Or run slow work in a **background thread** and update outputs when done (if Gradio supports it for your flow).
 
 **Don’t:**
-- Run fetch + thumbnail + format in the same handler that’s supposed to show the first item.
-- Call slow helpers (e.g. `fetch_post_page`, `get_thumbnail_path_for_url`) inside Load or Navigate handlers "for convenience." Prefer on-demand (e.g. "Extract author", "Load thumbnail").
+- Run fetch + heavy compute in the same handler that’s supposed to show the first item.
+- Call slow helpers (e.g. `fetch_post_page`, slow helpers (e.g. HTTP fetch)) inside Load or Navigate handlers "for convenience." Prefer on-demand (e.g. "Extract author", "Load thumbnail").
 
 ## One Expensive Operation per Explicit Action
 
@@ -35,11 +35,11 @@ So: **split "author" and "thumbnail"** into separate code paths. Thumbnail can b
 
 - Keep UI state in `gr.State`; create the State **inside** `gr.Blocks()` so Gradio treats it as a component.
 - Ensure each button/action has a **single** handler that does one thing. Avoid chains that re-run the same slow logic multiple times (e.g. multiple handlers updating the same outputs with the same heavy call).
-- When navigating (Prev/Next), prefer updating from already-loaded state (e.g. queue in State). Optionally run lightweight work (e.g. render from cache); defer heavy work (fetch, thumbnail) to explicit user actions.
+- When navigating (Prev/Next), prefer updating from already-loaded state (e.g. queue in State). Defer heavy work to explicit user actions.
 
 ## Checklist Before Shipping
 
 - [ ] Load / first paint returns in &lt; ~2 s with real data (or clear "Loading…" / placeholder).
-- [ ] No single click runs both HTTP fetch and Playwright (or other multi-second work) unless the user explicitly asked for both.
+- [ ] No single click runs multiple multi-second operations unless the user explicitly asked for them.
 - [ ] Terminal shows progress (logs) during long operations.
 - [ ] How to stop the app is obvious (e.g. "Press Ctrl+C in the terminal" in the UI or README).
