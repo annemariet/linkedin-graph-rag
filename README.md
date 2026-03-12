@@ -127,7 +127,7 @@ NEO4J_DATABASE=neo4j
 To use only Portability API and Neo4j data, without any HTTP requests to post URLs:
 
 - **`USE_API_CONTENT_ONLY=1`** – Use only content from the Portability API/Neo4j for indexing and resource extraction. Never fetch post URLs for content.
-- **`ENABLE_AUTHOR_ENRICHMENT=0`** – Disable author name/profile enrichment (no HTTP requests to LinkedIn post pages). Build graph and `enrich_profiles` will skip author fetch; Gradio review will show "Author enrichment disabled".
+- **`ENABLE_AUTHOR_ENRICHMENT=0`** – Disable author name/profile enrichment (no HTTP requests to LinkedIn post pages). Build graph and `enrich_profiles` will skip author fetch.
 
 By default, content is taken from the API first; URL fetch is only used when content is missing (e.g. legacy data). Author enrichment is enabled by default.
 
@@ -262,6 +262,8 @@ uv run python -m linkedin_api.analyze_activity
 | `migrate_comment_urns.py` | Fix Comment URN format in Neo4j (`--dry-run` supported) |
 | `fix_repost_authors.py` | Fix repost authors from re-extracted JSON |
 | `verify_vertex_ai.py` | Smoke-test Vertex AI connectivity |
+| `urn_to_url_example.py` | Example: URN to URL conversion |
+| `validate_urn_urls.py` | Validate URN-to-URL conversions (HTTP) |
 
 Run with `uv run python scripts/<name>.py`.
 

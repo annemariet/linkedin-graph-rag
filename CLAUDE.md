@@ -97,7 +97,7 @@ uv run black .
 uv run black --check .
 
 # Run flake8
-uv run flake8 linkedin_api tests examples *.py
+uv run flake8 linkedin_api tests scripts *.py
 
 # Run type checking with mypy
 uv run mypy linkedin_api
@@ -380,6 +380,6 @@ The project supports Scalingo deployment via Gradio:
 - Coverage configured to omit test files and examples
 - CI/CD via GitHub Actions (`.github/workflows/python-package.yml`)
 
-## DNS / VPN and GCP
+## Vertex AI
 
-For VPN-related DNS issues with Vertex AI, see `DNS_VPN_FIX.md`. Use `uv run python scripts/verify_vertex_ai.py` to smoke-test Vertex AI.
+Use `uv run python scripts/verify_vertex_ai.py` to smoke-test Vertex AI connectivity.
