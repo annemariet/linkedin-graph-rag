@@ -344,7 +344,7 @@ uv run python scripts/setup_token.py
 - Flake8 linting (ignores E203, W503)
 - Type hints preferred (mypy configured but non-blocking)
 - Pre-commit hooks enforce formatting and conventional commits
-- **Commits:** Use conventional commits with gitmoji (e.g. ✨ feat, 🐛 fix, ♻️ refactor). See https://gitmoji.dev/ and `.cursor/skills/github-use/SKILL.md`
+- **Commits:** Use conventional commits with gitmoji (e.g. ✨ feat, 🐛 fix, ♻️ refactor). Commit after each small logical change — one commit per coherent change, not a batch at the end. See https://gitmoji.dev/
 
 ### Module Design Principles
 1. **Guard main execution**: All scripts use `if __name__ == "__main__":`
