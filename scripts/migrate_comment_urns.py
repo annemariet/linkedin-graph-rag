@@ -11,9 +11,13 @@ This script:
 3. Reconstructs correct URN from parent URN and comment_id
 4. Updates Comment node URN and URL
 5. Updates all relationships that reference the old URN
+
+Usage:
+  uv run python scripts/migrate_comment_urns.py [--dry-run]
 """
 
 import os
+import sys
 from typing import Dict, List
 
 from dotenv import load_dotenv
@@ -92,15 +96,6 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
     - Comment node URN
     - Comment node URL
     - All relationships that reference the old URN
-
-    Args:
-        driver: Neo4j driver
-        old_urn: The old (incorrect) URN
-        new_urn: The new (correct) URN
-        comment_url: The comment URL (parent post URL)
-
-    Returns:
-        True if migration succeeded, False otherwise
     """
     with driver.session(database=NEO4J_DATABASE) as session:
         # Check if new URN already exists
@@ -110,7 +105,6 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
 
         if existing_count > 0:
             print(f"   ⚠️  New URN already exists, merging properties...")
-            # Merge properties from old to new
             merge_query = """
             MATCH (old:Comment {urn: $old_urn})
             MATCH (new:Comment {urn: $new_urn})
@@ -119,7 +113,6 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
             SET new.url = $comment_url
             CALL {
                 WITH old, new
-                // Migrate outgoing relationships (Comment -> Post/Comment)
                 MATCH (old)-[r:COMMENTS_ON]->(end)
                 MERGE (new)-[r2:COMMENTS_ON]->(end)
                 SET r2 = properties(r)
@@ -128,7 +121,6 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
             }
             CALL {
                 WITH old, new
-                // Migrate incoming relationships (Person -> Comment)
                 MATCH (start)-[r:CREATES]->(old)
                 MERGE (start)-[r2:CREATES]->(new)
                 SET r2 = properties(r)
@@ -137,7 +129,6 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
             }
             CALL {
                 WITH old, new
-                // Migrate reactions targeting the comment (Person -> Comment)
                 MATCH (start)-[r:REACTS_TO]->(old)
                 MERGE (start)-[r2:REACTS_TO]->(new)
                 SET r2 = properties(r)
@@ -153,7 +144,6 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
             )
             return result.single() is not None
 
-        # Step 1: Update the node URN and URL
         update_query = """
         MATCH (comment:Comment {urn: $old_urn})
         SET comment.urn = $new_urn,
@@ -163,23 +153,11 @@ def migrate_comment_urn(driver, old_urn: str, new_urn: str, comment_url: str) ->
         result = session.run(
             update_query, old_urn=old_urn, new_urn=new_urn, comment_url=comment_url
         )
-        if not result.single():
-            return False
-
-        # Step 2: Update relationships (they should automatically reference the updated node)
-        # Neo4j relationships are stored by node identity, not URN, so they should
-        # automatically point to the updated node. But let's verify by checking relationship counts.
-        return True
+        return result.single() is not None
 
 
 def migrate_all_comments(driver, dry_run: bool = False):
-    """
-    Migrate all Comment nodes with incorrect URNs.
-
-    Args:
-        driver: Neo4j driver
-        dry_run: If True, only report what would be migrated without making changes
-    """
+    """Migrate all Comment nodes with incorrect URNs."""
     print("🔍 Checking reaction coverage for migration context...")
     reaction_counts_query = """
     MATCH ()-[r:REACTS_TO]->(target)
@@ -256,8 +234,6 @@ def migrate_all_comments(driver, dry_run: bool = False):
 
 def main():
     """Main function to migrate comment URNs."""
-    import sys
-
     dry_run = "--dry-run" in sys.argv
 
     print("🔄 LinkedIn Comment URN Migration")
@@ -266,7 +242,6 @@ def main():
     if dry_run:
         print("⚠️  DRY RUN MODE - No changes will be made\n")
 
-    # Connect to Neo4j
     print("🔌 Connecting to Neo4j...")
     print(f"   URI: {NEO4J_URI}")
     print(f"   Database: {NEO4J_DATABASE}")
@@ -280,7 +255,6 @@ def main():
         print(f"   ❌ Connection failed: {e}")
         return
 
-    # Migrate comments
     migrate_all_comments(driver, dry_run=dry_run)
 
     driver.close()

@@ -11,6 +11,60 @@ A Python client for extracting LinkedIn activity data from the **Member Data Por
 - ✅ Build Neo4j knowledge graph
 - ✅ Query graph with GraphRAG
 
+## Data Flow
+
+Data flows through two pipelines: **CLI (GraphRAG)** and **UI (report)**. Both use the LinkedIn Portability API but differ in storage, processing, and output.
+
+### CLI pipeline (GraphRAG)
+
+```
+LinkedIn API → extract_graph_data → CSV + JSON → build_graph → Neo4j
+    → enrich_graph (opt) → index_content → query_graphrag
+```
+
+- **Storage:** Master CSV (`~/.linkedin_api/data/activities.csv`), Neo4j
+- **Fetch:** Full changelog each run (or `--start-date`)
+- **Output:** Semantic search over indexed content (vector + graph traversal)
+
+### UI pipeline (Gradio Pipeline tab)
+
+```
+LinkedIn API → changelog_cache → summarize_activity → activities.json
+    → enrich_activities → content_store → summarize_posts → Report
+```
+
+- **Storage:** `changelog_cache.json`, `content_store/` (Markdown + metadata)
+- **Fetch:** Incremental (only new items since last run); period-filtered (7d, 14d…)
+- **Output:** Markdown activity report (LLM-summarized by category)
+
+### Key differences
+
+| Aspect | CLI | UI (Pipeline tab) |
+|--------|-----|------------------|
+| Data source | Portability API (full fetch) | Same API (incremental via cache) |
+| Storage | CSV → Neo4j | JSON → content_store (filesystem) |
+| Graph | Neo4j with People, Posts, Comments | No graph; flat content store |
+| Output | GraphRAG queries | Markdown report |
+| Query | `query_graphrag` (CLI or Gradio GraphRAG tab) | Report only |
+
+### GraphRAG tab (UI)
+
+The Gradio **GraphRAG query** tab uses the same backend as CLI `query_graphrag`. It reads from Neo4j and requires the CLI pipeline (`extract_graph_data` → `build_graph` → `index_content`) to have been run first.
+
+### Diagrams
+
+```mermaid
+flowchart LR
+    API[LinkedIn API] --> CLI[extract_graph_data]
+    API --> UI[summarize_activity]
+    CLI --> CSV[CSV + Neo4j]
+    CLI --> GRAG[query_graphrag]
+    UI --> STORE[content_store]
+    UI --> RPT[Report]
+```
+
+Full flow diagrams in `docs/diagrams/` (Mermaid): `data-flow-cli.mmd`, `data-flow-ui.mmd`, `data-flow-overview.mmd`
+
 ## Setup
 
 ### 1. Install Dependencies
@@ -37,7 +91,7 @@ This installs Python 3.12 (if needed) and all dependencies.
 **Recommended: Store in Keychain (macOS)**
 
 ```bash
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 ```
 
 This securely stores your token in macOS Keychain.
@@ -73,7 +127,7 @@ NEO4J_DATABASE=neo4j
 To use only Portability API and Neo4j data, without any HTTP requests to post URLs:
 
 - **`USE_API_CONTENT_ONLY=1`** – Use only content from the Portability API/Neo4j for indexing and resource extraction. Never fetch post URLs for content.
-- **`ENABLE_AUTHOR_ENRICHMENT=0`** – Disable author name/profile enrichment (no HTTP requests to LinkedIn post pages). Build graph and `enrich_profiles` will skip author fetch; Gradio review will show "Author enrichment disabled".
+- **`ENABLE_AUTHOR_ENRICHMENT=0`** – Disable author name/profile enrichment (no HTTP requests to LinkedIn post pages). Build graph and `enrich_profiles` will skip author fetch.
 
 By default, content is taken from the API first; URL fetch is only used when content is missing (e.g. legacy data). Author enrichment is enabled by default.
 
@@ -95,20 +149,16 @@ uv run python -m linkedin_api.extract_graph_data
 - Extracts relationships: CREATES, REPOSTS, REACTS_TO, COMMENTS_ON, etc.
 - Saves to `neo4j_data_YYYYMMDD_HHMMSS.json`
 
-**Output:** `neo4j_data_*.json` file with nodes and relationships ready for Neo4j import.
+**Output:** Master CSV (`~/.linkedin_api/data/activities.csv`) and optionally `neo4j_data_*.json`.
 
 #### Step 2: Build Graph in Neo4j
 
-Load the extracted data into Neo4j and enrich with additional information:
-
-```bash
-uv run python -m linkedin_api.build_graph neo4j_data_YYYYMMDD_HHMMSS.json
-```
-
-Or use the most recent file automatically:
+Load from CSV (default) or JSON:
 
 ```bash
 uv run python -m linkedin_api.build_graph
+# or from legacy JSON:
+uv run python -m linkedin_api.build_graph --json-file outputs/neo4j_data_*.json
 ```
 
 **What it does:**
@@ -133,9 +183,13 @@ uv run python -m linkedin_api.build_graph
 uv run python -m linkedin_api.build_graph --full-rebuild
 ```
 
-#### Step 3: Query the Graph
+#### Step 3: Index content (for GraphRAG)
 
-Query the graph using GraphRAG:
+```bash
+uv run python -m linkedin_api.index_content
+```
+
+#### Step 4: Query the Graph
 
 ```bash
 uv run python -m linkedin_api.query_graphrag
@@ -143,12 +197,15 @@ uv run python -m linkedin_api.query_graphrag
 
 ## Scripts Overview
 
-### Main Scripts
+### Main Scripts (CLI pipeline)
 
-- **`extract_graph_data.py`** - Step 1: Fetch and extract graph data to JSON
-- **`build_graph.py`** - Step 2: Load JSON into Neo4j and enrich
-- **`query_graphrag.py`** - Query the graph with GraphRAG
-- **`analyze_activity.py`** - Analyze all LinkedIn activity (exploration tool)
+- **`extract_graph_data.py`** – Fetch and extract to CSV + JSON
+- **`build_graph.py`** – Load CSV/JSON into Neo4j, enrich (author, resources)
+- **`query_graphrag.py`** – GraphRAG semantic search
+- **`index_content.py`** – Chunk and embed for GraphRAG (run before querying)
+- **`enrich_graph.py`** – Optional LLM enrichment (Technology, Concept nodes)
+- **`gradio_app.py`** – Web UI: Pipeline tab (report) + GraphRAG tab
+- **`analyze_activity.py`** – Activity analysis (exploration)
 
 ### Utility Modules
 
@@ -158,27 +215,35 @@ uv run python -m linkedin_api.query_graphrag
 
 ## Usage Examples
 
-### Complete Workflow (First Time)
+### CLI: GraphRAG workflow
 
 ```bash
 # 1. Extract data
 uv run python -m linkedin_api.extract_graph_data
 
-# 2. Build graph (fresh)
+# 2. Build graph (from CSV by default)
 uv run python -m linkedin_api.build_graph
 
-# 3. Query graph
+# 3. Index content (required for GraphRAG)
+uv run python -m linkedin_api.index_content
+
+# 4. Query
 uv run python -m linkedin_api.query_graphrag
 ```
 
-### Incremental Update
+### UI: Report workflow
 
 ```bash
-# 1. Extract new data
-uv run python -m linkedin_api.extract_graph_data
+uv run python -m linkedin_api.gradio_app
+```
 
-# 2. Merge with existing graph (default behavior, preserves author info, resources)
-uv run python -m linkedin_api.build_graph
+Then use the **Pipeline** tab: set period (e.g. 7d), click "Get latest news report". Uses `changelog_cache` and `content_store`; no Neo4j. The **GraphRAG query** tab requires the CLI pipeline to have been run.
+
+### Incremental graph update
+
+```bash
+uv run python -m linkedin_api.extract_graph_data
+uv run python -m linkedin_api.build_graph   # merges by default
 ```
 
 ### Explore Activity Data
@@ -187,6 +252,20 @@ uv run python -m linkedin_api.build_graph
 # Analyze all LinkedIn activity (not just posts)
 uv run python -m linkedin_api.analyze_activity
 ```
+
+### Scripts (`scripts/`)
+
+| Script | Purpose |
+|--------|---------|
+| `setup_token.py` | Store LinkedIn token in keyring |
+| `check_token.py` | Validate token without exposing it |
+| `migrate_comment_urns.py` | Fix Comment URN format in Neo4j (`--dry-run` supported) |
+| `fix_repost_authors.py` | Fix repost authors from re-extracted JSON |
+| `verify_vertex_ai.py` | Smoke-test Vertex AI connectivity |
+| `urn_to_url_example.py` | Example: URN to URL conversion |
+| `validate_urn_urls.py` | Validate URN-to-URL conversions (HTTP) |
+
+Run with `uv run python scripts/<name>.py`.
 
 ## Graph Schema
 
@@ -294,13 +373,13 @@ RETURN post, resource, person, comment, ref, creates, comments
 If you see `401 Unauthorized` or `EXPIRED_ACCESS_TOKEN`:
 
 1. Get a new token from: https://www.linkedin.com/developers/tools/oauth?clientId=78bwhum7gz6t9t
-2. Update it: `uv run python setup_token.py`
+2. Update it: `uv run python scripts/setup_token.py`
 
 ### Neo4j Connection Issues
 
 ```bash
-# Check connection
-uv run python check_token.py
+# Check LinkedIn token
+uv run python scripts/check_token.py
 
 # Verify Neo4j is running
 # Check NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD environment variables

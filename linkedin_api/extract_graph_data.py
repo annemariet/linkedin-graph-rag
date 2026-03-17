@@ -45,7 +45,7 @@ from linkedin_api.analyze_activity import (
     print_statistics,
     save_statistics,
 )
-from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urls import extract_urls_from_text
 
 # Resource type constants
 RESOURCE_REACTIONS = "socialActions/likes"
@@ -60,7 +60,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def _add_trace(trace_list, json_path, value_used, field_name):
-    """Append a trace entry if trace_list is provided (for extraction preview)."""
+    """Append a trace entry if trace_list is provided."""
     if trace_list is not None:
         v = value_used
         if isinstance(v, (dict, list)):

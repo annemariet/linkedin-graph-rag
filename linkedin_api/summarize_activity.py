@@ -29,7 +29,7 @@ from linkedin_api.extract_graph_data import (
     extract_entities_and_relationships,
     get_all_post_activities,
 )
-from linkedin_api.extract_resources import extract_urls_from_text
+from linkedin_api.utils.urls import extract_urls_from_text
 from linkedin_api.utils.changelog import get_max_processed_at
 from linkedin_api.utils.urns import comment_urn_to_post_url, urn_to_post_url
 

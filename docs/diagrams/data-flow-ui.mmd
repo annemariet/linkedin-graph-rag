@@ -1,0 +1,13 @@
+flowchart TB
+    subgraph UI["UI Pipeline (Gradio Pipeline tab)"]
+        API2[LinkedIn Portability API]
+        API2 --> CACHE["changelog_cache.json\nIncremental fetch since last run"]
+        CACHE --> COLLECT["summarize_activity\ncollect_from_live"]
+        COLLECT --> ACTIVITIES["activities.json\nPeriod-filtered (7d, 14d…)"]
+        ACTIVITIES --> ENRICH_ACT["enrich_activities"]
+        ENRICH_ACT --> STORE["content_store/\nMarkdown + .meta.json"]
+        ENRICH_ACT --> FETCH_URL["fetch_linked_content"]
+        FETCH_URL --> STORE
+        STORE --> SUMMARIZE["summarize_posts\nLLM categorizes + summarizes"]
+        SUMMARIZE --> REPORT["generate_activity_report\nMarkdown report"]
+    end

@@ -14,4 +14,3 @@ venv/
 *.csv
 *.sqlite3
 *.db
-outputs/review/

@@ -117,4 +117,4 @@ So using a search engine **does not remove** the need to hit LinkedIn when we ne
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `USE_API_CONTENT_ONLY` | unset (use API first, allow URL fallback) | When `1`/`true`/`yes`: never fetch LinkedIn URLs for content. Indexing and resource extraction use only data from the API/Neo4j. |
-| `ENABLE_AUTHOR_ENRICHMENT` | `1` (enabled) | When `0`/`false`/`no`: skip all author name/profile fetching (no LinkedIn post page requests). Build graph, enrich_profiles CLI, and Gradio review UI will not call the author fetch. |
+| `ENABLE_AUTHOR_ENRICHMENT` | `1` (enabled) | When `0`/`false`/`no`: skip all author name/profile fetching (no LinkedIn post page requests). Build graph and enrich_profiles CLI will not call the author fetch. |
