@@ -71,8 +71,10 @@ class TestReportCache:
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
         assert data["report_cache_version"] == _REPORT_CACHE_VERSION
-        assert len(data["reports"]) == 1
-        assert data["reports"][0]["report"] == "test"
+        reports = data["reports"]
+        assert isinstance(reports, dict)
+        assert len(reports) == 1
+        assert list(reports.values())[0]["report"] == "test"
 
     def test_cache_does_not_exceed_max_entries(self, monkeypatch, tmp_path):
         """Adding more than max_entries distinct reports evicts lowest-hit and stays at limit."""
@@ -138,4 +140,6 @@ class TestReportPromptDebug:
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
         assert "prompts" in data
-        assert any("prompt" in str(e.get("prompts", [])) for e in data["prompts"])
+        prompts = data["prompts"]
+        assert isinstance(prompts, dict)
+        assert any("prompt" in str(v.get("prompts", [])) for v in prompts.values())

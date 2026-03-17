@@ -328,7 +328,7 @@ def _report_signature(
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
-_REPORT_CACHE_VERSION = 3
+_REPORT_CACHE_VERSION = 4
 _REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
 
 
@@ -341,10 +341,7 @@ def _get_report_cache_max_entries() -> int:
 
 
 def _sig_to_key(sig: ReportSignature) -> dict:
-    """Serialize signature to JSON-serializable dict for disk persistence.
-    Dict (not ReportSignature tuple) is required: cache is stored in JSON.
-    _key_matches provides custom equivalence (tuple=post set; max_full_post_chars
-    only when full; n/max_posts ignored when tuple matches)."""
+    """Serialize signature to JSON-serializable dict for disk persistence."""
     return {
         "model_id": sig[0],
         "n": sig[1],
@@ -354,6 +351,11 @@ def _sig_to_key(sig: ReportSignature) -> dict:
         "max_posts": sig[5],
         "max_full_post_chars": sig[6],
     }
+
+
+def _sig_to_cache_key(sig: ReportSignature) -> str:
+    """Canonical string key for O(1) dict lookup. Stable JSON serialization."""
+    return json.dumps(_sig_to_key(sig), sort_keys=True)
 
 
 def _key_matches(key: dict, sig: ReportSignature) -> bool:
@@ -382,13 +384,38 @@ def _format_prompt_debug_content(mode: str, system: str, prompts: list[str]) -> 
     return "\n".join(parts)
 
 
+def _prompts_list_to_dict(prompts_list: list) -> dict:
+    """Migrate v3 list format to dict keyed by canonical cache key."""
+    out: dict = {}
+    for e in prompts_list:
+        key = e.get("key", {})
+        ck = json.dumps(key, sort_keys=True)
+        out[ck] = {
+            "mode": e.get("mode", "?"),
+            "system": e.get("system", ""),
+            "prompts": e.get("prompts", []),
+            "hits": e.get("hits", 0),
+        }
+    return out
+
+
+def _reports_list_to_dict(reports_list: list) -> dict:
+    """Migrate v3 list format to dict keyed by canonical cache key."""
+    out: dict = {}
+    for e in reports_list:
+        key = e.get("key", {})
+        ck = json.dumps(key, sort_keys=True)
+        out[ck] = {"report": e.get("report", ""), "hits": e.get("hits", 0)}
+    return out
+
+
 def _save_report_prompt_debug(
     mode: str, system: str, prompts: list[str], sig: ReportSignature
 ) -> None:
-    """Save report prompt to multi-entry cache keyed by signature."""
+    """Save report prompt to multi-entry cache keyed by signature (O(1) lookup)."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     max_entries = _get_report_cache_max_entries()
-    key = _sig_to_key(sig)
+    cache_key = _sig_to_cache_key(sig)
     try:
         data: dict = {}
         if path.exists():
@@ -397,40 +424,25 @@ def _save_report_prompt_debug(
             except (json.JSONDecodeError, OSError):
                 pass
         if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
-            data = {"report_cache_version": _REPORT_CACHE_VERSION, "prompts": []}
-        prompts_list = data.setdefault("prompts", [])
-        existing = next(
-            (i for i, e in enumerate(prompts_list) if _key_matches(e["key"], sig)),
-            None,
-        )
-        if existing is not None:
-            prompts_list[existing] = {
-                "key": key,
-                "mode": mode,
-                "system": system,
-                "prompts": prompts,
-                "hits": prompts_list[existing].get("hits", 0),
-            }
-        else:
-            while len(prompts_list) >= max_entries:
-                idx = min(
-                    range(len(prompts_list)),
-                    key=lambda i: prompts_list[i].get("hits", 0),
-                )
-                prompts_list.pop(idx)
-            prompts_list.append(
-                {
-                    "key": key,
-                    "mode": mode,
-                    "system": system,
-                    "prompts": prompts,
-                    "hits": 0,
-                }
-            )
-        data["prompts"] = prompts_list
+            data = {"report_cache_version": _REPORT_CACHE_VERSION, "prompts": {}}
+        prompts_dict = data.get("prompts")
+        if isinstance(prompts_dict, list):
+            prompts_dict = _prompts_list_to_dict(prompts_dict)
+        prompts_dict = prompts_dict or {}
+        existing_hits = prompts_dict.get(cache_key, {}).get("hits", 0)
+        prompts_dict[cache_key] = {
+            "mode": mode,
+            "system": system,
+            "prompts": prompts,
+            "hits": existing_hits,
+        }
+        while len(prompts_dict) > max_entries:
+            loser = min(prompts_dict, key=lambda k: prompts_dict[k].get("hits", 0))
+            del prompts_dict[loser]
+        data["prompts"] = prompts_dict
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        logger.info("Report prompt saved to cache (key=%s)", key.get("model_id", "?"))
+        logger.info("Report prompt saved to cache (key=%s)", sig[0])
     except OSError as e:
         logger.warning("Could not save report prompt: %s", e)
 
@@ -448,10 +460,16 @@ def _load_report_prompt_debug(
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
             return "_No prompt cached for these params. Run the pipeline first._"
-        for entry in data.get("prompts", []):
-            if _key_matches(entry.get("key", {}), signature):
+        prompts_data = data.get("prompts")
+        if isinstance(prompts_data, list):
+            prompts_data = _prompts_list_to_dict(prompts_data)
+        if isinstance(prompts_data, dict):
+            cache_key = _sig_to_cache_key(signature)
+            entry = prompts_data.get(cache_key)
+            if entry:
                 entry["hits"] = entry.get("hits", 0) + 1
                 try:
+                    data["prompts"] = prompts_data
                     path.write_text(
                         json.dumps(data, ensure_ascii=False), encoding="utf-8"
                     )
@@ -470,7 +488,7 @@ def _load_report_prompt_debug(
 def _load_report_cache(
     sig: ReportSignature,
 ) -> tuple[str, ReportSignature] | None:
-    """Load cached report by full signature. Returns (report, sig) or None. Increments hits on match."""
+    """Load cached report by full signature (O(1) lookup). Returns (report, sig) or None."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
@@ -478,10 +496,16 @@ def _load_report_cache(
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
             return _load_report_cache_v2(path, sig)
-        for entry in data.get("reports", []):
-            if _key_matches(entry.get("key", {}), sig):
+        reports_data = data.get("reports")
+        if isinstance(reports_data, list):
+            reports_data = _reports_list_to_dict(reports_data)
+        if isinstance(reports_data, dict):
+            cache_key = _sig_to_cache_key(sig)
+            entry = reports_data.get(cache_key)
+            if entry:
                 entry["hits"] = entry.get("hits", 0) + 1
                 try:
+                    data["reports"] = reports_data
                     path.write_text(
                         json.dumps(data, ensure_ascii=False), encoding="utf-8"
                     )
@@ -532,10 +556,10 @@ def _load_report_cache_v2(
 
 
 def _save_report_cache(report: str, sig: ReportSignature) -> None:
-    """Persist report to multi-entry cache. Evicts lowest-hit entries when at max."""
+    """Persist report to multi-entry cache keyed by signature (O(1) lookup). Evicts lowest-hit when at max."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     max_entries = _get_report_cache_max_entries()
-    key = _sig_to_key(sig)
+    cache_key = _sig_to_cache_key(sig)
     try:
         data: dict = {}
         if path.exists():
@@ -546,26 +570,19 @@ def _save_report_cache(report: str, sig: ReportSignature) -> None:
         if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
             data = {
                 "report_cache_version": _REPORT_CACHE_VERSION,
-                "reports": [],
-                "prompts": data.get("prompts", []),
+                "reports": {},
+                "prompts": data.get("prompts", {}),
             }
-        reports = data.setdefault("reports", [])
-        existing = next(
-            (i for i, e in enumerate(reports) if _key_matches(e.get("key", {}), sig)),
-            None,
-        )
-        if existing is not None:
-            reports[existing] = {
-                "key": key,
-                "report": report,
-                "hits": reports[existing].get("hits", 0),
-            }
-        else:
-            while len(reports) >= max_entries:
-                idx = min(range(len(reports)), key=lambda i: reports[i].get("hits", 0))
-                reports.pop(idx)
-            reports.append({"key": key, "report": report, "hits": 0})
-        data["reports"] = reports
+        reports_dict = data.get("reports")
+        if isinstance(reports_dict, list):
+            reports_dict = _reports_list_to_dict(reports_dict)
+        reports_dict = reports_dict or {}
+        existing_hits = reports_dict.get(cache_key, {}).get("hits", 0)
+        reports_dict[cache_key] = {"report": report, "hits": existing_hits}
+        while len(reports_dict) > max_entries:
+            loser = min(reports_dict, key=lambda k: reports_dict[k].get("hits", 0))
+            del reports_dict[loser]
+        data["reports"] = reports_dict
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
