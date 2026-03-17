@@ -11,6 +11,7 @@ import logging
 import os
 import tempfile
 import time
+from pathlib import Path
 
 import dotenv
 
@@ -97,6 +98,8 @@ CONTENT_LEVEL_CHOICES = [
     (CONTENT_LEVEL_LABEL_SUMMARY, CONTENT_LEVEL_SUMMARY),
     (CONTENT_LEVEL_LABEL_FULL, CONTENT_LEVEL_FULL),
 ]
+
+ReportSignature = tuple[str, int, tuple[str, ...], str, str, int, int]
 
 
 def _default_max_posts(content_level: str) -> int:
@@ -268,13 +271,15 @@ def _generate_single_pass_report(
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
     report_provider: str | None = None,
     report_model: str | None = None,
+    sig: ReportSignature | None = None,
 ) -> str:
     """One LLM call: all posts with links; prompt asks for categorized report with links to key items."""
     blocks = "\n\n".join(
         _format_post_for_prompt(m, content_level, max_full_post_chars) for m in metas
     )
     prompt = f"Posts ({len(metas)} total):\n\n{blocks}"
-    _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt])
+    if sig is not None:
+        _save_report_prompt_debug("single-pass", _SINGLE_PASS_SYSTEM, [prompt], sig)
     llm = create_llm(
         stage="report",
         json_mode=False,
@@ -323,52 +328,203 @@ def _report_signature(
 
 
 _REPORT_CACHE_FILE = "report_cache.json"
-_REPORT_CACHE_VERSION = 2
+_REPORT_CACHE_VERSION = 4
 _REPORT_PROMPT_DEBUG_FILE = "report_prompt_last.md"
 
 
-def _save_report_prompt_debug(mode: str, system: str, prompts: list[str]) -> None:
-    """Save report prompt(s) to a local file for debugging. Viewable as Markdown."""
-    path = get_data_dir() / _REPORT_PROMPT_DEBUG_FILE
+def _get_report_cache_max_entries() -> int:
+    """Max cached reports and prompts. Configurable via REPORT_CACHE_MAX_ENTRIES (default 100)."""
     try:
-        parts = [
-            f"# Report prompt ({mode})\n\n## System instruction\n\n```\n{system}\n```\n"
-        ]
-        for i, p in enumerate(prompts):
-            sep = "\n\n---\n\n" if i > 0 else ""
-            parts.append(
-                f"{sep}## User prompt{' ' + str(i + 1) if len(prompts) > 1 else ''}\n\n```\n{p}\n```"
-            )
-        path.write_text("\n".join(parts), encoding="utf-8")
-        logger.info("Report prompt saved to %s", path)
+        return max(1, int(os.environ.get("REPORT_CACHE_MAX_ENTRIES", "100")))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _sig_to_key(sig: ReportSignature) -> dict:
+    """Serialize signature to JSON-serializable dict for disk persistence."""
+    return {
+        "model_id": sig[0],
+        "n": sig[1],
+        "summarized_at": list(sig[2]),
+        "report_mode": sig[3],
+        "content_level": sig[4],
+        "max_posts": sig[5],
+        "max_full_post_chars": sig[6],
+    }
+
+
+def _sig_to_cache_key(sig: ReportSignature) -> str:
+    """Canonical string key for O(1) dict lookup. Stable JSON serialization."""
+    return json.dumps(_sig_to_key(sig), sort_keys=True)
+
+
+def _key_matches(key: dict, sig: ReportSignature) -> bool:
+    """True if key matches signature."""
+    return (
+        key.get("model_id") == sig[0]
+        and key.get("n") == sig[1]
+        and tuple(key.get("summarized_at", [])) == sig[2]
+        and key.get("report_mode") == sig[3]
+        and key.get("content_level") == sig[4]
+        and key.get("max_posts") == sig[5]
+        and key.get("max_full_post_chars") == sig[6]
+    )
+
+
+def _format_prompt_debug_content(mode: str, system: str, prompts: list[str]) -> str:
+    """Format prompt debug as Markdown."""
+    parts = [
+        f"# Report prompt ({mode})\n\n## System instruction\n\n```\n{system}\n```\n"
+    ]
+    for i, p in enumerate(prompts):
+        sep = "\n\n---\n\n" if i > 0 else ""
+        parts.append(
+            f"{sep}## User prompt{' ' + str(i + 1) if len(prompts) > 1 else ''}\n\n```\n{p}\n```"
+        )
+    return "\n".join(parts)
+
+
+def _prompts_list_to_dict(prompts_list: list) -> dict:
+    """Migrate v3 list format to dict keyed by canonical cache key."""
+    out: dict = {}
+    for e in prompts_list:
+        key = e.get("key", {})
+        ck = json.dumps(key, sort_keys=True)
+        out[ck] = {
+            "mode": e.get("mode", "?"),
+            "system": e.get("system", ""),
+            "prompts": e.get("prompts", []),
+            "hits": e.get("hits", 0),
+        }
+    return out
+
+
+def _reports_list_to_dict(reports_list: list) -> dict:
+    """Migrate v3 list format to dict keyed by canonical cache key."""
+    out: dict = {}
+    for e in reports_list:
+        key = e.get("key", {})
+        ck = json.dumps(key, sort_keys=True)
+        out[ck] = {"report": e.get("report", ""), "hits": e.get("hits", 0)}
+    return out
+
+
+def _save_report_prompt_debug(
+    mode: str, system: str, prompts: list[str], sig: ReportSignature
+) -> None:
+    """Save report prompt to multi-entry cache keyed by signature (O(1) lookup)."""
+    path = get_data_dir() / _REPORT_CACHE_FILE
+    max_entries = _get_report_cache_max_entries()
+    cache_key = _sig_to_cache_key(sig)
+    try:
+        data: dict = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
+            data = {"report_cache_version": _REPORT_CACHE_VERSION, "prompts": {}}
+        prompts_dict = data.get("prompts")
+        if isinstance(prompts_dict, list):
+            prompts_dict = _prompts_list_to_dict(prompts_dict)
+        prompts_dict = prompts_dict or {}
+        existing_hits = prompts_dict.get(cache_key, {}).get("hits", 0)
+        prompts_dict[cache_key] = {
+            "mode": mode,
+            "system": system,
+            "prompts": prompts,
+            "hits": existing_hits,
+        }
+        while len(prompts_dict) > max_entries:
+            loser = min(prompts_dict, key=lambda k: prompts_dict[k].get("hits", 0))
+            del prompts_dict[loser]
+        data["prompts"] = prompts_dict
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        logger.info("Report prompt saved to cache (key=%s)", sig[0])
     except OSError as e:
         logger.warning("Could not save report prompt: %s", e)
 
 
-def _load_report_prompt_debug() -> str:
-    """Load last report prompt from file. Returns content or placeholder."""
-    path = get_data_dir() / _REPORT_PROMPT_DEBUG_FILE
+def _load_report_prompt_debug(
+    signature: ReportSignature | None = None,
+) -> str:
+    """Load prompt by signature. If None, returns placeholder."""
+    if signature is None:
+        return "_No report loaded. Run the pipeline, then view prompt._"
+    path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
-        return "_No prompt saved yet. Run the pipeline to generate a report._"
+        return "_No prompt cached for these params. Run the pipeline first._"
     try:
-        return path.read_text(encoding="utf-8")
-    except OSError:
-        return "_Could not read prompt file._"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
+            return "_No prompt cached for these params. Run the pipeline first._"
+        prompts_data = data.get("prompts")
+        if isinstance(prompts_data, list):
+            prompts_data = _prompts_list_to_dict(prompts_data)
+        if isinstance(prompts_data, dict):
+            cache_key = _sig_to_cache_key(signature)
+            entry = prompts_data.get(cache_key)
+            if entry:
+                entry["hits"] = entry.get("hits", 0) + 1
+                try:
+                    data["prompts"] = prompts_data
+                    path.write_text(
+                        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+                    )
+                except OSError:
+                    pass
+                return _format_prompt_debug_content(
+                    entry.get("mode", "?"),
+                    entry.get("system", ""),
+                    entry.get("prompts", []),
+                )
+        return "_No prompt cached for these params. Run the pipeline first._"
+    except (json.JSONDecodeError, OSError):
+        return "_Could not read prompt cache._"
 
 
 def _load_report_cache(
-    report_mode: str,
-    content_level: str,
-    max_posts: int,
-    max_full_post_chars: int,
-) -> tuple[str, tuple[str, int, tuple[str, ...], str, str, int, int]] | None:
-    """Load cached report from disk. Returns (report, signature) or None if params mismatch."""
+    sig: ReportSignature,
+) -> tuple[str, ReportSignature] | None:
+    """Load cached report by full signature (O(1) lookup). Returns (report, sig) or None."""
     path = get_data_dir() / _REPORT_CACHE_FILE
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
+            return _load_report_cache_v2(path, sig)
+        reports_data = data.get("reports")
+        if isinstance(reports_data, list):
+            reports_data = _reports_list_to_dict(reports_data)
+        if isinstance(reports_data, dict):
+            cache_key = _sig_to_cache_key(sig)
+            entry = reports_data.get(cache_key)
+            if entry:
+                entry["hits"] = entry.get("hits", 0) + 1
+                try:
+                    data["reports"] = reports_data
+                    path.write_text(
+                        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+                    )
+                except OSError:
+                    pass
+                report = entry.get("report", "")
+                return (report, sig) if report else None
+        return None
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _load_report_cache_v2(
+    path: Path, sig: ReportSignature
+) -> tuple[str, ReportSignature] | None:
+    """Backward compat: load from v2 single-entry format if key matches."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("report_cache_version", 0) != 2:
             return None
         model_id = data.get("model_id", "legacy")
         n = data.get("n", 0)
@@ -382,47 +538,53 @@ def _load_report_cache(
         cached_full_chars = data.get(
             "max_full_post_chars", REPORT_MAX_FULL_POST_CHARS_DEFAULT
         )
-        if (
-            cached_mode != report_mode
-            or cached_level != content_level
-            or cached_max != max_posts
-            or cached_full_chars != max_full_post_chars
-        ):
+        cached_sig: ReportSignature = (
+            model_id,
+            n,
+            at,
+            cached_mode,
+            cached_level,
+            cached_max,
+            cached_full_chars,
+        )
+        if not _key_matches(_sig_to_key(cached_sig), sig):
             return None
         report = data.get("report", "")
-        if not report:
-            return None
-        return (
-            report,
-            (model_id, n, at, cached_mode, cached_level, cached_max, cached_full_chars),
-        )
+        return (report, sig) if report else None
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _save_report_cache(
-    report: str, sig: tuple[str, int, tuple[str, ...], str, str, int, int]
-) -> None:
-    """Persist report and signature to disk so cache survives page refresh."""
+def _save_report_cache(report: str, sig: ReportSignature) -> None:
+    """Persist report to multi-entry cache keyed by signature (O(1) lookup). Evicts lowest-hit when at max."""
     path = get_data_dir() / _REPORT_CACHE_FILE
+    max_entries = _get_report_cache_max_entries()
+    cache_key = _sig_to_cache_key(sig)
     try:
-        path.write_text(
-            json.dumps(
-                {
-                    "report_cache_version": _REPORT_CACHE_VERSION,
-                    "model_id": sig[0],
-                    "n": sig[1],
-                    "summarized_at": list(sig[2]),
-                    "report_mode": sig[3],
-                    "content_level": sig[4],
-                    "max_posts": sig[5],
-                    "max_full_post_chars": sig[6],
-                    "report": report,
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+        data: dict = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        if data.get("report_cache_version", 0) < _REPORT_CACHE_VERSION:
+            data = {
+                "report_cache_version": _REPORT_CACHE_VERSION,
+                "reports": {},
+                "prompts": data.get("prompts", {}),
+            }
+        reports_dict = data.get("reports")
+        if isinstance(reports_dict, list):
+            reports_dict = _reports_list_to_dict(reports_dict)
+        reports_dict = reports_dict or {}
+        existing_hits = reports_dict.get(cache_key, {}).get("hits", 0)
+        reports_dict[cache_key] = {"report": report, "hits": existing_hits}
+        while len(reports_dict) > max_entries:
+            loser = min(reports_dict, key=lambda k: reports_dict[k].get("hits", 0))
+            del reports_dict[loser]
+        data["reports"] = reports_dict
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass
 
@@ -445,6 +607,14 @@ def generate_activity_report(
     all_metas.sort(key=lambda m: m.get("summarized_at") or "", reverse=True)
     limit = _resolve_max_posts(max_posts, content_level)
     metas = all_metas[:limit]
+    sig = _report_signature(
+        report_mode=report_mode,
+        content_level=content_level,
+        max_posts=max_posts,
+        max_full_post_chars=max_full_post_chars,
+        report_provider=report_provider,
+        report_model=report_model,
+    )
     if report_mode == REPORT_MODE_SINGLE_PASS:
         try:
             return _generate_single_pass_report(
@@ -453,6 +623,7 @@ def generate_activity_report(
                 max_full_post_chars=max_full_post_chars,
                 report_provider=report_provider,
                 report_model=report_model,
+                sig=sig,
             )
         except Exception as e:
             logger.exception("Single-pass report failed")
@@ -500,8 +671,10 @@ def generate_activity_report(
                 for batch in batches
             ]
             parts.append(f"## {label}\n\n" + "\n\n".join(batch_summaries))
-        if prompts_collected:
-            _save_report_prompt_debug("per-category", _BATCH_SYSTEM, prompts_collected)
+        if prompts_collected and sig is not None:
+            _save_report_prompt_debug(
+                "per-category", _BATCH_SYSTEM, prompts_collected, sig
+            )
         if not parts:
             return "No posts to summarize."
         return "\n\n".join(parts)
@@ -958,12 +1131,13 @@ def create_pipeline_interface():
             )
         report_cache_state = gr.State(value=None)  # (report_text, signature) or None
 
-        def load_prompt_debug():
-            return _load_report_prompt_debug()
+        def load_prompt_debug(cache_state):
+            sig = cache_state[1] if cache_state else None
+            return _load_report_prompt_debug(sig)
 
         prompt_debug_btn.click(
             fn=load_prompt_debug,
-            inputs=[],
+            inputs=[report_cache_state],
             outputs=[prompt_debug_output],
         )
 
@@ -1096,12 +1270,7 @@ def create_pipeline_interface():
                 report_provider=rep_prov or None,
                 report_model=rep_mod or None,
             )
-            disk = _load_report_cache(
-                report_mode=report_mode_val,
-                content_level=content_level_val,
-                max_posts=max_posts_resolved,
-                max_full_post_chars=max_full_chars_int,
-            )
+            disk = _load_report_cache(sig) if sig else None
 
             def _is_cache_valid(cached_sig: tuple) -> bool:
                 if cached_sig != sig:
@@ -1139,7 +1308,7 @@ def create_pipeline_interface():
                     logger.exception("Report generation failed")
                     result = _report_error_message(e)
                     cache = None
-            prompt_content = _load_report_prompt_debug()
+            prompt_content = _load_report_prompt_debug(cache[1] if cache else None)
             yield _render_pipeline_status(None, None), result, cache, gr.update(
                 interactive=True
             ), prompt_content
