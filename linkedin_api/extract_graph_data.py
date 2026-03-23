@@ -80,6 +80,23 @@ def format_timestamp(timestamp):
     return datetime.fromtimestamp(timestamp / 1000).isoformat()
 
 
+def _get_activity_timestamp(element: dict, activity: dict):
+    """Resolve best-effort timestamp for an activity.
+
+    Some reaction payloads provide ``created`` without ``time`` and only expose
+    changelog-level ``processedAt``.
+    """
+    created = activity.get("created", {})
+    if isinstance(created, dict):
+        ts = created.get("time")
+        if ts:
+            return ts
+    ts = element.get("processedAt")
+    if ts:
+        return ts
+    return None
+
+
 def create_person_node(person_urn, people):
     """Create a Person node if it doesn't exist."""
     if not person_urn or not person_urn.startswith("urn:li:person:"):
@@ -280,7 +297,7 @@ def process_reaction(
             print(f"   🗑️  Removed {removed} reaction(s) for {actor} → {post_urn}")
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
 
     create_post_node(post_urn, posts)
     create_person_node(actor, people)
@@ -339,7 +356,7 @@ def process_post(
     ):
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     actor = extract_actor(element, activity)
     is_repost = activity.get("ugcOrigin") == "RESHARE" or bool(
         activity.get("responseContext", {}).get("parent")
@@ -447,7 +464,7 @@ def process_comment(
         skipped_by_reason[f"comment_no_actor_{resource_name}"] += 1
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     comment_text = activity.get("message", {}).get("text", "")
 
     # Build correct comment URN format: urn:li:comment:(parent_type:parent_id,comment_id)
@@ -560,7 +577,7 @@ def process_instant_repost(
         skipped_by_reason[f"instant_repost_no_author_{resource_name}"] += 1
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
 
     create_post_node(reposted_share, posts)
     create_person_node(actor, people)
@@ -761,7 +778,7 @@ def _reaction_to_record(
         return None
 
     reaction_type = activity.get("reactionType", "UNKNOWN")
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
 
     # Determine if reaction is to a post or comment; derive post_id (original post)
     if post_urn.startswith("urn:li:comment:"):
@@ -800,7 +817,7 @@ def _post_to_record(
     ):
         return None
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     actor = extract_actor(element, activity)
     is_repost = activity.get("ugcOrigin") == "RESHARE" or bool(
         activity.get("responseContext", {}).get("parent")
@@ -859,7 +876,7 @@ def _comment_to_record(
     if not comment_id or not post_urn or not actor:
         return None
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     comment_text = activity.get("message", {}).get("text", "")
     comment_urn = build_comment_urn(post_urn, comment_id)
     if not comment_urn:
@@ -900,7 +917,7 @@ def _instant_repost_to_record(
     if not reposted_share or not actor:
         return None
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     post_id = extract_urn_id(reposted_share) or ""
     time_str = str(timestamp or "")
 
