@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import traceback
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -229,6 +230,7 @@ def run_pipeline_ui(
         code = e.code if isinstance(e.code, int) else 1
         return code == 0, out.getvalue()
     except Exception as e:
+        traceback.print_exc(file=out)
         print(f"Error: {e}", file=out)
         return False, out.getvalue()
     finally:
@@ -330,6 +332,7 @@ def run_pipeline_ui_streaming(
         code = e.code if isinstance(e.code, int) else 1
         yield _add(f"❌ Failed (exit {code}).")
     except Exception as e:
+        traceback.print_exc()
         yield _add(f"❌ Failed: {e}")
 
 
