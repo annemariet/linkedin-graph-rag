@@ -99,6 +99,11 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
         return {"domain": None, "type": "unknown"}
 
 
+def is_comment_feed_url(url: str) -> bool:
+    """True if URL is a feed/update with a comment URN (not a post); such URLs don't return post content."""
+    return bool(url and "urn:li:comment:" in url)
+
+
 def should_ignore_url(url: str) -> bool:
     """Check if URL should be ignored (hashtags, profile links, etc.)."""
     if "linkedin.com/in/" in url or "linkedin.com/pub/" in url:

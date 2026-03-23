@@ -9,7 +9,6 @@ from linkedin_api.gradio_app import (
     REPORT_MODE_SINGLE_PASS,
     _REPORT_CACHE_FILE,
     _REPORT_CACHE_VERSION,
-    _REPORT_PROMPT_DEBUG_FILE,
     _format_post_for_prompt,
     _load_report_cache,
     _load_report_prompt_debug,
@@ -37,12 +36,7 @@ class TestReportCache:
         )
         report = "## Test Report\n\n- Item 1"
         _save_report_cache(report, sig)
-        result = _load_report_cache(
-            report_mode=REPORT_MODE_SINGLE_PASS,
-            content_level=CONTENT_LEVEL_SUMMARY,
-            max_posts=50,
-            max_full_post_chars=1500,
-        )
+        result = _load_report_cache(sig)
         assert result is not None
         assert result[0] == report
         assert result[1] == sig
@@ -58,33 +52,56 @@ class TestReportCache:
             1500,
         )
         _save_report_cache("Cached report", sig)
-        result = _load_report_cache(
-            report_mode=REPORT_MODE_SINGLE_PASS,
-            content_level=CONTENT_LEVEL_SUMMARY,
-            max_posts=100,
-            max_full_post_chars=1500,
+        other_sig = (
+            "anthropic:claude-3-haiku",
+            10,
+            ("ts1",),
+            REPORT_MODE_SINGLE_PASS,
+            CONTENT_LEVEL_SUMMARY,
+            100,
+            1500,
         )
+        result = _load_report_cache(other_sig)
         assert result is None
 
     def test_cache_uses_tmp_path_not_user_home(self, tmp_path):
-        _save_report_cache("test", ("x", 1, (), "per", "minimal", 50, 1500))
+        sig = ("x", 1, (), "per", "minimal", 50, 1500)
+        _save_report_cache("test", sig)
         cache_file = tmp_path / _REPORT_CACHE_FILE
         assert cache_file.exists()
         data = json.loads(cache_file.read_text())
-        assert data["report"] == "test"
         assert data["report_cache_version"] == _REPORT_CACHE_VERSION
+        reports = data["reports"]
+        assert isinstance(reports, dict)
+        assert len(reports) == 1
+        assert list(reports.values())[0]["report"] == "test"
+
+    def test_cache_does_not_exceed_max_entries(self, monkeypatch, tmp_path):
+        """Adding more than max_entries distinct reports evicts lowest-hit and stays at limit."""
+        monkeypatch.setenv("REPORT_CACHE_MAX_ENTRIES", "3")
+        for i in range(5):
+            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0)
+            _save_report_cache(f"Report {i}", sig)
+        data = json.loads((tmp_path / _REPORT_CACHE_FILE).read_text())
+        assert len(data["reports"]) <= 3
 
 
 class TestReportPromptDebug:
     def test_save_and_load_prompt(self):
+        sig = ("ollama:llama", 5, ("a", "b"), "single_pass", "summary", 50, 1500)
         _save_report_prompt_debug(
             "single-pass",
             "System instruction",
             ["User prompt with Summary: my post summary here"],
+            sig,
         )
-        content = _load_report_prompt_debug()
+        content = _load_report_prompt_debug(sig)
         assert "Summary: my post summary here" in content
         assert "User prompt" in content
+
+    def test_load_prompt_returns_placeholder_when_no_signature(self):
+        content = _load_report_prompt_debug(None)
+        assert "No report loaded" in content or "Run the pipeline" in content
 
     def test_prompt_includes_summary_when_summary_level(self):
         meta = {
@@ -107,8 +124,22 @@ class TestReportPromptDebug:
         assert "Summary:" not in formatted
         assert "transformers" not in formatted
 
-    def test_prompt_file_in_tmp_path_not_user_home(self, tmp_path):
-        _save_report_prompt_debug("test", "sys", ["prompt"])
-        prompt_file = tmp_path / _REPORT_PROMPT_DEBUG_FILE
-        assert prompt_file.exists()
-        assert "prompt" in prompt_file.read_text()
+    def test_prompts_cache_does_not_exceed_max_entries(self, monkeypatch, tmp_path):
+        """Adding more than max_entries distinct prompts evicts and stays at limit."""
+        monkeypatch.setenv("REPORT_CACHE_MAX_ENTRIES", "3")
+        for i in range(5):
+            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0)
+            _save_report_prompt_debug("mode", "sys", [f"p{i}"], sig)
+        data = json.loads((tmp_path / _REPORT_CACHE_FILE).read_text())
+        assert len(data["prompts"]) <= 3
+
+    def test_prompt_stored_in_cache_file(self, tmp_path):
+        sig = ("test", 1, (), "per", "minimal", 50, 1500)
+        _save_report_prompt_debug("test", "sys", ["prompt"], sig)
+        cache_file = tmp_path / _REPORT_CACHE_FILE
+        assert cache_file.exists()
+        data = json.loads(cache_file.read_text())
+        assert "prompts" in data
+        prompts = data["prompts"]
+        assert isinstance(prompts, dict)
+        assert any("prompt" in str(v.get("prompts", [])) for v in prompts.values())

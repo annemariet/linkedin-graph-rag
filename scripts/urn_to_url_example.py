@@ -5,13 +5,12 @@ Example: Converting LinkedIn URNs to HTML URLs
 Demonstrates how to extract URLs from LinkedIn API responses
 that use URN (Uniform Resource Name) syntax.
 
-Run with: uv run examples/urn_to_url_example.py
+Run with: uv run python scripts/urn_to_url_example.py
 """
 
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import linkedin_api
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from linkedin_api.utils.urns import (

@@ -23,7 +23,7 @@ def check_token():
         print("❌ LINKEDIN_ACCESS_TOKEN not found")
         print("\n📝 To set it up (choose one method):")
         print("\n   Method 1 (Recommended - Keyring):")
-        print("     python3 setup_token.py")
+        print("     uv run python scripts/setup_token.py")
         print("     This stores the token securely in your system keyring")
         print("\n   Method 2 (Shell environment variable):")
         print("     export LINKEDIN_ACCESS_TOKEN=your_token_here")

@@ -11,14 +11,6 @@ import dotenv
 from typing import Optional
 from neo4j import GraphDatabase
 
-# Apply DNS fix before importing Google libraries
-try:
-    from linkedin_api.dns_utils import setup_gcp_dns_fix
-
-    setup_gcp_dns_fix(use_custom_resolver=True)
-except ImportError:
-    pass
-
 from neo4j_graphrag.retrievers import VectorRetriever, VectorCypherRetriever
 from neo4j_graphrag.generation.graphrag import GraphRAG
 

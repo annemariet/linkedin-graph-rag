@@ -22,14 +22,6 @@ from bs4 import BeautifulSoup
 import requests
 from neo4j import GraphDatabase
 
-# Apply DNS fix before importing Google libraries
-try:
-    from linkedin_api.dns_utils import setup_gcp_dns_fix
-
-    setup_gcp_dns_fix(use_custom_resolver=True)
-except ImportError:
-    pass
-
 from neo4j_graphrag.embeddings.vertexai import VertexAIEmbeddings
 from neo4j_graphrag.indexes import create_vector_index
 

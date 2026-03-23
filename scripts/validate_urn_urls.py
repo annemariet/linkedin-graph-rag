@@ -4,7 +4,7 @@ Validate that LinkedIn URN-to-URL conversions produce working URLs.
 
 Tests actual HTTP requests to verify URLs point to expected pages.
 
-Run with: uv run examples/validate_urn_urls.py
+Run with: uv run python scripts/validate_urn_urls.py
 """
 
 import sys

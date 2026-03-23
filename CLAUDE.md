@@ -27,10 +27,10 @@ uv sync --all-groups
 ### Authentication Setup
 ```bash
 # Store LinkedIn token in macOS Keychain (recommended)
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 
 # Check token validity
-uv run python check_token.py
+uv run python scripts/check_token.py
 ```
 
 ### Running Scripts
@@ -97,7 +97,7 @@ uv run black .
 uv run black --check .
 
 # Run flake8
-uv run flake8 linkedin_api tests examples *.py
+uv run flake8 linkedin_api tests scripts *.py
 
 # Run type checking with mypy
 uv run mypy linkedin_api
@@ -206,14 +206,21 @@ Web UI for GraphRAG queries:
 - Respects `$PORT` for cloud deployment (Scalingo)
 
 #### `linkedin_api/utils/urls.py`
-URL extraction and categorization utilities (extracted from `extract_resources.py`):
-- `extract_urls_from_text()`, `categorize_url()`, `should_ignore_url()`, `resolve_redirect()`
+URL extraction and categorization utilities:
+- `extract_urls_from_text()`, `is_comment_feed_url()`, `should_ignore_url()`, `resolve_redirect()`
 
-#### `linkedin_api/urn_utils.py`
+#### `linkedin_api/utils/urns.py`
 URN parsing and URL conversion:
 - Extracts IDs from LinkedIn URNs
 - Converts URNs to public LinkedIn URLs
 - Handles various URN formats (posts, comments, people)
+
+#### `scripts/`
+Standalone and migration scripts:
+- `setup_token.py`, `check_token.py` – Token setup and validation
+- `migrate_comment_urns.py` – Fix Comment URN format in Neo4j
+- `fix_repost_authors.py` – Fix repost CREATES/REPOSTS from re-extracted JSON
+- `verify_vertex_ai.py` – Vertex AI smoke test
 
 ### Data Flow
 
@@ -301,6 +308,11 @@ Data directory:
 LINKEDIN_DATA_DIR=~/.linkedin_api/data  # Default; master CSV lives here
 ```
 
+Report/prompt cache (Gradio pipeline):
+```bash
+REPORT_CACHE_MAX_ENTRIES=100  # Max cached reports and prompts; evict by hits (default 100)
+```
+
 Linked content fetch (fetch_linked_content, resolve_redirect):
 ```bash
 REQUESTS_SSL_VERIFY=true  # Set to false to skip SSL verification for sites with cert issues (use with caution)
@@ -320,7 +332,7 @@ LinkedIn access tokens expire every ~60 days. When you see:
 
 Recreate token at https://www.linkedin.com/developers/tools/oauth and update via:
 ```bash
-uv run python setup_token.py
+uv run python scripts/setup_token.py
 ```
 
 ## Important Notes
@@ -373,9 +385,6 @@ The project supports Scalingo deployment via Gradio:
 - Coverage configured to omit test files and examples
 - CI/CD via GitHub Actions (`.github/workflows/python-package.yml`)
 
-## DNS Fix for GCP
+## Vertex AI
 
-The codebase includes a DNS fix for Google Cloud Platform connectivity issues:
-- `linkedin_api/dns_utils.py` (if present)
-- Applied before importing Google libraries in GraphRAG modules
-- See `DNS_VPN_FIX.md` for details
+Use `uv run python scripts/verify_vertex_ai.py` to smoke-test Vertex AI connectivity.
