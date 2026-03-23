@@ -123,64 +123,29 @@ def _truncate(s: str, max_len: int) -> str:
     return s[: max_len - 3].rstrip() + "..."
 
 
-def _format_period_dates(period: str) -> str | None:
-    """Format period (e.g. 7d) as human-readable date range. Returns None if invalid."""
-    start_ms = _parse_last(period)
-    if start_ms is None:
-        return None
-    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
-    end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
-    return f"{start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
-
-
-def _add_times_from_activities(
-    metas: list[dict],
-    urn_to_activity: dict[str, dict],
-) -> None:
-    """Set activity_time_iso and post_time from activities (API timestamps)."""
-    for m in metas:
-        urn = (m.get("urn") or "").strip()
-        if not urn:
-            continue
-        act = urn_to_activity.get(urn, {})
-        ts = act.get("timestamp")
-        ts_ms = int(ts) if isinstance(ts, (int, float)) else None
-        if ts_ms:
-            m["activity_time_iso"] = _ms_to_iso(ts_ms)
-        m["post_time"] = (
-            (m.get("post_created_at") or "").strip()
-            or post_created_at_from_urn(urn)
-            or "unknown"
-        )
-
-
 def _get_posts_for_period(
     period: str,
     activities_path: Path,
     max_posts: int,
 ) -> tuple[list[dict], str | None]:
-    """
-    Return posts scoped to the fetched period (only posts user interacted with
-    within the period). Orders by activity time ascending. Returns (metas, period_dates_str or None).
-    """
-    period_dates = _format_period_dates(period)
+    """Posts scoped to period (activity timestamp in range). Sorted by activity time."""
     start_ms = _parse_last(period)
     if start_ms is None:
-        return [], period_dates
+        return [], None
     end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    period_dates = (
+        f"{datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc):%Y-%m-%d} to "
+        f"{datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc):%Y-%m-%d}"
+    )
 
-    all_metas = list_summarized_metadata()
     urn_to_activity: dict[str, dict] = {}
     if activities_path.exists():
         try:
             for a in json.loads(activities_path.read_text()):
                 urn = (a.get("post_urn") or "").strip()
-                if not urn:
-                    continue
                 ts = a.get("timestamp")
                 ts_ms = int(ts) if isinstance(ts, (int, float)) else None
-                if ts_ms is not None and start_ms <= ts_ms <= end_ms:
+                if urn and ts_ms is not None and start_ms <= ts_ms <= end_ms:
                     urn_to_activity[urn] = a
         except (json.JSONDecodeError, OSError):
             pass
@@ -188,12 +153,18 @@ def _get_posts_for_period(
     if not urn_to_activity:
         return [], period_dates
 
-    scoped = [m for m in all_metas if (m.get("urn") or "").strip() in urn_to_activity]
-    _add_times_from_activities(scoped, urn_to_activity)
+    scoped = [
+        m
+        for m in list_summarized_metadata()
+        if (m.get("urn") or "").strip() in urn_to_activity
+    ]
+    for m in scoped:
+        ts = urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp")
+        if isinstance(ts, (int, float)):
+            m["activity_time_iso"] = _ms_to_iso(int(ts))
     scoped.sort(
         key=lambda m: int(
-            urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp")
-            or 0
+            urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp") or 0
         )
     )
     return scoped[:max_posts], period_dates
@@ -216,11 +187,11 @@ def _format_post_for_prompt(
     tag_part = " | ".join(parts) if parts else ""
     tag_part = f"Category: {cat}" + (f" | {tag_part}" if tag_part else "")
     # Temporal context when available (enables "late news" assessment)
-    activity_time = (
-        (m.get("activity_time_iso") or m.get("reaction_time") or "").strip()
-    )
-    post_time = (m.get("post_time") or "").strip() or (
-        (m.get("post_created_at") or "").strip() or "unknown"
+    activity_time = (m.get("activity_time_iso") or m.get("reaction_time") or "").strip()
+    post_time = (
+        (m.get("post_time") or m.get("post_created_at") or "").strip()
+        or post_created_at_from_urn(m.get("urn") or "")
+        or "unknown"
     )
     if activity_time or post_time != "unknown":
         time_part = f"Activity: {activity_time or 'unknown'} | Posted: {post_time}"
