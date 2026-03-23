@@ -1031,10 +1031,15 @@ def create_pipeline_interface():
                     if status_update is not None:
                         stage_progress, step_label = status_update
                     if last.startswith("❌"):
+                        error_text = last
+                        if error_text.startswith("❌ "):
+                            error_text = error_text[2:].strip()
+                        if not error_text:
+                            error_text = "Pipeline failed."
                         _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
                             step_label, stage_progress
-                        ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
+                        ), f"⚠️ {error_text}", cache, gr.update(
                             interactive=True
                         ), gr.update()
                         return
