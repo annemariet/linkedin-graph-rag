@@ -29,19 +29,19 @@ LinkedIn API → extract_graph_data → CSV + JSON → build_graph → Neo4j
 ### UI pipeline (Gradio Pipeline tab)
 
 ```
-LinkedIn API → changelog_cache → summarize_activity → activities.json
+LinkedIn API → activities.csv → summarize_activity → activities.json
     → enrich_activities → content_store → summarize_posts → Report
 ```
 
-- **Storage:** `changelog_cache.json`, `content_store/` (Markdown + metadata)
-- **Fetch:** Incremental (only new items since last run); period-filtered (7d, 14d…)
+- **Storage:** `activities.csv`, `content_store/` (Markdown + metadata)
+- **Fetch:** Incremental (append to CSV since last run); period-filtered (7d, 14d…)
 - **Output:** Markdown activity report (LLM-summarized by category)
 
 ### Key differences
 
 | Aspect | CLI | UI (Pipeline tab) |
 |--------|-----|------------------|
-| Data source | Portability API (full fetch) | Same API (incremental via cache) |
+| Data source | Portability API (full fetch) | Same API (incremental via activities.csv) |
 | Storage | CSV → Neo4j | JSON → content_store (filesystem) |
 | Graph | Neo4j with People, Posts, Comments | No graph; flat content store |
 | Output | GraphRAG queries | Markdown report |
@@ -237,7 +237,7 @@ uv run python -m linkedin_api.query_graphrag
 uv run python -m linkedin_api.gradio_app
 ```
 
-Then use the **Pipeline** tab: set period (e.g. 7d), click "Get latest news report". Uses `changelog_cache` and `content_store`; no Neo4j. The **GraphRAG query** tab requires the CLI pipeline to have been run.
+Then use the **Pipeline** tab: set period (e.g. 7d), click "Get latest news report". Uses `activities.csv` and `content_store`; no Neo4j. The **GraphRAG query** tab requires the CLI pipeline to have been run.
 
 ### Incremental graph update
 

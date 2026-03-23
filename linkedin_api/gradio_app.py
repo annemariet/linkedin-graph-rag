@@ -29,11 +29,9 @@ if TYPE_CHECKING:
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.content_store import (
-    _iso_to_ms,
     _ms_to_iso,
     list_summarized_metadata,
     load_content,
-    update_metadata_fields,
 )
 from linkedin_api.llm_config import (
     create_embedder,
@@ -136,39 +134,27 @@ def _format_period_dates(period: str) -> str | None:
     return f"{start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
 
 
-def _backfill_timestamps(
-    all_metas: list[dict],
+def _add_times_from_activities(
+    metas: list[dict],
     urn_to_activity: dict[str, dict],
 ) -> None:
-    """
-    Backfill activity_time_iso and post_created_at in metadata files (and in-memory metas).
-    Runs for ALL posts: activity time from activities when matched, post from Snowflake when empty.
-    """
-    for m in all_metas:
+    """Set activity_time_iso, reaction_time, post_time from activities (API timestamps)."""
+    for m in metas:
         urn = (m.get("urn") or "").strip()
         if not urn:
             continue
         act = urn_to_activity.get(urn, {})
         ts = act.get("timestamp")
         ts_ms = int(ts) if isinstance(ts, (int, float)) else None
-        reaction_iso = _ms_to_iso(ts_ms) if ts_ms else ""
-        post_created = (act.get("post_created_at") or "").strip() or None
-        if not post_created:
-            post_created = post_created_at_from_urn(urn)
-
-        existing_react = (m.get("activity_time_iso") or "").strip()
-        existing_post = (m.get("post_created_at") or "").strip()
-
-        kwargs: dict = {}
-        if reaction_iso and not existing_react:
-            kwargs["activity_time_iso"] = reaction_iso
-            m["activity_time_iso"] = reaction_iso
-        if post_created and not existing_post:
-            kwargs["post_created_at"] = post_created
-            m["post_created_at"] = post_created
-
-        if kwargs:
-            update_metadata_fields(urn, **kwargs)
+        if ts_ms:
+            iso = _ms_to_iso(ts_ms)
+            m["activity_time_iso"] = iso
+            m["reaction_time"] = iso
+        m["post_time"] = (
+            (m.get("post_created_at") or "").strip()
+            or post_created_at_from_urn(urn)
+            or "unknown"
+        )
 
 
 def _get_posts_for_period(
@@ -177,71 +163,30 @@ def _get_posts_for_period(
     max_posts: int,
 ) -> tuple[list[dict], str | None]:
     """
-    Return posts scoped to the fetched period (only posts with reactions in period).
-    Orders by reaction time ascending. Returns (metas, period_dates_str or None).
-    Backfills activity_time_iso and post_created_at to metadata files for all posts.
+    Return posts scoped to the fetched period (only posts user interacted with).
+    Orders by activity time ascending. Returns (metas, period_dates_str or None).
     """
     period_dates = _format_period_dates(period)
-
-    def _sort_by_api_timestamp(metas: list[dict]) -> None:
-        """Sort by activity_time_iso (ISO) ascending; missing goes last."""
-
-        def _key(m: dict) -> int:
-            ms = _iso_to_ms(m.get("activity_time_iso"))
-            return ms if ms is not None else 2**63
-
-        metas.sort(key=_key)
-
-    def _add_times_from_metadata(metas: list[dict]) -> None:
-        for m in metas:
-            if m.get("reaction_time") or m.get("post_time"):
-                continue
-            iso = (m.get("activity_time_iso") or "").strip()
-            if iso:
-                m["reaction_time"] = iso
-            m["post_time"] = (m.get("post_created_at") or "").strip() or "unknown"
-
     all_metas = list_summarized_metadata()
 
     urn_to_activity: dict[str, dict] = {}
     if activities_path.exists():
         try:
-            activities = json.loads(activities_path.read_text())
-            for a in activities:
+            for a in json.loads(activities_path.read_text()):
                 urn = (a.get("post_urn") or "").strip()
                 if urn:
                     urn_to_activity[urn] = a
         except (json.JSONDecodeError, OSError):
             pass
 
-    if urn_to_activity:
-        _backfill_timestamps(all_metas, urn_to_activity)
-        _add_times_from_metadata(all_metas)
-        _sort_by_api_timestamp(all_metas)
-        scoped = [
-            m for m in all_metas if (m.get("urn") or "").strip() in urn_to_activity
-        ]
-    else:
-        for m in all_metas:
-            urn = (m.get("urn") or "").strip()
-            if urn:
-                post_created = (
-                    m.get("post_created_at") or ""
-                ).strip() or post_created_at_from_urn(urn)
-                if post_created and not (m.get("post_created_at") or "").strip():
-                    update_metadata_fields(urn, post_created_at=post_created)
-                    m["post_created_at"] = post_created
-        _add_times_from_metadata(all_metas)
-        _sort_by_api_timestamp(all_metas)
+    if not urn_to_activity:
         return [], period_dates
 
     scoped = [m for m in all_metas if (m.get("urn") or "").strip() in urn_to_activity]
+    _add_times_from_activities(scoped, urn_to_activity)
     scoped.sort(
         key=lambda m: int(
-            (
-                urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp")
-                or 0
-            )
+            urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp")
             or 0
         )
     )
@@ -1375,10 +1320,15 @@ def create_pipeline_interface():
                     if status_update is not None:
                         stage_progress, step_label = status_update
                     if last.startswith("❌"):
+                        error_text = last
+                        if error_text.startswith("❌ "):
+                            error_text = error_text[2:].strip()
+                        if not error_text:
+                            error_text = "Pipeline failed."
                         _ensure_min_progress_visibility()
                         yield _render_pipeline_status(
                             step_label, stage_progress
-                        ), "⚠️ Pipeline failed. See terminal logs for details.", cache, gr.update(
+                        ), f"⚠️ {error_text}", cache, gr.update(
                             interactive=True
                         ), gr.update()
                         return

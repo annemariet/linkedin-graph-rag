@@ -26,10 +26,8 @@ from linkedin_api.content_store import (
     _ms_to_iso,
     has_metadata,
     load_content,
-    load_metadata,
     save_content,
     save_metadata,
-    update_metadata_fields,
 )
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
@@ -77,7 +75,7 @@ def _parse_meta_from_html(html: str) -> dict:
     out: dict = {}
     for meta in soup.find_all("meta"):
         prop = meta.get("property") or meta.get("name", "")
-        content = (meta.get("content") or "").strip()
+        content = str(meta.get("content") or "").strip()
         if not content:
             continue
         if prop in ("article:published_time", "og:article:published_time"):
@@ -191,39 +189,6 @@ def _run_enrichment(to_enrich: list[dict]):
     for rec in needs_browser:
         rec["_enrich_error"] = "Browser required; not implemented"
     return enriched_count
-
-
-def _update_metadata_for_activities(activities: list[dict]) -> int:
-    """
-    Update metadata for posts that already have metadata but lack activity_time_iso
-    or post_created_at. Only fills empty fields; never overwrites existing.
-    Returns count of metadata files updated.
-    """
-    updated = 0
-    for rec in activities:
-        urn = (rec.get("post_urn") or "").strip()
-        if not urn or is_comment_feed_url(rec.get("post_url", "")):
-            continue
-        meta = load_metadata(urn)
-        if not meta:
-            continue
-        ts = rec.get("timestamp")
-        ts_ms = int(ts) if isinstance(ts, (int, float)) else None
-        activity_iso = _ms_to_iso(ts_ms) if ts_ms else ""
-        post_created = (rec.get("post_created_at") or "").strip() or None
-        if not post_created:
-            post_created = post_created_at_from_urn(urn)
-        existing_activity = (meta.get("activity_time_iso") or "").strip()
-        existing_post = (meta.get("post_created_at") or "").strip()
-        kwargs: dict = {}
-        if activity_iso and not existing_activity:
-            kwargs["activity_time_iso"] = activity_iso
-        if post_created and not existing_post:
-            kwargs["post_created_at"] = post_created
-        if kwargs:
-            update_metadata_fields(urn, **kwargs)
-            updated += 1
-    return updated
 
 
 def enrich_activities(

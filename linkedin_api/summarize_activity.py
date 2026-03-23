@@ -2,13 +2,11 @@
 """
 Collect activities (reactions, reposts, comments) for period-based summarization.
 
-- Fetch: Uses changelog cache. Fetches only new items from the API since last run,
-  merges with cache, persists.
-- Skip fetch: Use only cached data (no API call).
-- Legacy: load_from_cache() reads outputs/neo4j_data_*.json for backward compatibility.
+- Fetch: Fetches from API, appends to activities.csv, loads with period filter.
+- Skip fetch (--from-cache): Load from activities.csv only, filter by period.
 
-Output: list of {post_urn, post_url, content, urls, interaction_type, ...} for
-summarization and linked-resource pipelines.
+Output: list of {post_urn, post_url, content, urls, interaction_type, created_at, ...}
+for summarization and linked-resource pipelines.
 """
 
 from __future__ import annotations
@@ -20,17 +18,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from linkedin_api.changelog_cache import (
-    load_changelog_cache,
-    merge_extracted,
-    save_changelog_cache,
+from linkedin_api.activity_csv import (
+    ActivityType,
+    append_records_csv,
+    filter_by_date,
+    get_default_csv_path,
+    load_records_csv,
 )
 from linkedin_api.extract_graph_data import (
-    extract_entities_and_relationships,
+    extract_activity_records,
     get_all_post_activities,
 )
+from linkedin_api.utils.changelog import (
+    get_max_processed_at,
+    save_last_processed_timestamp,
+)
 from linkedin_api.utils.urls import extract_urls_from_text
-from linkedin_api.utils.changelog import get_max_processed_at
 from linkedin_api.utils.urns import comment_urn_to_post_url, urn_to_post_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
@@ -53,8 +56,8 @@ def _format_timestamp(ts_ms: int | None) -> str:
 
 
 @dataclass
-class ActivityRecord:
-    """Single activity (reaction, repost, or comment) for summarization."""
+class SummarizationRecord:
+    """Single activity (reaction, repost, or comment) for summarization output."""
 
     post_urn: str
     content: str
@@ -65,7 +68,9 @@ class ActivityRecord:
     comment_urn: str = ""
     reaction_type: str | None = None
     post_url: str = ""
-    post_created_at: str = ""  # ISO when post was originally published (when available)
+    post_id: str = ""
+    activity_id: str = ""
+    created_at: str = ""
 
 
 def _parse_last(value: str) -> int | None:
@@ -89,310 +94,85 @@ def _parse_last(value: str) -> int | None:
     return int(cutoff.timestamp() * 1000)
 
 
-def _normalize_relationships(data: dict) -> list[dict]:
-    """Ensure relationships use 'from' and 'to' keys."""
-    rels = data.get("relationships", [])
-    out = []
-    for r in rels:
-        out.append(
-            {
-                "type": r["type"],
-                "from": r.get("from") or r.get("startNode"),
-                "to": r.get("to") or r.get("endNode"),
-                "properties": r.get("properties", {}),
-            }
-        )
-    return out
+_TYPE_TO_INTERACTION: dict[str, Literal["reaction", "repost", "comment"]] = {
+    ActivityType.REACTION_TO_POST.value: "reaction",
+    ActivityType.REACTION_TO_COMMENT.value: "reaction",
+    ActivityType.REPOST.value: "repost",
+    ActivityType.INSTANT_REPOST.value: "repost",
+    ActivityType.COMMENT.value: "comment",
+}
 
 
-def _nodes_by_id(data: dict) -> dict[str, dict]:
-    """Index nodes by id for lookup."""
-    by_id = {}
-    for node in data.get("nodes", []):
-        nid = node.get("id")
-        if nid:
-            by_id[nid] = node
-    return by_id
+def _to_summarization_record(rec) -> SummarizationRecord:
+    """Convert ActivityRecord to SummarizationRecord."""
+    urls = extract_urls_from_text(rec.content) if rec.content else []
+    ts = int(rec.time) if rec.time else None
+    interaction_type = _TYPE_TO_INTERACTION.get(rec.activity_type, "reaction")
+    is_comment = rec.activity_type == ActivityType.COMMENT.value
+    # For comments, post_urn/post_url point to the post being commented on
+    post_urn = rec.parent_urn or rec.activity_urn if is_comment else rec.activity_urn
+    post_url = rec.post_url or _urn_to_url(post_urn)
+    return SummarizationRecord(
+        post_urn=post_urn,
+        content="" if is_comment else (rec.content or ""),
+        urls=urls,
+        interaction_type=interaction_type,
+        timestamp=ts,
+        comment_text=rec.content if is_comment else "",
+        comment_urn=rec.activity_urn if is_comment else "",
+        reaction_type=rec.reaction_type or None,
+        post_url=post_url,
+        post_id=rec.post_id,
+        activity_id=rec.activity_id,
+        created_at=rec.created_at,
+    )
 
 
-def _in_time_range(ts: int | None, start_ms: int | None, end_ms: int | None) -> bool:
-    if ts is None:
-        return True
-    if start_ms is not None and ts < start_ms:
-        return False
-    if end_ms is not None and ts > end_ms:
-        return False
-    return True
-
-
-def load_from_cache(
-    path: Path | None = None,
-    start_ms: int | None = None,
-    end_ms: int | None = None,
-) -> dict:
-    """
-    Load extraction data from cached neo4j_data JSON.
-
-    Args:
-        path: Specific file, or None to use latest in outputs/
-        start_ms: Optional start time filter (epoch ms) for relationships
-        end_ms: Optional end time filter (epoch ms) for relationships
-
-    Returns:
-        Dict with nodes, relationships (normalized with from/to)
-    """
-    if path:
-        files = [path] if path.is_file() else []
-    else:
-        pattern = "neo4j_data_*.json"
-        files = sorted(
-            OUTPUT_DIR.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True
-        )
-    if not files:
-        return {"nodes": [], "relationships": []}
-
-    all_nodes: dict[str, dict] = {}
-    all_rels: list[dict] = []
-    for fp in files:
-        raw = json.loads(fp.read_text())
-        for node in raw.get("nodes", []):
-            all_nodes[node.get("id")] = node
-        for r in raw.get("relationships", []):
-            rel = {
-                "type": r["type"],
-                "from": r.get("from") or r.get("startNode"),
-                "to": r.get("to") or r.get("endNode"),
-                "properties": r.get("properties", {}),
-            }
-            ts = rel["properties"].get("timestamp")
-            if _in_time_range(ts, start_ms, end_ms):
-                all_rels.append(rel)
-    return {"nodes": list(all_nodes.values()), "relationships": all_rels}
-
-
-def collect_from_live(
+def ensure_csv_fetched(
     last: str,
-    types: set[str],
     verbose: bool = True,
     skip_fetch: bool = False,
-) -> dict:
+) -> int:
     """
-    Fetch from API (only new since last run), merge with cache, return extraction data.
+    Fetch from API and append to activities.csv. Returns count of new records written.
 
-    When skip_fetch is True, uses only cached data (no API call). Otherwise fetches
-    only elements since last_fetched_ms, merges with cache, and persists.
+    When skip_fetch is True, does nothing and returns 0.
     """
+    if skip_fetch:
+        return 0
     period_start = _parse_last(last)
     if period_start is None:
         raise ValueError(f"Invalid --last value; use e.g. 7d, 14d, 30d")
-    cache = load_changelog_cache()
-
-    if skip_fetch:
-        if not cache:
-            if verbose:
-                print('No changelog cache found. Run without "Skip fetch" first.')
-            return {"nodes": [], "relationships": []}
-        return {"nodes": cache["nodes"], "relationships": cache["relationships"]}
-
-    fetch_start = cache["last_fetched_ms"] if cache else period_start
-    if verbose and cache:
-        print(
-            f"Fetching new items since last run (cache has {len(cache['nodes'])} nodes)..."
-        )
-    elements = get_all_post_activities(start_time=fetch_start, verbose=verbose)
-
+    if verbose:
+        print("Fetching from API and appending to activities.csv...")
+    elements = get_all_post_activities(start_time=period_start, verbose=verbose)
     if not elements:
-        if cache:
-            return {"nodes": cache["nodes"], "relationships": cache["relationships"]}
-        return {"nodes": [], "relationships": []}
-
-    data = extract_entities_and_relationships(elements)
-    new_last = get_max_processed_at(elements)
-    if new_last is None and cache:
-        new_last = cache.get("last_fetched_ms", 0)
-    elif new_last is None:
-        new_last = period_start
-    merged = merge_extracted(
-        cache,
-        data["nodes"],
-        data["relationships"],
-        new_last,
-    )
-    save_changelog_cache(merged)
-    return {"nodes": merged["nodes"], "relationships": merged["relationships"]}
+        return 0
+    records = extract_activity_records(elements)
+    written = append_records_csv(records)
+    if written and verbose:
+        print(f"   Appended {written} new records to {get_default_csv_path()}")
+    max_ts = get_max_processed_at(elements)
+    if max_ts:
+        save_last_processed_timestamp(max_ts)
+    return written
 
 
-def _infer_user_actor(
-    relationships: list[dict], nodes_by_id: dict[str, dict]
-) -> str | None:
-    """Infer the current user's URN from REACTS_TO (actor is always the user)."""
-    for r in relationships:
-        if r["type"] == "REACTS_TO":
-            actor: str = r["from"]
-            if actor and actor.startswith("urn:li:person:"):
-                return actor
-    return None
-
-
-def collect_activities(
-    data: dict,
-    types: set[Literal["reaction", "repost", "comment"]] | None = None,
-    start_ms: int | None = None,
-    end_ms: int | None = None,
-) -> list[ActivityRecord]:
+def collect_from_csv(
+    start: datetime | None = None,
+    end: datetime | None = None,
+    csv_path: Path | None = None,
+) -> list[SummarizationRecord]:
     """
-    Extract activity records from extraction data (live or cached).
-
-    Args:
-        data: From load_from_cache or collect_from_live
-        types: Include reaction, repost, comment (default: all)
-        start_ms, end_ms: Optional time bounds
-
-    Returns:
-        List of ActivityRecord, one per unique (post_urn, interaction_type)
+    Load activities from CSV, filter by period, convert to summarization format.
+    Includes reactions, reposts, and comments.
     """
-    types = types or {"reaction", "repost", "comment"}
-    nodes_by_id = _nodes_by_id(data)
-    relationships = _normalize_relationships(data)
-    user_actor = _infer_user_actor(relationships, nodes_by_id)
-    if not user_actor:
+    records = load_records_csv(csv_path)
+    if not records:
         return []
-
-    seen: set[tuple[str, str]] = set()
-    records: list[ActivityRecord] = []
-
-    def add_record(
-        post_urn: str,
-        content: str,
-        urls: list[str],
-        interaction_type: Literal["reaction", "repost", "comment"],
-        timestamp: int | None,
-        *,
-        comment_text: str = "",
-        comment_urn: str = "",
-        reaction_type: str | None = None,
-        post_created_at: str = "",
-    ):
-        key = (post_urn, interaction_type)
-        if key in seen:
-            return
-        if not _in_time_range(timestamp, start_ms, end_ms):
-            return
-        seen.add(key)
-        records.append(
-            ActivityRecord(
-                post_urn=post_urn,
-                content=content,
-                urls=urls,
-                interaction_type=interaction_type,
-                timestamp=timestamp,
-                comment_text=comment_text,
-                comment_urn=comment_urn,
-                reaction_type=reaction_type,
-                post_url=_urn_to_url(post_urn),
-                post_created_at=post_created_at,
-            )
-        )
-
-    # Reactions: (user)-[:REACTS_TO]->(post)
-    if "reaction" in types:
-        for r in relationships:
-            if r["type"] != "REACTS_TO" or r["from"] != user_actor:
-                continue
-            post_urn = r["to"]
-            props = r["properties"]
-            ts = props.get("timestamp")
-            reaction_type = props.get("reaction_type")
-            post_node = nodes_by_id.get(post_urn, {})
-            post_props = post_node.get("properties", {})
-            content = post_props.get("content", "")
-            urls = post_props.get("extracted_urls", [])
-            if content and not urls:
-                urls = extract_urls_from_text(content)
-            post_created = post_props.get("created_at") or ""
-            add_record(
-                post_urn,
-                content,
-                urls,
-                "reaction",
-                ts,
-                reaction_type=reaction_type,
-                post_created_at=post_created,
-            )
-
-    # Reposts: (user)-[:REPOSTS]->(repost_share_post); original in original_post_urn
-    if "repost" in types:
-        for r in relationships:
-            if r["type"] != "REPOSTS":
-                continue
-            from_urn = r["from"]
-            to_urn = r["to"]
-            if from_urn != user_actor:
-                continue
-            repost_node = nodes_by_id.get(to_urn, {})
-            repost_props = repost_node.get("properties", {})
-            original_urn = repost_props.get("original_post_urn")
-            target_urn = original_urn or to_urn
-            content = repost_props.get("content", "")
-            urls = repost_props.get("extracted_urls", [])
-            if content and not urls:
-                urls = extract_urls_from_text(content)
-            ts = repost_props.get("timestamp")
-            post_created = ""
-            if not content and original_urn:
-                orig_node = nodes_by_id.get(original_urn, {})
-                orig_props = orig_node.get("properties", {})
-                content = orig_props.get("content", "")
-                post_created = orig_props.get("created_at") or ""
-                if not urls:
-                    urls = orig_props.get(
-                        "extracted_urls", []
-                    ) or extract_urls_from_text(content)
-            else:
-                post_created = repost_props.get("created_at") or ""
-            add_record(
-                target_urn, content, urls, "repost", ts, post_created_at=post_created
-            )
-
-    # Comments: (user)-[:CREATES]->(comment)-[:COMMENTS_ON]->(post)
-    if "comment" in types:
-        user_comments = [
-            r["to"]
-            for r in relationships
-            if r["type"] == "CREATES" and r["from"] == user_actor
-        ]
-        for comment_urn in user_comments:
-            for r in relationships:
-                if r["type"] != "COMMENTS_ON" or r["from"] != comment_urn:
-                    continue
-                post_urn = r["to"]
-                comment_node = nodes_by_id.get(comment_urn, {})
-                comment_props = comment_node.get("properties", {})
-                comment_text = comment_props.get("text", "")
-                ts = comment_props.get("timestamp")
-                urls = comment_props.get("extracted_urls", [])
-                if comment_text and not urls:
-                    urls = extract_urls_from_text(comment_text)
-                post_node = nodes_by_id.get(post_urn, {})
-                post_props = post_node.get("properties", {})
-                content = post_props.get("content", "")
-                post_created = post_props.get("created_at") or ""
-                if not urls and content:
-                    urls = post_props.get(
-                        "extracted_urls", []
-                    ) or extract_urls_from_text(content)
-                add_record(
-                    post_urn,
-                    content,
-                    urls,
-                    "comment",
-                    ts,
-                    comment_text=comment_text,
-                    comment_urn=comment_urn,
-                    post_created_at=post_created,
-                )
-
-    return records
+    if start or end:
+        records = filter_by_date(records, start=start, end=end)
+    return [_to_summarization_record(r) for r in records]
 
 
 def main() -> int:
@@ -407,12 +187,7 @@ def main() -> int:
     parser.add_argument(
         "--from-cache",
         action="store_true",
-        help="Load from outputs/neo4j_data_*.json instead of API. Use with --last to filter by period.",
-    )
-    parser.add_argument(
-        "--types",
-        default="reaction,repost,comment",
-        help="Comma-separated: reaction, repost, comment (default: all)",
+        help="Skip API fetch; use only activities.csv. Use with --last to filter by period.",
     )
     parser.add_argument(
         "--output",
@@ -435,34 +210,25 @@ def main() -> int:
     elif args.from_cache:
         pass  # Cache; --last optional to filter within cached data
 
-    types_set = {t.strip() for t in args.types.split(",") if t.strip()}
-    start_ms = None
-    end_ms = None
+    last = args.last or "30d"
+    start_dt = None
+    end_dt = None
     if args.last:
         start_ms = _parse_last(args.last)
         if start_ms is None:
             parser.error(f"Invalid --last '{args.last}'; use e.g. 7d, 14d, 30d")
-        end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+        end_dt = datetime.now(timezone.utc)
 
-    # For --from-cache with --last: filter cached data by period (optional)
-    cache_start = start_ms if args.from_cache else None
-    cache_end = end_ms if args.from_cache else None
+    ensure_csv_fetched(last, verbose=not args.quiet, skip_fetch=args.from_cache)
 
-    if args.from_cache:
-        data = load_from_cache(start_ms=cache_start, end_ms=cache_end)
-        if not data["nodes"]:
-            print("No cached neo4j_data_*.json found in outputs/")
-            return 1
+    csv_path = get_default_csv_path()
+    records = collect_from_csv(start=start_dt, end=end_dt, csv_path=csv_path)
+    if not records and args.from_cache:
         print(
-            f"Loaded {len(data['nodes'])} nodes, {len(data['relationships'])} "
-            f"relationships from cache"
+            "No data in activities.csv. Run extract_graph_data or use --last to fetch."
         )
-    else:
-        data = collect_from_live(args.last, types_set, verbose=not args.quiet)
-
-    records = collect_activities(
-        data, types=types_set, start_ms=start_ms, end_ms=end_ms
-    )
+        return 1
     print(f"Collected {len(records)} activities")
 
     out = [
@@ -474,9 +240,10 @@ def main() -> int:
             "interaction_type": r.interaction_type,
             "reaction_type": r.reaction_type,
             "comment_text": r.comment_text,
+            "post_id": r.post_id,
+            "activity_id": r.activity_id,
             "timestamp": r.timestamp,
-            "created_at": _format_timestamp(r.timestamp),
-            "post_created_at": r.post_created_at,
+            "created_at": r.created_at or _format_timestamp(r.timestamp),
         }
         for r in records
     ]
