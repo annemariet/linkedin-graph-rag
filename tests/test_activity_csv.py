@@ -239,6 +239,17 @@ class TestFilterByDate:
         result = filter_by_date([rec])
         assert len(result) == 0
 
+    def test_mixed_naive_and_aware_datetimes(self):
+        records = [
+            ActivityRecord(activity_urn="urn:a", created_at="2023-11-14T22:13:20"),
+            ActivityRecord(
+                activity_urn="urn:b", created_at="2023-11-14T22:14:20+00:00"
+            ),
+        ]
+        start = datetime.fromisoformat("2023-11-14T22:13:30+00:00")
+        result = filter_by_date(records, start=start)
+        assert [r.activity_urn for r in result] == ["urn:b"]
+
 
 class TestFilterByType:
     def test_filter_by_enum(self, sample_records):

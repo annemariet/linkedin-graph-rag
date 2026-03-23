@@ -30,7 +30,7 @@ import hashlib
 import io
 import os
 from dataclasses import asdict, dataclass, fields
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Sequence
@@ -258,17 +258,26 @@ def filter_by_date(
 
     Both *start* and *end* are inclusive.  ``None`` means unbounded.
     """
+
+    def _as_utc(dt: datetime) -> datetime:
+        # Old rows may be timezone-naive. Treat naive values as UTC.
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+
+    start_cmp = _as_utc(start) if start else None
+    end_cmp = _as_utc(end) if end else None
     result: list[ActivityRecord] = []
     for rec in records:
         if not rec.created_at:
             continue
         try:
-            dt = datetime.fromisoformat(rec.created_at)
+            dt = _as_utc(datetime.fromisoformat(rec.created_at))
         except (ValueError, TypeError):
             continue
-        if start and dt < start:
+        if start_cmp and dt < start_cmp:
             continue
-        if end and dt > end:
+        if end_cmp and dt > end_cmp:
             continue
         result.append(rec)
     return result
