@@ -132,7 +132,7 @@ class TestReportPromptDebug:
             "post_url": "https://linkedin.com/feed/update/123",
             "category": "tutorial",
             "summary": "A summary.",
-            "reaction_time": "2025-03-01T12:00:00+0000",
+            "activity_time_iso": "2025-03-01T12:00:00+0000",
             "post_time": "2025-02-15T10:00:00+0000",
         }
         formatted = _format_post_for_prompt(meta, CONTENT_LEVEL_SUMMARY)

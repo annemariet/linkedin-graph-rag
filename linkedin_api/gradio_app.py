@@ -138,7 +138,7 @@ def _add_times_from_activities(
     metas: list[dict],
     urn_to_activity: dict[str, dict],
 ) -> None:
-    """Set activity_time_iso, reaction_time, post_time from activities (API timestamps)."""
+    """Set activity_time_iso and post_time from activities (API timestamps)."""
     for m in metas:
         urn = (m.get("urn") or "").strip()
         if not urn:
@@ -147,9 +147,7 @@ def _add_times_from_activities(
         ts = act.get("timestamp")
         ts_ms = int(ts) if isinstance(ts, (int, float)) else None
         if ts_ms:
-            iso = _ms_to_iso(ts_ms)
-            m["activity_time_iso"] = iso
-            m["reaction_time"] = iso
+            m["activity_time_iso"] = _ms_to_iso(ts_ms)
         m["post_time"] = (
             (m.get("post_created_at") or "").strip()
             or post_created_at_from_urn(urn)
@@ -163,18 +161,26 @@ def _get_posts_for_period(
     max_posts: int,
 ) -> tuple[list[dict], str | None]:
     """
-    Return posts scoped to the fetched period (only posts user interacted with).
-    Orders by activity time ascending. Returns (metas, period_dates_str or None).
+    Return posts scoped to the fetched period (only posts user interacted with
+    within the period). Orders by activity time ascending. Returns (metas, period_dates_str or None).
     """
     period_dates = _format_period_dates(period)
-    all_metas = list_summarized_metadata()
+    start_ms = _parse_last(period)
+    if start_ms is None:
+        return [], period_dates
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
+    all_metas = list_summarized_metadata()
     urn_to_activity: dict[str, dict] = {}
     if activities_path.exists():
         try:
             for a in json.loads(activities_path.read_text()):
                 urn = (a.get("post_urn") or "").strip()
-                if urn:
+                if not urn:
+                    continue
+                ts = a.get("timestamp")
+                ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+                if ts_ms is not None and start_ms <= ts_ms <= end_ms:
                     urn_to_activity[urn] = a
         except (json.JSONDecodeError, OSError):
             pass
@@ -199,7 +205,7 @@ def _format_post_for_prompt(
     max_full_post_chars: int = REPORT_MAX_FULL_POST_CHARS_DEFAULT,
 ) -> str:
     """Format post for LLM. Always includes link. Minimal=link+tags, Summary=+full summary, Full=+truncated content.
-    When reaction_time/post_time are present (period-scoped), includes them."""
+    When activity_time_iso/post_time are present (period-scoped), includes them."""
     url = (m.get("post_url") or "").strip()
     cat = (m.get("category") or "").strip() or "other"
     parts: list[str] = []
@@ -209,15 +215,15 @@ def _format_post_for_prompt(
         parts.append(f"Tech: {', '.join(m['technologies'])}")
     tag_part = " | ".join(parts) if parts else ""
     tag_part = f"Category: {cat}" + (f" | {tag_part}" if tag_part else "")
-    # Always show temporal context when we have it (enables "late news" assessment)
-    rt = (m.get("reaction_time") or "").strip()
-    pt = (m.get("post_time") or "").strip() or "unknown"
-    if rt or pt or "activity_time_iso" in m or "post_created_at" in m:
-        if not rt and (m.get("activity_time_iso") or "").strip():
-            rt = (m.get("activity_time_iso") or "").strip()
-        if not pt and m.get("post_created_at"):
-            pt = (m.get("post_created_at") or "").strip() or "unknown"
-        time_part = f"Activity: {rt or 'unknown'} | Posted: {pt or 'unknown'}"
+    # Temporal context when available (enables "late news" assessment)
+    activity_time = (
+        (m.get("activity_time_iso") or m.get("reaction_time") or "").strip()
+    )
+    post_time = (m.get("post_time") or "").strip() or (
+        (m.get("post_created_at") or "").strip() or "unknown"
+    )
+    if activity_time or post_time != "unknown":
+        time_part = f"Activity: {activity_time or 'unknown'} | Posted: {post_time}"
         tag_part = f"{tag_part} | {time_part}" if tag_part else time_part
 
     if content_level == CONTENT_LEVEL_MINIMAL:
