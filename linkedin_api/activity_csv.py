@@ -147,25 +147,48 @@ def _write_header(path: Path) -> None:
         writer.writeheader()
 
 
-def _load_existing_urns(path: Path) -> set[str]:
-    """Return the set of activity_urn values already in *path*."""
+def _row_identity(row: dict[str, str]) -> str:
+    """Return a stable dedup key for one CSV row."""
+    activity_id = row.get("activity_id", "")
+    if activity_id:
+        return f"id:{activity_id}"
+    return (
+        "fallback:"
+        f"{row.get('activity_urn', '')}|{row.get('activity_type', '')}|"
+        f"{row.get('author_urn', '')}|{row.get('reaction_type', '')}|{row.get('time', '')}"
+    )
+
+
+def _record_identity(rec: ActivityRecord) -> str:
+    """Return a stable dedup key for one in-memory record."""
+    if rec.activity_id:
+        return f"id:{rec.activity_id}"
+    return (
+        "fallback:"
+        f"{rec.activity_urn}|{rec.activity_type}|{rec.author_urn}|"
+        f"{rec.reaction_type}|{rec.time}"
+    )
+
+
+def _load_existing_keys(path: Path) -> set[str]:
+    """Return the set of dedup keys already in *path*."""
     if not path.exists() or path.stat().st_size == 0:
         return set()
-    urns: set[str] = set()
+    keys: set[str] = set()
     with open(path, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            urn = row.get("activity_urn", "")
-            if urn:
-                urns.add(urn)
-    return urns
+            key = _row_identity(row)
+            if key:
+                keys.add(key)
+    return keys
 
 
 def append_records_csv(
     records: Sequence[ActivityRecord],
     path: Path | None = None,
 ) -> int:
-    """Append *records* to the CSV at *path*, deduplicating by ``activity_urn``.
+    """Append *records* to the CSV at *path*, deduplicating by stable identity.
 
     Returns the number of new records actually written.
     """
@@ -173,11 +196,16 @@ def append_records_csv(
         path = get_default_csv_path()
 
     _write_header(path)
-    existing = _load_existing_urns(path)
-
-    new_records = [
-        r for r in records if r.activity_urn and r.activity_urn not in existing
-    ]
+    seen_keys = _load_existing_keys(path)
+    new_records: list[ActivityRecord] = []
+    for rec in records:
+        if not rec.activity_urn:
+            continue
+        key = _record_identity(rec)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        new_records.append(rec)
     if not new_records:
         return 0
 

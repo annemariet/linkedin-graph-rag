@@ -140,12 +140,19 @@ class TestAppendAndLoad:
         assert loaded[1].reaction_type == "LIKE"
         assert loaded[2].content == "Great post!"
 
-    def test_dedup_by_activity_urn(self, csv_path, sample_records):
+    def test_dedup_by_activity_id_across_runs(self, csv_path, sample_records):
         append_records_csv(sample_records, csv_path)
         written = append_records_csv(sample_records, csv_path)
         assert written == 0
         loaded = load_records_csv(csv_path)
         assert len(loaded) == 3
+
+    def test_dedup_within_single_append_batch(self, csv_path, sample_records):
+        records = [sample_records[0], sample_records[0], sample_records[1]]
+        written = append_records_csv(records, csv_path)
+        assert written == 2
+        loaded = load_records_csv(csv_path)
+        assert len(loaded) == 2
 
     def test_append_new_records_only(self, csv_path, sample_records):
         append_records_csv(sample_records[:2], csv_path)
