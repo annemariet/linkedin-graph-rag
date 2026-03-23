@@ -26,6 +26,7 @@ from linkedin_api.activity_csv import (
     ActivityType,
     append_records_csv,
     get_default_csv_path,
+    make_activity_id,
 )
 from linkedin_api.utils.changelog import (
     fetch_changelog_data,
@@ -77,6 +78,23 @@ def format_timestamp(timestamp):
     if not timestamp:
         return None
     return datetime.fromtimestamp(timestamp / 1000).isoformat()
+
+
+def _get_activity_timestamp(element: dict, activity: dict):
+    """Resolve best-effort timestamp for an activity.
+
+    Some reaction payloads provide ``created`` without ``time`` and only expose
+    changelog-level ``processedAt``.
+    """
+    created = activity.get("created", {})
+    if isinstance(created, dict):
+        ts = created.get("time")
+        if ts:
+            return ts
+    ts = element.get("processedAt")
+    if ts:
+        return ts
+    return None
 
 
 def create_person_node(person_urn, people):
@@ -279,7 +297,7 @@ def process_reaction(
             print(f"   🗑️  Removed {removed} reaction(s) for {actor} → {post_urn}")
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
 
     create_post_node(post_urn, posts)
     create_person_node(actor, people)
@@ -338,7 +356,7 @@ def process_post(
     ):
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     actor = extract_actor(element, activity)
     is_repost = activity.get("ugcOrigin") == "RESHARE" or bool(
         activity.get("responseContext", {}).get("parent")
@@ -446,7 +464,7 @@ def process_comment(
         skipped_by_reason[f"comment_no_actor_{resource_name}"] += 1
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     comment_text = activity.get("message", {}).get("text", "")
 
     # Build correct comment URN format: urn:li:comment:(parent_type:parent_id,comment_id)
@@ -559,7 +577,7 @@ def process_instant_repost(
         skipped_by_reason[f"instant_repost_no_author_{resource_name}"] += 1
         return
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
 
     create_post_node(reposted_share, posts)
     create_person_node(actor, people)
@@ -760,25 +778,31 @@ def _reaction_to_record(
         return None
 
     reaction_type = activity.get("reactionType", "UNKNOWN")
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
 
-    # Determine if reaction is to a post or comment
+    # Determine if reaction is to a post or comment; derive post_id (original post)
     if post_urn.startswith("urn:li:comment:"):
         activity_type = ActivityType.REACTION_TO_COMMENT.value
+        parsed = parse_comment_urn(post_urn)
+        post_id = (parsed.get("parent_id") or "") if parsed else ""
     else:
         activity_type = ActivityType.REACTION_TO_POST.value
+        post_id = extract_urn_id(post_urn) or ""
 
+    time_str = str(timestamp or "")
     return ActivityRecord(
         owner=owner,
         activity_type=activity_type,
-        time=str(timestamp or ""),
+        time=time_str,
         reaction_type=reaction_type,
         author_urn=actor,
         activity_urn=post_urn,
+        post_id=post_id,
         post_url=urn_to_post_url(post_urn) or "",
         content="",
         parent_urn="",
         original_post_urn="",
+        activity_id=make_activity_id(post_id, activity_type, time_str, post_urn),
         created_at=format_timestamp(timestamp) or "",
     )
 
@@ -793,7 +817,7 @@ def _post_to_record(
     ):
         return None
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     actor = extract_actor(element, activity)
     is_repost = activity.get("ugcOrigin") == "RESHARE" or bool(
         activity.get("responseContext", {}).get("parent")
@@ -819,20 +843,25 @@ def _post_to_record(
             "parent"
         ) or activity.get("responseContext", {}).get("root", "")
         activity_type = ActivityType.REPOST.value
+        post_id = extract_urn_id(original_post_urn) or ""
     else:
         activity_type = ActivityType.POST.value
+        post_id = extract_urn_id(post_urn) or ""
 
+    time_str = str(timestamp or "")
     return ActivityRecord(
         owner=owner,
         activity_type=activity_type,
-        time=str(timestamp or ""),
+        time=time_str,
         reaction_type="",
         author_urn=author,
         activity_urn=post_urn,
+        post_id=post_id,
         post_url=urn_to_post_url(post_urn) or "",
         content=content,
         parent_urn=original_post_urn,
         original_post_urn=original_post_urn,
+        activity_id=make_activity_id(post_id, activity_type, time_str, post_urn),
         created_at=format_timestamp(timestamp) or "",
     )
 
@@ -847,7 +876,7 @@ def _comment_to_record(
     if not comment_id or not post_urn or not actor:
         return None
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
     comment_text = activity.get("message", {}).get("text", "")
     comment_urn = build_comment_urn(post_urn, comment_id)
     if not comment_urn:
@@ -858,17 +887,23 @@ def _comment_to_record(
         activity, response_context, post_urn
     )
 
+    post_id = extract_urn_id(post_urn) or ""
+    time_str = str(timestamp or "")
     return ActivityRecord(
         owner=owner,
         activity_type=ActivityType.COMMENT.value,
-        time=str(timestamp or ""),
+        time=time_str,
         reaction_type="",
         author_urn=actor,
         activity_urn=comment_urn,
+        post_id=post_id,
         post_url=urn_to_post_url(post_urn) or "",
         content=comment_text,
         parent_urn=parent_comment_urn or post_urn,
         original_post_urn="",
+        activity_id=make_activity_id(
+            post_id, ActivityType.COMMENT.value, time_str, comment_urn
+        ),
         created_at=format_timestamp(timestamp) or "",
     )
 
@@ -882,19 +917,25 @@ def _instant_repost_to_record(
     if not reposted_share or not actor:
         return None
 
-    timestamp = activity.get("created", {}).get("time")
+    timestamp = _get_activity_timestamp(element, activity)
+    post_id = extract_urn_id(reposted_share) or ""
+    time_str = str(timestamp or "")
 
     return ActivityRecord(
         owner=owner,
         activity_type=ActivityType.INSTANT_REPOST.value,
-        time=str(timestamp or ""),
+        time=time_str,
         reaction_type="",
         author_urn=actor,
         activity_urn=reposted_share,
+        post_id=post_id,
         post_url=urn_to_post_url(reposted_share) or "",
         content="",
         parent_urn=reposted_share,
         original_post_urn=reposted_share,
+        activity_id=make_activity_id(
+            post_id, ActivityType.INSTANT_REPOST.value, time_str, reposted_share
+        ),
         created_at=format_timestamp(timestamp) or "",
     )
 

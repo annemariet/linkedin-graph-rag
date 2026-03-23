@@ -194,6 +194,15 @@ class TestExtractActivityRecords:
         records = extract_activity_records([_post_element()])
         assert records[0].time == "1700000060000"
 
+    def test_reaction_falls_back_to_processed_at_when_created_time_missing(self):
+        elem = _reaction_element()
+        elem["processedAt"] = 1774205916131
+        elem["activity"]["created"] = {"actor": "urn:li:person:abc"}
+        records = extract_activity_records([elem])
+        assert len(records) == 1
+        assert records[0].time == "1774205916131"
+        assert records[0].created_at.startswith("2026-")
+
 
 # -- records_to_neo4j_json --------------------------------------------------
 
