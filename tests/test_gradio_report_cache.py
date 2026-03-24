@@ -33,6 +33,7 @@ class TestReportCache:
             CONTENT_LEVEL_SUMMARY,
             50,
             1500,
+            "7d",
         )
         report = "## Test Report\n\n- Item 1"
         _save_report_cache(report, sig)
@@ -50,6 +51,7 @@ class TestReportCache:
             CONTENT_LEVEL_MINIMAL,
             100,
             1500,
+            "7d",
         )
         _save_report_cache("Cached report", sig)
         other_sig = (
@@ -60,12 +62,13 @@ class TestReportCache:
             CONTENT_LEVEL_SUMMARY,
             100,
             1500,
+            "7d",
         )
         result = _load_report_cache(other_sig)
         assert result is None
 
     def test_cache_uses_tmp_path_not_user_home(self, tmp_path):
-        sig = ("x", 1, (), "per", "minimal", 50, 1500)
+        sig = ("x", 1, (), "per", "minimal", 50, 1500, "7d")
         _save_report_cache("test", sig)
         cache_file = tmp_path / _REPORT_CACHE_FILE
         assert cache_file.exists()
@@ -80,7 +83,7 @@ class TestReportCache:
         """Adding more than max_entries distinct reports evicts lowest-hit and stays at limit."""
         monkeypatch.setenv("REPORT_CACHE_MAX_ENTRIES", "3")
         for i in range(5):
-            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0)
+            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0, "7d")
             _save_report_cache(f"Report {i}", sig)
         data = json.loads((tmp_path / _REPORT_CACHE_FILE).read_text())
         assert len(data["reports"]) <= 3
@@ -88,7 +91,7 @@ class TestReportCache:
 
 class TestReportPromptDebug:
     def test_save_and_load_prompt(self):
-        sig = ("ollama:llama", 5, ("a", "b"), "single_pass", "summary", 50, 1500)
+        sig = ("ollama:llama", 5, ("a", "b"), "single_pass", "summary", 50, 1500, "7d")
         _save_report_prompt_debug(
             "single-pass",
             "System instruction",
@@ -124,17 +127,29 @@ class TestReportPromptDebug:
         assert "Summary:" not in formatted
         assert "transformers" not in formatted
 
+    def test_prompt_includes_activity_and_post_time_when_present(self):
+        meta = {
+            "post_url": "https://linkedin.com/feed/update/123",
+            "category": "tutorial",
+            "summary": "A summary.",
+            "activity_time_iso": "2025-03-01T12:00:00+0000",
+            "post_time": "2025-02-15T10:00:00+0000",
+        }
+        formatted = _format_post_for_prompt(meta, CONTENT_LEVEL_SUMMARY)
+        assert "Activity: 2025-03-01T12:00:00+0000" in formatted
+        assert "Posted: 2025-02-15T10:00:00+0000" in formatted
+
     def test_prompts_cache_does_not_exceed_max_entries(self, monkeypatch, tmp_path):
         """Adding more than max_entries distinct prompts evicts and stays at limit."""
         monkeypatch.setenv("REPORT_CACHE_MAX_ENTRIES", "3")
         for i in range(5):
-            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0)
+            sig = (f"m{i}", i, (f"t{i}",), "single_pass", "minimal", i, 0, "7d")
             _save_report_prompt_debug("mode", "sys", [f"p{i}"], sig)
         data = json.loads((tmp_path / _REPORT_CACHE_FILE).read_text())
         assert len(data["prompts"]) <= 3
 
     def test_prompt_stored_in_cache_file(self, tmp_path):
-        sig = ("test", 1, (), "per", "minimal", 50, 1500)
+        sig = ("test", 1, (), "per", "minimal", 50, 1500, "7d")
         _save_report_prompt_debug("test", "sys", ["prompt"], sig)
         cache_file = tmp_path / _REPORT_CACHE_FILE
         assert cache_file.exists()

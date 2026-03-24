@@ -23,11 +23,13 @@ import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.content_store import (
+    _ms_to_iso,
     has_metadata,
     load_content,
     save_content,
     save_metadata,
 )
+from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
@@ -62,20 +64,45 @@ def _parse_content_from_html(html: str) -> str:
     return "\n".join(content_text) if content_text else ""
 
 
-def _fetch_with_requests(url: str) -> tuple[str, list[str]] | None:
+def _parse_meta_from_html(html: str) -> dict:
     """
-    Try simple HTTP request. Returns (content, urls) if successful, None on
-    non-200, empty content, or error. LinkedIn returns proper status codes
-    (e.g. 403) when login is required.
+    Best-effort extraction of post_created_at and post_author from HTML.
+
+    Looks for meta tags (article:published_time, og:article:author, etc.).
+    LinkedIn's SPA may not expose these; works better for third-party articles.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out: dict = {}
+    for meta in soup.find_all("meta"):
+        prop = meta.get("property") or meta.get("name", "")
+        content = str(meta.get("content") or "").strip()
+        if not content:
+            continue
+        if prop in ("article:published_time", "og:article:published_time"):
+            out["post_created_at"] = content
+        elif (
+            prop in ("article:author", "og:article:author", "author")
+            and "post_author" not in out
+        ):
+            out["post_author"] = content
+    return out
+
+
+def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
+    """
+    Try simple HTTP request. Returns (content, urls, html_meta) if successful, None on
+    non-200, empty content, or error. html_meta may have post_created_at, post_author.
     """
     try:
         resp = requests.get(url, timeout=10, allow_redirects=True)
         if resp.status_code != 200:
             return None
-        content = _parse_content_from_html(resp.text)
+        html = resp.text
+        content = _parse_content_from_html(html)
         if not content or len(content) < 50:
             return None
-        return content, extract_urls_from_text(content)
+        html_meta = _parse_meta_from_html(html)
+        return content, extract_urls_from_text(content), html_meta
     except Exception:
         return None
 
@@ -94,6 +121,13 @@ def _run_enrichment(to_enrich: list[dict]):
         urn = rec.get("post_urn", "")
         url = rec.get("post_url", "")
         if urn and url:
+            ts = rec.get("timestamp")
+            ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+            post_created = (rec.get("post_created_at") or "").strip() or None
+            # Fallback: Snowflake ID from URN encodes creation time (no HTTP needed)
+            if not post_created:
+                post_created = post_created_at_from_urn(urn)
+            post_author: str | None = None
             # URLs already extracted from API text by summarize_activity
             urls_from_api = rec.get("urls") or []
 
@@ -103,24 +137,50 @@ def _run_enrichment(to_enrich: list[dict]):
                 if not rec.get("content"):
                     rec["content"] = stored
                 rec["urls"] = list(dict.fromkeys(urls_from_api))
-                save_metadata(urn, urls=rec["urls"], post_url=url)
+                save_metadata(
+                    urn,
+                    urls=rec["urls"],
+                    post_url=url,
+                    post_author=post_author or "",
+                    activity_time_iso=_ms_to_iso(ts_ms),
+                    post_created_at=post_created,
+                )
                 enriched_count += 1
             else:
                 # 2) Try HTTP fetch for content and additional URLs
                 result = _fetch_with_requests(url)
                 if result:
-                    fetched_content, fetched_urls = result
+                    fetched_content, fetched_urls, html_meta = result
+                    # HTML meta can supply post_created_at and post_author
+                    if not post_created and html_meta.get("post_created_at"):
+                        post_created = html_meta["post_created_at"]
+                    if html_meta.get("post_author"):
+                        post_author = html_meta["post_author"]
                     all_urls = list(dict.fromkeys(urls_from_api + fetched_urls))
                     rec["urls"] = all_urls
                     if not rec.get("content"):
                         rec["content"] = fetched_content
                         save_content(urn, fetched_content)
-                    save_metadata(urn, urls=all_urls, post_url=url)
+                    save_metadata(
+                        urn,
+                        urls=all_urls,
+                        post_url=url,
+                        post_author=post_author or "",
+                        activity_time_iso=_ms_to_iso(ts_ms),
+                        post_created_at=post_created,
+                    )
                     enriched_count += 1
                 elif urls_from_api:
                     # HTTP failed (e.g. login required) but API text had URLs
                     rec["urls"] = urls_from_api
-                    save_metadata(urn, urls=urls_from_api, post_url=url)
+                    save_metadata(
+                        urn,
+                        urls=urls_from_api,
+                        post_url=url,
+                        post_author=post_author or "",
+                        activity_time_iso=_ms_to_iso(ts_ms),
+                        post_created_at=post_created,
+                    )
                     enriched_count += 1
                 else:
                     needs_browser.append(rec)
