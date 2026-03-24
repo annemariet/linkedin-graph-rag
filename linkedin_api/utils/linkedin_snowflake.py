@@ -5,9 +5,9 @@ LinkedIn post/activity IDs encode the creation timestamp in the first 41 bits
 (Snowflake-style). See Ollie-Boyd/Linkedin-post-timestamp-extractor.
 """
 
-from datetime import datetime, timezone
 from typing import Optional
 
+from linkedin_api.content_store import _ms_to_iso
 from linkedin_api.utils.urns import extract_urn_id
 
 
@@ -70,5 +70,4 @@ def post_created_at_from_urn(urn: str) -> Optional[str]:
     ts_ms = timestamp_ms_from_linkedin_id(raw_id)
     if ts_ms is None:
         return None
-    dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-    return dt.isoformat()
+    return _ms_to_iso(ts_ms) or None
