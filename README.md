@@ -29,8 +29,8 @@ LinkedIn API → extract_graph_data → CSV + JSON → build_graph → Neo4j
 ### UI pipeline (Gradio Pipeline tab)
 
 ```
-LinkedIn API → activities.csv → summarize_activity → activities.json
-    → enrich_activities → content_store → summarize_posts → Report
+LinkedIn API → activities.csv → run_pipeline (collect → enrich → summarize) → Report
+    (enrich writes content_store; optional debug JSON via CLI flags)
 ```
 
 - **Storage:** `activities.csv`, `content_store/` (Markdown + metadata)
@@ -42,7 +42,7 @@ LinkedIn API → activities.csv → summarize_activity → activities.json
 | Aspect | CLI | UI (Pipeline tab) |
 |--------|-----|------------------|
 | Data source | Portability API (full fetch) | Same API (incremental via activities.csv) |
-| Storage | CSV → Neo4j | JSON → content_store (filesystem) |
+| Storage | CSV → Neo4j | CSV + content_store (filesystem) |
 | Graph | Neo4j with People, Posts, Comments | No graph; flat content store |
 | Output | GraphRAG queries | Markdown report |
 | Query | `query_graphrag` (CLI or Gradio GraphRAG tab) | Report only |

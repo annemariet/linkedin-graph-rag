@@ -6,8 +6,9 @@ Processes new data and backfills history (posts in store not yet summarized).
 Use --seed-json to load existing enriched JSON into the store first.
 
 Incremental: Running 7d then 30d avoids recomputing. Phase 1 reads the period slice
-from activities.csv (optional --output JSON for debugging). Phase 2 writes
-activities_enriched.json; Phase 3 updates the content store.
+from activities.csv (optional --output JSON for debugging). Phase 2 enriches into the
+content store (.md + .meta.json). Phase 3 LLM-summarizes posts that lack summary
+metadata. Optional --enriched-output writes a JSON snapshot for debugging only.
 """
 
 from __future__ import annotations
@@ -36,9 +37,6 @@ from linkedin_api.summarize_posts import (
     summarize_posts,
     summarize_posts_streaming,
 )
-
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
-DEFAULT_ENRICHED = OUTPUT_DIR / "activities_enriched.json"
 
 
 def _collect_activities(args) -> tuple[list[dict], int]:
@@ -80,21 +78,22 @@ def _collect_activities(args) -> tuple[list[dict], int]:
     return out, len(records)
 
 
-def _enrich_activities(activities: list[dict], args) -> tuple[Path, int]:
-    """Enrich activities with content. Returns (path to enriched JSON, count)."""
+def _enrich_activities(activities: list[dict], args) -> int:
+    """Enrich activities into the content store. Returns count enriched."""
     enriched, count = enrich_activities(activities, limit=args.limit)
     if not args.quiet:
         print(f"Enriched {count} activities")
 
-    out_path = Path(args.enriched_output) if args.enriched_output else DEFAULT_ENRICHED
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(enriched, indent=2))
-    if not args.quiet:
-        print(f"Wrote {out_path}")
-    return out_path, count
+    if args.enriched_output:
+        out_path = Path(args.enriched_output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(enriched, indent=2))
+        if not args.quiet:
+            print(f"Wrote debug enriched JSON {out_path}")
+    return count
 
 
-def _summarize_posts(args, enriched_path: Path | None = None):
+def _summarize_posts(args):
     """Summarize posts in store that lack a summary (via LLM)."""
     if args.seed_json:
         p = Path(args.seed_json)
@@ -118,7 +117,7 @@ def _summarize_posts(args, enriched_path: Path | None = None):
 def _enrich_activities_streaming(activities: list[dict], args):
     """
     Generator variant of _enrich_activities.
-    Yields (done, total) per activity. Returns (out_path, count) via StopIteration.
+    Yields (done, total) per activity. Returns count via StopIteration.
     """
     gen = enrich_activities_streaming(activities, limit=args.limit)
     enriched = activities
@@ -128,10 +127,11 @@ def _enrich_activities_streaming(activities: list[dict], args):
             yield next(gen)
     except StopIteration as e:
         enriched, count = e.value
-    out_path = Path(args.enriched_output) if args.enriched_output else DEFAULT_ENRICHED
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(enriched, indent=2))
-    return out_path, count
+    if args.enriched_output:
+        out_path = Path(args.enriched_output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(enriched, indent=2))
+    return count
 
 
 def _fetch_linked_content_streaming(args):
@@ -147,9 +147,7 @@ def _fetch_linked_content_streaming(args):
         return e.value or 0
 
 
-def _summarize_posts_streaming(
-    args, enriched_path: Path | None = None, summary_provider=None, summary_model=None
-):
+def _summarize_posts_streaming(args, summary_provider=None, summary_model=None):
     """
     Generator variant of _summarize_posts.
     Yields (batches_done, total_batches) per batch. Returns total via StopIteration.
@@ -204,10 +202,10 @@ def run_pipeline_ui(
     try:
         sys.stdout = out
         activities, _ = _collect_activities(args)
-        enriched_path, _ = _enrich_activities(activities, args)
+        _enrich_activities(activities, args)
         for _ in _fetch_linked_content_streaming(args):
             pass  # exhaust generator
-        _summarize_posts(args, enriched_path)
+        _summarize_posts(args)
         return True, out.getvalue()
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else 1
@@ -263,7 +261,6 @@ def run_pipeline_ui_streaming(
         yield _add(f"Collected {n1} activities.")
 
         # Enrich with per-activity progress (placeholder updated in-place)
-        enriched_path = DEFAULT_ENRICHED
         n2 = 0
         lines.append("Enriching…")
         gen = _enrich_activities_streaming(activities, args)
@@ -273,7 +270,7 @@ def run_pipeline_ui_streaming(
                 lines[-1] = f"Enriching {done}/{total}…"
                 yield _snapshot()
         except StopIteration as e:
-            enriched_path, n2 = e.value
+            n2 = e.value
         lines[-1] = f"Enriched {n2} activities."
         yield _snapshot()
 
@@ -296,7 +293,6 @@ def run_pipeline_ui_streaming(
         lines.append("Summarizing…")
         gen = _summarize_posts_streaming(
             args,
-            enriched_path,
             summary_provider=summary_provider,
             summary_model=summary_model,
         )
@@ -335,7 +331,10 @@ def main() -> int:
         "-o",
         help="Optional: write Phase 1 activity JSON for debugging (default: no file)",
     )
-    parser.add_argument("--enriched-output", help="Phase 2 output path")
+    parser.add_argument(
+        "--enriched-output",
+        help="Optional: write Phase 2 enriched activity JSON for debugging",
+    )
     parser.add_argument(
         "--seed-json",
         metavar="PATH",
@@ -354,10 +353,10 @@ def main() -> int:
 
     try:
         activities, _ = _collect_activities(args)
-        enriched_path, _ = _enrich_activities(activities, args)
+        _enrich_activities(activities, args)
         for _ in _fetch_linked_content_streaming(args):
             pass
-        _summarize_posts(args, enriched_path)
+        _summarize_posts(args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
     except Exception as e:
