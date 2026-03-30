@@ -11,6 +11,8 @@ from linkedin_api.activity_csv import (
 from linkedin_api.summarize_activity import (
     _parse_last,
     collect_from_csv,
+    load_activity_dicts_from_csv,
+    summarization_record_to_activity_dict,
 )
 
 
@@ -73,3 +75,16 @@ class TestCollectFromCsv:
         path.touch()
         records = collect_from_csv(csv_path=path)
         assert records == []
+
+    def test_summarization_record_to_activity_dict(self, csv_with_reaction):
+        records = collect_from_csv(csv_path=csv_with_reaction)
+        d = summarization_record_to_activity_dict(records[0])
+        assert d["post_urn"] == "urn:li:activity:123"
+        assert d["timestamp"] == 1700000000000
+        assert d["created_at"] == "2023-11-14T22:13:20+0000"
+
+    def test_load_activity_dicts_from_csv(self, csv_with_reaction):
+        rows = load_activity_dicts_from_csv(csv_with_reaction)
+        assert len(rows) == 1
+        assert rows[0]["activity_id"]
+        assert rows[0]["post_id"] == "123"

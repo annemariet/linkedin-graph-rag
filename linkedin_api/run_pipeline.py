@@ -5,9 +5,9 @@ Run the full MVP pipeline: collect → enrich → summarize.
 Processes new data and backfills history (posts in store not yet summarized).
 Use --seed-json to load existing enriched JSON into the store first.
 
-Incremental: Running 7d then 30d avoids recomputing. Phase 2 uses content store
-before fetching; Phase 3 only summarizes posts that lack metadata. Output JSON
-files are overwritten with the current period; the content store is appended/updated.
+Incremental: Running 7d then 30d avoids recomputing. Phase 1 reads the period slice
+from activities.csv (optional --output JSON for debugging). Phase 2 writes
+activities_enriched.json; Phase 3 updates the content store.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ from linkedin_api.enrich_activities import (
 from linkedin_api.fetch_linked_content import fetch_linked_content_streaming
 from linkedin_api.activity_csv import get_default_csv_path
 from linkedin_api.summarize_activity import (
-    _format_timestamp,
     collect_from_csv,
     ensure_csv_fetched,
+    summarization_record_to_activity_dict,
 )
 from linkedin_api.summarize_posts import (
     load_from_json_and_save,
@@ -38,12 +38,11 @@ from linkedin_api.summarize_posts import (
 )
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
-DEFAULT_ACTIVITIES = OUTPUT_DIR / "activities.json"
 DEFAULT_ENRICHED = OUTPUT_DIR / "activities_enriched.json"
 
 
-def _collect_activities(args) -> tuple[Path, int]:
-    """Collect activities from CSV (fetch + append when not skip-fetch). Returns (path to activities JSON, count)."""
+def _collect_activities(args) -> tuple[list[dict], int]:
+    """Collect activities from CSV (fetch + append when not skip-fetch). Returns (activity dicts, count)."""
     from datetime import datetime, timezone
 
     from linkedin_api.summarize_activity import _parse_last
@@ -71,33 +70,18 @@ def _collect_activities(args) -> tuple[Path, int]:
     if not args.quiet:
         print(f"Collected {len(records)} activities")
 
-    out_path = Path(args.output) if args.output else DEFAULT_ACTIVITIES
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out = [
-        {
-            "post_urn": r.post_urn,
-            "post_url": r.post_url,
-            "content": r.content,
-            "urls": r.urls,
-            "interaction_type": r.interaction_type,
-            "reaction_type": r.reaction_type,
-            "comment_text": r.comment_text,
-            "post_id": r.post_id,
-            "activity_id": r.activity_id,
-            "timestamp": r.timestamp,
-            "created_at": r.created_at or _format_timestamp(r.timestamp),
-        }
-        for r in records
-    ]
-    out_path.write_text(json.dumps(out, indent=2))
-    if not args.quiet:
-        print(f"Wrote {out_path}")
-    return out_path, len(records)
+    out = [summarization_record_to_activity_dict(r) for r in records]
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(out, indent=2))
+        if not args.quiet:
+            print(f"Wrote debug JSON {out_path}")
+    return out, len(records)
 
 
-def _enrich_activities(activities_path: Path, args) -> tuple[Path, int]:
+def _enrich_activities(activities: list[dict], args) -> tuple[Path, int]:
     """Enrich activities with content. Returns (path to enriched JSON, count)."""
-    activities = json.loads(activities_path.read_text())
     enriched, count = enrich_activities(activities, limit=args.limit)
     if not args.quiet:
         print(f"Enriched {count} activities")
@@ -131,12 +115,11 @@ def _summarize_posts(args, enriched_path: Path | None = None):
     return n
 
 
-def _enrich_activities_streaming(activities_path: Path, args):
+def _enrich_activities_streaming(activities: list[dict], args):
     """
     Generator variant of _enrich_activities.
     Yields (done, total) per activity. Returns (out_path, count) via StopIteration.
     """
-    activities = json.loads(activities_path.read_text())
     gen = enrich_activities_streaming(activities, limit=args.limit)
     enriched = activities
     count = 0
@@ -220,8 +203,8 @@ def run_pipeline_ui(
     old_stdout = sys.stdout
     try:
         sys.stdout = out
-        activities_path, _ = _collect_activities(args)
-        enriched_path, _ = _enrich_activities(activities_path, args)
+        activities, _ = _collect_activities(args)
+        enriched_path, _ = _enrich_activities(activities, args)
         for _ in _fetch_linked_content_streaming(args):
             pass  # exhaust generator
         _summarize_posts(args, enriched_path)
@@ -276,14 +259,14 @@ def run_pipeline_ui_streaming(
 
     try:
         yield _add("Starting pipeline…")
-        activities_path, n1 = _collect_activities(args)
+        activities, n1 = _collect_activities(args)
         yield _add(f"Collected {n1} activities.")
 
         # Enrich with per-activity progress (placeholder updated in-place)
         enriched_path = DEFAULT_ENRICHED
         n2 = 0
         lines.append("Enriching…")
-        gen = _enrich_activities_streaming(activities_path, args)
+        gen = _enrich_activities_streaming(activities, args)
         try:
             while True:
                 done, total = next(gen)
@@ -347,7 +330,11 @@ def main() -> int:
         dest="from_cache",
         help="Use only cached data from activities.csv (no API fetch)",
     )
-    parser.add_argument("--output", "-o", help="Phase 1 output path")
+    parser.add_argument(
+        "--output",
+        "-o",
+        help="Optional: write Phase 1 activity JSON for debugging (default: no file)",
+    )
     parser.add_argument("--enriched-output", help="Phase 2 output path")
     parser.add_argument(
         "--seed-json",
@@ -366,8 +353,8 @@ def main() -> int:
             print("Using --skip-fetch --last 30d (default)")
 
     try:
-        activities_path, _ = _collect_activities(args)
-        enriched_path, _ = _enrich_activities(activities_path, args)
+        activities, _ = _collect_activities(args)
+        enriched_path, _ = _enrich_activities(activities, args)
         for _ in _fetch_linked_content_streaming(args):
             pass
         _summarize_posts(args, enriched_path)

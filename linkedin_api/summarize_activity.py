@@ -175,6 +175,35 @@ def collect_from_csv(
     return [_to_summarization_record(r) for r in records]
 
 
+def summarization_record_to_activity_dict(r: SummarizationRecord) -> dict:
+    """Shape expected by ``enrich_activities`` / HTTP enrichment (from CSV pipeline)."""
+    return {
+        "post_urn": r.post_urn,
+        "post_url": r.post_url,
+        "content": r.content,
+        "urls": r.urls,
+        "interaction_type": r.interaction_type,
+        "reaction_type": r.reaction_type,
+        "comment_text": r.comment_text,
+        "post_id": r.post_id,
+        "activity_id": r.activity_id,
+        "timestamp": r.timestamp,
+        "created_at": r.created_at or _format_timestamp(r.timestamp),
+    }
+
+
+def load_activity_dicts_from_csv(
+    csv_path: Path | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[dict]:
+    """Load CSV rows as activity dicts for enrich (optional period filter)."""
+    return [
+        summarization_record_to_activity_dict(x)
+        for x in collect_from_csv(start=start, end=end, csv_path=csv_path)
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Collect activities for period-based summarization (reactions, reposts, comments)."
@@ -231,22 +260,7 @@ def main() -> int:
         return 1
     print(f"Collected {len(records)} activities")
 
-    out = [
-        {
-            "post_urn": r.post_urn,
-            "post_url": r.post_url,
-            "content": r.content,
-            "urls": r.urls,
-            "interaction_type": r.interaction_type,
-            "reaction_type": r.reaction_type,
-            "comment_text": r.comment_text,
-            "post_id": r.post_id,
-            "activity_id": r.activity_id,
-            "timestamp": r.timestamp,
-            "created_at": r.created_at or _format_timestamp(r.timestamp),
-        }
-        for r in records
-    ]
+    out = [summarization_record_to_activity_dict(r) for r in records]
     if args.output:
         args.output.write_text(json.dumps(out, indent=2))
         print(f"Wrote {args.output}")

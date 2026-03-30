@@ -27,7 +27,7 @@ from neo4j_graphrag.generation.graphrag import GraphRAG
 if TYPE_CHECKING:
     from neo4j import Driver
 
-from linkedin_api.activity_csv import get_data_dir
+from linkedin_api.activity_csv import get_data_dir, get_default_csv_path
 from linkedin_api.content_store import (
     _ms_to_iso,
     list_summarized_metadata,
@@ -48,8 +48,8 @@ from linkedin_api.query_graphrag import (
     create_vector_cypher_retriever,
     create_vector_retriever,
 )
-from linkedin_api.run_pipeline import DEFAULT_ACTIVITIES, run_pipeline_ui_streaming
-from linkedin_api.summarize_activity import _format_timestamp, _parse_last
+from linkedin_api.run_pipeline import run_pipeline_ui_streaming
+from linkedin_api.summarize_activity import _parse_last, load_activity_dicts_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 
 _REPORT_SYSTEM = (
@@ -125,8 +125,8 @@ def _truncate(s: str, max_len: int) -> str:
 
 def _get_posts_for_period(
     period: str,
-    activities_path: Path,
     max_posts: int,
+    csv_path: Path | None = None,
 ) -> tuple[list[dict], str | None]:
     """Posts scoped to period (activity timestamp in range). Sorted by activity time."""
     start_ms = _parse_last(period)
@@ -138,17 +138,19 @@ def _get_posts_for_period(
         f"{datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc):%Y-%m-%d}"
     )
 
+    path = csv_path or get_default_csv_path()
+    start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+    end_dt = datetime.now(timezone.utc)
     urn_to_activity: dict[str, dict] = {}
-    if activities_path.exists():
-        try:
-            for a in json.loads(activities_path.read_text()):
-                urn = (a.get("post_urn") or "").strip()
-                ts = a.get("timestamp")
-                ts_ms = int(ts) if isinstance(ts, (int, float)) else None
-                if urn and ts_ms is not None and start_ms <= ts_ms <= end_ms:
-                    urn_to_activity[urn] = a
-        except (json.JSONDecodeError, OSError):
-            pass
+    try:
+        for a in load_activity_dicts_from_csv(path, start=start_dt, end=end_dt):
+            urn = (a.get("post_urn") or "").strip()
+            ts = a.get("timestamp")
+            ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+            if urn and ts_ms is not None and start_ms <= ts_ms <= end_ms:
+                urn_to_activity[urn] = a
+    except OSError:
+        pass
 
     if not urn_to_activity:
         return [], period_dates
@@ -381,12 +383,13 @@ def _report_signature(
     report_provider: str | None = None,
     report_model: str | None = None,
     period: str = "7d",
-    activities_path: Path | None = None,
+    activities_csv_path: Path | None = None,
 ) -> tuple[str, int, tuple[str, ...], str, str, int, int, str] | None:
     """Signature of post set + report model + report mode + content_level + max_posts + max_full_post_chars + period."""
     limit = _resolve_max_posts(max_posts, content_level)
-    path = activities_path or DEFAULT_ACTIVITIES
-    metas, _ = _get_posts_for_period(period or "7d", path, limit)
+    metas, _ = _get_posts_for_period(
+        period or "7d", limit, csv_path=activities_csv_path
+    )
     if not metas:
         return None
     model_id = get_report_model_id(
@@ -683,16 +686,18 @@ def generate_activity_report(
     report_provider: str | None = None,
     report_model: str | None = None,
     period: str = "7d",
-    activities_path: Path | None = None,
+    activities_csv_path: Path | None = None,
 ) -> str:
     """Build report. Per-category: batches per category; 'other' is summaries+links.
     Single-pass: one LLM call with all links. Content: Minimal, Summary, or Full.
-    When period and activities_path are set, scopes to posts with reactions in that period.
+    When period is set, scopes to posts with activity rows in that period in activities.csv.
     """
     setup_gcp_credentials()
     limit = _resolve_max_posts(max_posts, content_level)
-    path = activities_path or DEFAULT_ACTIVITIES
-    metas, period_dates = _get_posts_for_period(period or "7d", path, limit)
+    csv_path = activities_csv_path or get_default_csv_path()
+    metas, period_dates = _get_posts_for_period(
+        period or "7d", limit, csv_path=csv_path
+    )
     if not metas:
         return "No summarized posts found. Run the pipeline first (collect → enrich → summarize)."
     sig = _report_signature(
@@ -703,7 +708,7 @@ def generate_activity_report(
         report_provider=report_provider,
         report_model=report_model,
         period=period or "7d",
-        activities_path=path,
+        activities_csv_path=csv_path,
     )
     if report_mode == REPORT_MODE_SINGLE_PASS:
         try:
@@ -1367,7 +1372,7 @@ def create_pipeline_interface():
                 report_provider=rep_prov or None,
                 report_model=rep_mod or None,
                 period=last_clean,
-                activities_path=DEFAULT_ACTIVITIES,
+                activities_csv_path=get_default_csv_path(),
             )
             disk = _load_report_cache(sig) if sig else None
 
@@ -1400,7 +1405,7 @@ def create_pipeline_interface():
                         report_provider=rep_prov or None,
                         report_model=rep_mod or None,
                         period=last_clean,
-                        activities_path=DEFAULT_ACTIVITIES,
+                        activities_csv_path=get_default_csv_path(),
                     )
                     cache = (result, sig) if sig else None
                     if sig is not None:

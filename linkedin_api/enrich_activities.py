@@ -2,7 +2,8 @@
 """
 Enrich activities with post content and linked URLs.
 
-Reads activities JSON (from summarize_activity). For each activity with post_url
+Reads activity dicts (from CSV pipeline via ``load_activity_dicts_from_csv`` or JSON).
+For each activity with post_url
 that has not been processed yet:
 
 1. Persists URLs already extracted from API text (present in the activities record).
@@ -22,6 +23,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from linkedin_api.activity_csv import get_default_csv_path
 from linkedin_api.content_store import (
     _ms_to_iso,
     has_metadata,
@@ -29,6 +31,7 @@ from linkedin_api.content_store import (
     save_content,
     save_metadata,
 )
+from linkedin_api.summarize_activity import load_activity_dicts_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
 
@@ -258,7 +261,7 @@ def main() -> int:
         "input",
         type=Path,
         nargs="?",
-        help="Activities JSON file (from summarize_activity -o)",
+        help="Activities JSON or activities.csv (default: master CSV path)",
     )
     parser.add_argument(
         "-o",
@@ -272,12 +275,20 @@ def main() -> int:
         help="Max number of posts to enrich (for testing)",
     )
     args = parser.parse_args()
-    if not args.input or not args.input.exists():
-        parser.error("Input file required")
-    activities = json.loads(args.input.read_text())
+    in_path = args.input
+    if not in_path:
+        in_path = get_default_csv_path()
+    if not in_path.exists():
+        parser.error(f"Input not found: {in_path}")
+    if in_path.suffix.lower() == ".csv":
+        activities = load_activity_dicts_from_csv(in_path)
+    else:
+        activities = json.loads(in_path.read_text(encoding="utf-8"))
     enriched, count = enrich_activities(activities, limit=args.limit)
-    out_path = args.output or args.input.with_name(
-        args.input.stem + "_enriched" + args.input.suffix
+    out_path = args.output or in_path.with_name(
+        in_path.stem
+        + "_enriched"
+        + (".json" if in_path.suffix.lower() == ".csv" else in_path.suffix)
     )
     out_path.write_text(json.dumps(enriched, indent=2))
     print(f"Enriched {count} activities, wrote {out_path}")
