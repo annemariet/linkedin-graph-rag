@@ -2,7 +2,8 @@
 """
 Enrich activities with post content and linked URLs.
 
-Reads activity dicts (from CSV pipeline via ``load_activity_dicts_from_csv`` or JSON).
+Reads activity dicts from CSV (default path) or a legacy JSON list file; writes only
+to the content store (no JSON output).
 For each activity with post_url
 that has not been processed yet:
 
@@ -264,12 +265,6 @@ def main() -> int:
         help="Activities JSON or activities.csv (default: master CSV path)",
     )
     parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        help="Output path (default: input with _enriched suffix)",
-    )
-    parser.add_argument(
         "--limit",
         type=int,
         help="Max number of posts to enrich (for testing)",
@@ -284,14 +279,8 @@ def main() -> int:
         activities = load_activity_dicts_from_csv(in_path)
     else:
         activities = json.loads(in_path.read_text(encoding="utf-8"))
-    enriched, count = enrich_activities(activities, limit=args.limit)
-    out_path = args.output or in_path.with_name(
-        in_path.stem
-        + "_enriched"
-        + (".json" if in_path.suffix.lower() == ".csv" else in_path.suffix)
-    )
-    out_path.write_text(json.dumps(enriched, indent=2))
-    print(f"Enriched {count} activities, wrote {out_path}")
+    _, count = enrich_activities(activities, limit=args.limit)
+    print(f"Enriched {count} activities (content store updated).")
     return 0
 
 
