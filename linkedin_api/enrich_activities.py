@@ -2,7 +2,7 @@
 """
 Enrich activities with post content and linked URLs.
 
-Reads activity dicts from the master activities CSV (or a path you pass); writes only
+Reads ``EnrichmentActivity`` rows (from CSV via ``collect_from_csv``); writes only
 to the content store.
 For each activity with post_url
 that has not been processed yet:
@@ -24,6 +24,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.activity_csv import get_default_csv_path
+from linkedin_api.enrichment_activity import EnrichmentActivity
 from linkedin_api.content_store import (
     _ms_to_iso,
     has_metadata,
@@ -110,7 +111,7 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
         return None
 
 
-def _run_enrichment(to_enrich: list[dict]):
+def _run_enrichment(to_enrich: list[EnrichmentActivity]):
     """
     Generator: for each record, persist URLs from API text and attempt HTTP fetch
     for post content and additional URLs. Yields (done, total) after each item.
@@ -118,31 +119,29 @@ def _run_enrichment(to_enrich: list[dict]):
     """
     total = len(to_enrich)
     enriched_count = 0
-    needs_browser: list[dict] = []
+    needs_browser: list[EnrichmentActivity] = []
 
     for i, rec in enumerate(to_enrich):
-        urn = rec.get("post_urn", "")
-        url = rec.get("post_url", "")
+        urn = rec.post_urn
+        url = rec.post_url
         if urn and url:
-            ts = rec.get("timestamp")
-            ts_ms = int(ts) if isinstance(ts, (int, float)) else None
-            post_created = (rec.get("post_created_at") or "").strip() or None
+            ts_ms = int(rec.timestamp) if rec.timestamp is not None else None
+            post_created = (rec.post_created_at or "").strip() or None
             # Fallback: Snowflake ID from URN encodes creation time (no HTTP needed)
             if not post_created:
                 post_created = post_created_at_from_urn(urn)
             post_author: str | None = None
-            # URLs already extracted from API text by summarize_activity
-            urls_from_api = rec.get("urls") or []
+            urls_from_api = rec.urls
 
             # 1) Content already in store (e.g. from a previous HTTP fetch)
             stored = load_content(urn)
             if stored and len(stored) >= 50:
-                if not rec.get("content"):
-                    rec["content"] = stored
-                rec["urls"] = list(dict.fromkeys(urls_from_api))
+                if not rec.content:
+                    rec.content = stored
+                rec.urls = list(dict.fromkeys(urls_from_api))
                 save_metadata(
                     urn,
-                    urls=rec["urls"],
+                    urls=rec.urls,
                     post_url=url,
                     post_author=post_author or "",
                     activity_time_iso=_ms_to_iso(ts_ms),
@@ -154,15 +153,14 @@ def _run_enrichment(to_enrich: list[dict]):
                 result = _fetch_with_requests(url)
                 if result:
                     fetched_content, fetched_urls, html_meta = result
-                    # HTML meta can supply post_created_at and post_author
                     if not post_created and html_meta.get("post_created_at"):
                         post_created = html_meta["post_created_at"]
                     if html_meta.get("post_author"):
                         post_author = html_meta["post_author"]
                     all_urls = list(dict.fromkeys(urls_from_api + fetched_urls))
-                    rec["urls"] = all_urls
-                    if not rec.get("content"):
-                        rec["content"] = fetched_content
+                    rec.urls = all_urls
+                    if not rec.content:
+                        rec.content = fetched_content
                         save_content(urn, fetched_content)
                     save_metadata(
                         urn,
@@ -174,8 +172,7 @@ def _run_enrichment(to_enrich: list[dict]):
                     )
                     enriched_count += 1
                 elif urls_from_api:
-                    # HTTP failed (e.g. login required) but API text had URLs
-                    rec["urls"] = urls_from_api
+                    rec.urls = urls_from_api
                     save_metadata(
                         urn,
                         urls=urls_from_api,
@@ -190,15 +187,15 @@ def _run_enrichment(to_enrich: list[dict]):
         yield i + 1, total
 
     for rec in needs_browser:
-        rec["_enrich_error"] = "Browser required; not implemented"
+        rec.enrich_error = "Browser required; not implemented"
     return enriched_count
 
 
 def enrich_activities(
-    activities: list[dict],
+    activities: list[EnrichmentActivity],
     *,
     limit: int | None = None,
-) -> tuple[list[dict], int]:
+) -> tuple[list[EnrichmentActivity], int]:
     """
     Enrich activities that have post_url and have not been processed yet.
     Returns (enriched_activities, count_enriched).
@@ -206,9 +203,9 @@ def enrich_activities(
     to_enrich = [
         a
         for a in activities
-        if a.get("post_url")
-        and not is_comment_feed_url(a.get("post_url", ""))
-        and not has_metadata(a.get("post_urn", ""))
+        if a.post_url
+        and not is_comment_feed_url(a.post_url)
+        and not has_metadata(a.post_urn)
     ]
     if limit:
         to_enrich = to_enrich[:limit]
@@ -224,7 +221,7 @@ def enrich_activities(
 
 
 def enrich_activities_streaming(
-    activities: list[dict],
+    activities: list[EnrichmentActivity],
     *,
     limit: int | None = None,
 ):
@@ -236,9 +233,9 @@ def enrich_activities_streaming(
     to_enrich = [
         a
         for a in activities
-        if a.get("post_url")
-        and not is_comment_feed_url(a.get("post_url", ""))
-        and not has_metadata(a.get("post_urn", ""))
+        if a.post_url
+        and not is_comment_feed_url(a.post_url)
+        and not has_metadata(a.post_urn)
     ]
     if limit:
         to_enrich = to_enrich[:limit]

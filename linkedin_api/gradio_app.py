@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from neo4j import Driver
 
 from linkedin_api.activity_csv import get_data_dir, get_default_csv_path
+from linkedin_api.enrichment_activity import EnrichmentActivity
 from linkedin_api.content_store import (
     _ms_to_iso,
     list_summarized_metadata,
@@ -141,12 +142,11 @@ def _get_posts_for_period(
     path = csv_path or get_default_csv_path()
     start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
     end_dt = datetime.now(timezone.utc)
-    urn_to_activity: dict[str, dict] = {}
+    urn_to_activity: dict[str, EnrichmentActivity] = {}
     try:
         for a in collect_from_csv(start=start_dt, end=end_dt, csv_path=path):
-            urn = (a.get("post_urn") or "").strip()
-            ts = a.get("timestamp")
-            ts_ms = int(ts) if isinstance(ts, (int, float)) else None
+            urn = (a.post_urn or "").strip()
+            ts_ms = int(a.timestamp) if a.timestamp is not None else None
             if urn and ts_ms is not None and start_ms <= ts_ms <= end_ms:
                 urn_to_activity[urn] = a
     except OSError:
@@ -161,14 +161,17 @@ def _get_posts_for_period(
         if (m.get("urn") or "").strip() in urn_to_activity
     ]
     for m in scoped:
-        ts = urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp")
-        if isinstance(ts, (int, float)):
-            m["activity_time_iso"] = _ms_to_iso(int(ts))
-    scoped.sort(
-        key=lambda m: int(
-            urn_to_activity.get((m.get("urn") or "").strip(), {}).get("timestamp") or 0
-        )
-    )
+        act = urn_to_activity.get((m.get("urn") or "").strip())
+        if act and act.timestamp is not None:
+            m["activity_time_iso"] = _ms_to_iso(int(act.timestamp))
+
+    def _activity_ts(meta: dict) -> int:
+        act = urn_to_activity.get((meta.get("urn") or "").strip())
+        if act and act.timestamp is not None:
+            return int(act.timestamp)
+        return 0
+
+    scoped.sort(key=_activity_ts)
     return scoped[:max_posts], period_dates
 
 

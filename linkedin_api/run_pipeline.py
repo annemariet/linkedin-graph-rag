@@ -23,12 +23,13 @@ from linkedin_api.enrich_activities import (
 )
 from linkedin_api.fetch_linked_content import fetch_linked_content_streaming
 from linkedin_api.activity_csv import get_default_csv_path
+from linkedin_api.enrichment_activity import EnrichmentActivity
 from linkedin_api.summarize_activity import collect_from_csv, ensure_csv_fetched
 from linkedin_api.summarize_posts import summarize_posts, summarize_posts_streaming
 
 
-def _collect_activities(args) -> tuple[list[dict], int]:
-    """Collect activities from CSV (fetch + append when not skip-fetch). Returns (activity dicts, count)."""
+def _collect_activities(args) -> tuple[list[EnrichmentActivity], int]:
+    """Collect from CSV (fetch + append when not skip-fetch). Returns (activities, count)."""
     from datetime import datetime, timezone
 
     from linkedin_api.summarize_activity import _parse_last
@@ -59,7 +60,7 @@ def _collect_activities(args) -> tuple[list[dict], int]:
     return records, len(records)
 
 
-def _enrich_activities(activities: list[dict], args) -> int:
+def _enrich_activities(activities: list[EnrichmentActivity], args) -> int:
     """Enrich activities into the content store. Returns count enriched."""
     _, count = enrich_activities(activities, limit=args.limit)
     if not args.quiet:
@@ -82,7 +83,7 @@ def _summarize_posts(args):
     return n
 
 
-def _enrich_activities_streaming(activities: list[dict], args):
+def _enrich_activities_streaming(activities: list[EnrichmentActivity], args):
     """
     Generator variant of _enrich_activities.
     Yields (done, total) per activity. Returns count via StopIteration.

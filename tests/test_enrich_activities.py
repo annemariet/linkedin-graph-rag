@@ -3,6 +3,7 @@
 import pytest
 
 from linkedin_api.content_store import has_metadata, load_metadata, save_content
+from linkedin_api.enrichment_activity import EnrichmentActivity
 from linkedin_api.enrich_activities import enrich_activities
 from linkedin_api.utils.urls import is_comment_feed_url
 
@@ -40,13 +41,20 @@ class TestEnrichSavesTimestamps:
         assert not has_metadata(urn)
 
         activities = [
-            {
-                "post_urn": urn,
-                "post_url": url,
-                "urls": ["https://example.com"],
-                "timestamp": ts_ms,
-                "post_created_at": post_created,
-            }
+            EnrichmentActivity(
+                post_urn=urn,
+                post_url=url,
+                content="",
+                urls=["https://example.com"],
+                interaction_type="reaction",
+                reaction_type=None,
+                comment_text="",
+                post_id="",
+                activity_id="",
+                timestamp=ts_ms,
+                created_at="",
+                post_created_at=post_created,
+            )
         ]
         enriched, count = enrich_activities(activities)
         assert count == 1
@@ -61,10 +69,19 @@ class TestEnrichSavesTimestamps:
         save_content(urn, "x" * 100)
 
         activities = [
-            {
-                "post_urn": urn,
-                "post_url": "https://linkedin.com/feed/update/urn:li:ugcPost:789",
-            }
+            EnrichmentActivity(
+                post_urn=urn,
+                post_url="https://linkedin.com/feed/update/urn:li:ugcPost:789",
+                content="",
+                urls=[],
+                interaction_type="reaction",
+                reaction_type=None,
+                comment_text="",
+                post_id="",
+                activity_id="",
+                timestamp=None,
+                created_at="",
+            )
         ]
         enriched, count = enrich_activities(activities)
         assert count == 1

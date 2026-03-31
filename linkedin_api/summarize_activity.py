@@ -5,8 +5,8 @@ Collect activities (reactions, reposts, comments) for period-based summarization
 - Fetch: Fetches from API, appends to activities.csv, loads with period filter.
 - Skip fetch (--from-cache): Load from activities.csv only, filter by period.
 
-Programmatic use: ``collect_from_csv`` returns activity dicts for enrich/report
-downstream; this CLI only fetches and reports counts (data lives in CSV).
+Programmatic use: ``collect_from_csv`` returns ``EnrichmentActivity`` rows for enrich
+and report scoping; this CLI only fetches and reports counts (data lives in CSV).
 """
 
 from __future__ import annotations
@@ -16,13 +16,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from linkedin_api.activity_csv import (
-    ActivityRecord,
-    ActivityType,
     append_records_csv,
     filter_by_date,
     get_default_csv_path,
     load_records_csv,
 )
+from linkedin_api.enrichment_activity import EnrichmentActivity
 from linkedin_api.extract_graph_data import (
     extract_activity_records,
     get_all_post_activities,
@@ -31,24 +30,6 @@ from linkedin_api.utils.changelog import (
     get_max_processed_at,
     save_last_processed_timestamp,
 )
-from linkedin_api.utils.urls import extract_urls_from_text
-from linkedin_api.utils.urns import comment_urn_to_post_url, urn_to_post_url
-
-
-def _urn_to_url(urn: str) -> str:
-    """Resolve URN to LinkedIn URL (post or comment)."""
-    if urn.startswith("urn:li:comment:"):
-        return comment_urn_to_post_url(urn) or ""
-    return urn_to_post_url(urn) or ""
-
-
-def _format_timestamp(ts_ms: int | None) -> str:
-    """Format epoch ms to ISO string."""
-    if ts_ms is None:
-        return ""
-    return datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%S%z"
-    )
 
 
 def _parse_last(value: str) -> int | None:
@@ -70,38 +51,6 @@ def _parse_last(value: str) -> int | None:
         return None
     cutoff = datetime.now(timezone.utc) - delta
     return int(cutoff.timestamp() * 1000)
-
-
-_TYPE_TO_INTERACTION: dict[str, str] = {
-    ActivityType.REACTION_TO_POST.value: "reaction",
-    ActivityType.REACTION_TO_COMMENT.value: "reaction",
-    ActivityType.REPOST.value: "repost",
-    ActivityType.INSTANT_REPOST.value: "repost",
-    ActivityType.COMMENT.value: "comment",
-}
-
-
-def activity_record_to_activity_dict(rec: ActivityRecord) -> dict:
-    """Build the activity dict used by enrich (from one CSV ``ActivityRecord``)."""
-    urls = extract_urls_from_text(rec.content) if rec.content else []
-    ts = int(rec.time) if rec.time else None
-    interaction_type = _TYPE_TO_INTERACTION.get(rec.activity_type, "reaction")
-    is_comment = rec.activity_type == ActivityType.COMMENT.value
-    post_urn = rec.parent_urn or rec.activity_urn if is_comment else rec.activity_urn
-    post_url = rec.post_url or _urn_to_url(post_urn)
-    return {
-        "post_urn": post_urn,
-        "post_url": post_url,
-        "content": "" if is_comment else (rec.content or ""),
-        "urls": urls,
-        "interaction_type": interaction_type,
-        "reaction_type": rec.reaction_type or None,
-        "comment_text": rec.content if is_comment else "",
-        "post_id": rec.post_id,
-        "activity_id": rec.activity_id,
-        "timestamp": ts,
-        "created_at": rec.created_at or _format_timestamp(ts),
-    }
 
 
 def ensure_csv_fetched(
@@ -138,9 +87,9 @@ def collect_from_csv(
     start: datetime | None = None,
     end: datetime | None = None,
     csv_path: Path | None = None,
-) -> list[dict]:
+) -> list[EnrichmentActivity]:
     """
-    Load activities from CSV, optional period filter, return dicts for enrich/report.
+    Load activities from CSV, optional period filter, return rows for enrich/report.
     Includes reactions, reposts, and comments.
     """
     records = load_records_csv(csv_path)
@@ -148,7 +97,7 @@ def collect_from_csv(
         return []
     if start or end:
         records = filter_by_date(records, start=start, end=end)
-    return [activity_record_to_activity_dict(r) for r in records]
+    return [EnrichmentActivity.from_activity_record(r) for r in records]
 
 
 def main() -> int:
