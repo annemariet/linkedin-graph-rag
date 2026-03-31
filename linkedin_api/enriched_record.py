@@ -1,9 +1,9 @@
 """
 Pipeline view of one CSV activity row for enrich and report scoping.
 
-``activity_csv.ActivityRecord`` is the persisted row; this type adds derived fields
-(post URN/URL for comments, split body vs comment text) and is mutated during enrich
-(``content``, ``urls``, ``enrich_error``).
+``activity_csv.ActivityRecord`` is the persisted row; ``EnrichedRecord`` adds derived
+fields (post URN/URL for comments, split body vs comment text) and is mutated during
+enrich (``content``, ``urls``, ``enrich_error``).
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ _TYPE_TO_INTERACTION: dict[str, str] = {
 
 
 @dataclass
-class EnrichmentActivity:
-    """One activity for the enrich step (from CSV, with derived post URL and text split)."""
+class EnrichedRecord:
+    """Working row for the enrich step (from CSV, with derived post URL and text split)."""
 
     post_urn: str
     post_url: str
@@ -58,7 +58,7 @@ class EnrichmentActivity:
     enrich_error: str | None = None
 
     @classmethod
-    def from_activity_record(cls, rec: ActivityRecord) -> EnrichmentActivity:
+    def from_activity_record(cls, rec: ActivityRecord) -> EnrichedRecord:
         urls = extract_urls_from_text(rec.content) if rec.content else []
         ts = int(rec.time) if rec.time else None
         interaction_type = _TYPE_TO_INTERACTION.get(rec.activity_type, "reaction")

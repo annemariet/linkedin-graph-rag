@@ -2,7 +2,7 @@
 """
 Enrich activities with post content and linked URLs.
 
-Reads ``EnrichmentActivity`` rows (from CSV via ``collect_from_csv``); writes only
+Reads ``EnrichedRecord`` rows (from CSV via ``collect_from_csv``); writes only
 to the content store.
 For each activity with post_url
 that has not been processed yet:
@@ -24,7 +24,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.activity_csv import get_default_csv_path
-from linkedin_api.enrichment_activity import EnrichmentActivity
+from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.content_store import (
     _ms_to_iso,
     has_metadata,
@@ -111,7 +111,7 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
         return None
 
 
-def _run_enrichment(to_enrich: list[EnrichmentActivity]):
+def _run_enrichment(to_enrich: list[EnrichedRecord]):
     """
     Generator: for each record, persist URLs from API text and attempt HTTP fetch
     for post content and additional URLs. Yields (done, total) after each item.
@@ -119,7 +119,7 @@ def _run_enrichment(to_enrich: list[EnrichmentActivity]):
     """
     total = len(to_enrich)
     enriched_count = 0
-    needs_browser: list[EnrichmentActivity] = []
+    needs_browser: list[EnrichedRecord] = []
 
     for i, rec in enumerate(to_enrich):
         urn = rec.post_urn
@@ -192,10 +192,10 @@ def _run_enrichment(to_enrich: list[EnrichmentActivity]):
 
 
 def enrich_activities(
-    activities: list[EnrichmentActivity],
+    activities: list[EnrichedRecord],
     *,
     limit: int | None = None,
-) -> tuple[list[EnrichmentActivity], int]:
+) -> tuple[list[EnrichedRecord], int]:
     """
     Enrich activities that have post_url and have not been processed yet.
     Returns (enriched_activities, count_enriched).
@@ -221,7 +221,7 @@ def enrich_activities(
 
 
 def enrich_activities_streaming(
-    activities: list[EnrichmentActivity],
+    activities: list[EnrichedRecord],
     *,
     limit: int | None = None,
 ):

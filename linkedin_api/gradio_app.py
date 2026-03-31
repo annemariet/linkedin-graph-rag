@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from neo4j import Driver
 
 from linkedin_api.activity_csv import get_data_dir, get_default_csv_path
-from linkedin_api.enrichment_activity import EnrichmentActivity
+from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.content_store import (
     _ms_to_iso,
     list_summarized_metadata,
@@ -142,7 +142,7 @@ def _get_posts_for_period(
     path = csv_path or get_default_csv_path()
     start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
     end_dt = datetime.now(timezone.utc)
-    urn_to_activity: dict[str, EnrichmentActivity] = {}
+    urn_to_activity: dict[str, EnrichedRecord] = {}
     try:
         for a in collect_from_csv(start=start_dt, end=end_dt, csv_path=path):
             urn = (a.post_urn or "").strip()

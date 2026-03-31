@@ -5,7 +5,7 @@ Collect activities (reactions, reposts, comments) for period-based summarization
 - Fetch: Fetches from API, appends to activities.csv, loads with period filter.
 - Skip fetch (--from-cache): Load from activities.csv only, filter by period.
 
-Programmatic use: ``collect_from_csv`` returns ``EnrichmentActivity`` rows for enrich
+Programmatic use: ``collect_from_csv`` returns ``EnrichedRecord`` rows for enrich
 and report scoping; this CLI only fetches and reports counts (data lives in CSV).
 """
 
@@ -21,7 +21,7 @@ from linkedin_api.activity_csv import (
     get_default_csv_path,
     load_records_csv,
 )
-from linkedin_api.enrichment_activity import EnrichmentActivity
+from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.extract_graph_data import (
     extract_activity_records,
     get_all_post_activities,
@@ -87,7 +87,7 @@ def collect_from_csv(
     start: datetime | None = None,
     end: datetime | None = None,
     csv_path: Path | None = None,
-) -> list[EnrichmentActivity]:
+) -> list[EnrichedRecord]:
     """
     Load activities from CSV, optional period filter, return rows for enrich/report.
     Includes reactions, reposts, and comments.
@@ -97,7 +97,7 @@ def collect_from_csv(
         return []
     if start or end:
         records = filter_by_date(records, start=start, end=end)
-    return [EnrichmentActivity.from_activity_record(r) for r in records]
+    return [EnrichedRecord.from_activity_record(r) for r in records]
 
 
 def main() -> int:

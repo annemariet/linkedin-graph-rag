@@ -9,7 +9,7 @@ from linkedin_api.activity_csv import (
     load_records_csv,
     make_activity_id,
 )
-from linkedin_api.enrichment_activity import EnrichmentActivity
+from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.summarize_activity import (
     _parse_last,
     collect_from_csv,
@@ -78,6 +78,6 @@ class TestCollectFromCsv:
 
     def test_from_activity_record_matches_collect(self, csv_with_reaction):
         ar = load_records_csv(csv_with_reaction)[0]
-        expected = EnrichmentActivity.from_activity_record(ar)
+        expected = EnrichedRecord.from_activity_record(ar)
         rows = collect_from_csv(csv_path=csv_with_reaction)
         assert rows == [expected]
