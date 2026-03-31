@@ -23,11 +23,7 @@ from linkedin_api.enrich_activities import (
 )
 from linkedin_api.fetch_linked_content import fetch_linked_content_streaming
 from linkedin_api.activity_csv import get_default_csv_path
-from linkedin_api.summarize_activity import (
-    collect_from_csv,
-    ensure_csv_fetched,
-    summarization_record_to_activity_dict,
-)
+from linkedin_api.summarize_activity import collect_from_csv, ensure_csv_fetched
 from linkedin_api.summarize_posts import summarize_posts, summarize_posts_streaming
 
 
@@ -60,8 +56,7 @@ def _collect_activities(args) -> tuple[list[dict], int]:
     if not args.quiet:
         print(f"Collected {len(records)} activities")
 
-    out = [summarization_record_to_activity_dict(r) for r in records]
-    return out, len(records)
+    return records, len(records)
 
 
 def _enrich_activities(activities: list[dict], args) -> int:

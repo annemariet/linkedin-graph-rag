@@ -49,7 +49,7 @@ from linkedin_api.query_graphrag import (
     create_vector_retriever,
 )
 from linkedin_api.run_pipeline import run_pipeline_ui_streaming
-from linkedin_api.summarize_activity import _parse_last, load_activity_dicts_from_csv
+from linkedin_api.summarize_activity import _parse_last, collect_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 
 _REPORT_SYSTEM = (
@@ -143,7 +143,7 @@ def _get_posts_for_period(
     end_dt = datetime.now(timezone.utc)
     urn_to_activity: dict[str, dict] = {}
     try:
-        for a in load_activity_dicts_from_csv(path, start=start_dt, end=end_dt):
+        for a in collect_from_csv(start=start_dt, end=end_dt, csv_path=path):
             urn = (a.get("post_urn") or "").strip()
             ts = a.get("timestamp")
             ts_ms = int(ts) if isinstance(ts, (int, float)) else None

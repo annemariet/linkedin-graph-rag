@@ -31,7 +31,7 @@ from linkedin_api.content_store import (
     save_content,
     save_metadata,
 )
-from linkedin_api.summarize_activity import load_activity_dicts_from_csv
+from linkedin_api.summarize_activity import collect_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
 
@@ -276,7 +276,7 @@ def main() -> int:
         parser.error(f"Input not found: {in_path}")
     if in_path.suffix.lower() != ".csv":
         parser.error(f"Expected a .csv file, got {in_path}")
-    activities = load_activity_dicts_from_csv(in_path)
+    activities = collect_from_csv(csv_path=in_path)
     _, count = enrich_activities(activities, limit=args.limit)
     print(f"Enriched {count} activities (content store updated).")
     return 0
