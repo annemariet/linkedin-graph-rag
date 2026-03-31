@@ -5,14 +5,13 @@ Collect activities (reactions, reposts, comments) for period-based summarization
 - Fetch: Fetches from API, appends to activities.csv, loads with period filter.
 - Skip fetch (--from-cache): Load from activities.csv only, filter by period.
 
-Output: list of {post_urn, post_url, content, urls, interaction_type, created_at, ...}
-for summarization and linked-resource pipelines.
+Programmatic use: ``collect_from_csv`` / ``load_activity_dicts_from_csv`` for
+downstream modules; this CLI only fetches and reports counts (data lives in CSV).
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -219,12 +218,6 @@ def main() -> int:
         help="Skip API fetch; use only activities.csv. Use with --last to filter by period.",
     )
     parser.add_argument(
-        "--output",
-        "-o",
-        type=Path,
-        help="Write JSON output to file",
-    )
-    parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
@@ -258,16 +251,8 @@ def main() -> int:
             "No data in activities.csv. Run extract_graph_data or use --last to fetch."
         )
         return 1
-    print(f"Collected {len(records)} activities")
-
-    out = [summarization_record_to_activity_dict(r) for r in records]
-    if args.output:
-        args.output.write_text(json.dumps(out, indent=2))
-        print(f"Wrote {args.output}")
-    else:
-        print(json.dumps(out[:5], indent=2))
-        if len(out) > 5:
-            print(f"... and {len(out) - 5} more")
+    n = len(records)
+    print(f"Collected {n} activities (see {csv_path} for full data).")
 
     return 0
 
