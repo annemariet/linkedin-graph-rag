@@ -2,8 +2,8 @@
 """
 Enrich activities with post content and linked URLs.
 
-Reads activity dicts from CSV (default path) or a legacy JSON list file; writes only
-to the content store (no JSON output).
+Reads activity dicts from the master activities CSV (or a path you pass); writes only
+to the content store.
 For each activity with post_url
 that has not been processed yet:
 
@@ -18,7 +18,6 @@ URLs from API text are saved even when the HTTP fetch fails (e.g. login required
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import requests
@@ -262,7 +261,7 @@ def main() -> int:
         "input",
         type=Path,
         nargs="?",
-        help="Activities JSON or activities.csv (default: master CSV path)",
+        help="activities.csv path (default: master CSV)",
     )
     parser.add_argument(
         "--limit",
@@ -275,10 +274,9 @@ def main() -> int:
         in_path = get_default_csv_path()
     if not in_path.exists():
         parser.error(f"Input not found: {in_path}")
-    if in_path.suffix.lower() == ".csv":
-        activities = load_activity_dicts_from_csv(in_path)
-    else:
-        activities = json.loads(in_path.read_text(encoding="utf-8"))
+    if in_path.suffix.lower() != ".csv":
+        parser.error(f"Expected a .csv file, got {in_path}")
+    activities = load_activity_dicts_from_csv(in_path)
     _, count = enrich_activities(activities, limit=args.limit)
     print(f"Enriched {count} activities (content store updated).")
     return 0
