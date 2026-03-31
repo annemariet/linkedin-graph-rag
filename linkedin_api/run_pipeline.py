@@ -6,15 +6,13 @@ Processes new data and backfills history (posts in store not yet summarized).
 Use --seed-json to load existing enriched JSON into the store first.
 
 Incremental: Running 7d then 30d avoids recomputing. Phase 1 reads the period slice
-from activities.csv (optional --output JSON for debugging). Phase 2 enriches into the
-content store (.md + .meta.json). Phase 3 LLM-summarizes posts that lack summary
-metadata. Optional --enriched-output writes a JSON snapshot for debugging only.
+from activities.csv. Phase 2 enriches into the content store (.md + .meta.json).
+Phase 3 LLM-summarizes posts that lack summary metadata.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import traceback
 from io import StringIO
@@ -69,27 +67,14 @@ def _collect_activities(args) -> tuple[list[dict], int]:
         print(f"Collected {len(records)} activities")
 
     out = [summarization_record_to_activity_dict(r) for r in records]
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(out, indent=2))
-        if not args.quiet:
-            print(f"Wrote debug JSON {out_path}")
     return out, len(records)
 
 
 def _enrich_activities(activities: list[dict], args) -> int:
     """Enrich activities into the content store. Returns count enriched."""
-    enriched, count = enrich_activities(activities, limit=args.limit)
+    _, count = enrich_activities(activities, limit=args.limit)
     if not args.quiet:
         print(f"Enriched {count} activities")
-
-    if args.enriched_output:
-        out_path = Path(args.enriched_output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(enriched, indent=2))
-        if not args.quiet:
-            print(f"Wrote debug enriched JSON {out_path}")
     return count
 
 
@@ -120,17 +105,12 @@ def _enrich_activities_streaming(activities: list[dict], args):
     Yields (done, total) per activity. Returns count via StopIteration.
     """
     gen = enrich_activities_streaming(activities, limit=args.limit)
-    enriched = activities
     count = 0
     try:
         while True:
             yield next(gen)
     except StopIteration as e:
-        enriched, count = e.value
-    if args.enriched_output:
-        out_path = Path(args.enriched_output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(enriched, indent=2))
+        _, count = e.value
     return count
 
 
@@ -187,8 +167,6 @@ def run_pipeline_ui(
     args = SimpleNamespace(
         last=last,
         from_cache=from_cache,
-        output=None,
-        enriched_output=None,
         seed_json=seed_json,
         limit=limit,
         batch_size=batch_size,
@@ -236,8 +214,6 @@ def run_pipeline_ui_streaming(
     args = SimpleNamespace(
         last=last,
         from_cache=from_cache,
-        output=None,
-        enriched_output=None,
         seed_json=seed_json,
         limit=limit,
         batch_size=batch_size,
@@ -325,15 +301,6 @@ def main() -> int:
         action="store_true",
         dest="from_cache",
         help="Use only cached data from activities.csv (no API fetch)",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        help="Optional: write Phase 1 activity JSON for debugging (default: no file)",
-    )
-    parser.add_argument(
-        "--enriched-output",
-        help="Optional: write Phase 2 enriched activity JSON for debugging",
     )
     parser.add_argument(
         "--seed-json",
