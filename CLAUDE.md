@@ -64,13 +64,17 @@ uv run python -m linkedin_api.verify_indexing
 # Launch Gradio web interface
 uv run python -m linkedin_api.gradio_app
 
-# Period-based activity collection (Phase 1)
-uv run python -m linkedin_api.summarize_activity --from-cache -o activities.json
-uv run python -m linkedin_api.summarize_activity --last 7d -o activities.json
+# Period-based pipeline (CSV → content store → report); optional --seed-json for backfill
+uv run python -m linkedin_api.run_pipeline --last 7d
+uv run python -m linkedin_api.run_pipeline --skip-fetch --last 30d
 
-# Enrich activities with post content (Phase 2; HTTP and store only)
-uv run python -m linkedin_api.enrich_activities activities.json -o activities_enriched.json
-uv run python -m linkedin_api.enrich_activities activities.json --limit 5
+# Summarize/fetch CSV only (no JSON output; data in ~/.linkedin_api/data/activities.csv)
+uv run python -m linkedin_api.summarize_activity --from-cache --last 7d
+uv run python -m linkedin_api.summarize_activity --last 7d
+
+# Enrich into content store (default: master CSV; optional legacy JSON path as input)
+uv run python -m linkedin_api.enrich_activities
+uv run python -m linkedin_api.enrich_activities --limit 5
 ```
 
 ### Testing

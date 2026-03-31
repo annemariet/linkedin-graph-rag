@@ -2,9 +2,8 @@ flowchart TB
     subgraph UI["UI Pipeline (Gradio Pipeline tab)"]
         API2[LinkedIn Portability API]
         API2 --> CSV["activities.csv\nIncremental fetch + append"]
-        CSV --> COLLECT["summarize_activity\nensure_csv_fetched + collect_from_csv"]
-        COLLECT --> ACTIVITIES["activities.json\nPeriod-filtered (7d, 14d…)"]
-        ACTIVITIES --> ENRICH_ACT["enrich_activities"]
+        CSV --> COLLECT["run_pipeline / summarize_activity\nCSV period slice in memory"]
+        COLLECT --> ENRICH_ACT["enrich_activities"]
         ENRICH_ACT --> STORE["content_store/\nMarkdown + .meta.json"]
         ENRICH_ACT --> FETCH_URL["fetch_linked_content"]
         FETCH_URL --> STORE

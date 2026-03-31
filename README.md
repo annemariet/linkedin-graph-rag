@@ -30,7 +30,6 @@ LinkedIn API → extract_graph_data → CSV + JSON → build_graph → Neo4j
 
 ```
 LinkedIn API → activities.csv → run_pipeline (collect → enrich → summarize) → Report
-    (enrich writes content_store; optional debug JSON via CLI flags)
 ```
 
 - **Storage:** `activities.csv`, `content_store/` (Markdown + metadata)
