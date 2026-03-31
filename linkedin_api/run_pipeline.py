@@ -3,7 +3,6 @@
 Run the full MVP pipeline: collect → enrich → summarize.
 
 Processes new data and backfills history (posts in store not yet summarized).
-Use --seed-json to load existing enriched JSON into the store first.
 
 Incremental: Running 7d then 30d avoids recomputing. Phase 1 reads the period slice
 from activities.csv. Phase 2 enriches into the content store (.md + .meta.json).
@@ -16,7 +15,6 @@ import argparse
 import sys
 import traceback
 from io import StringIO
-from pathlib import Path
 from types import SimpleNamespace
 
 from linkedin_api.enrich_activities import (
@@ -30,11 +28,7 @@ from linkedin_api.summarize_activity import (
     ensure_csv_fetched,
     summarization_record_to_activity_dict,
 )
-from linkedin_api.summarize_posts import (
-    load_from_json_and_save,
-    summarize_posts,
-    summarize_posts_streaming,
-)
+from linkedin_api.summarize_posts import summarize_posts, summarize_posts_streaming
 
 
 def _collect_activities(args) -> tuple[list[dict], int]:
@@ -80,12 +74,6 @@ def _enrich_activities(activities: list[dict], args) -> int:
 
 def _summarize_posts(args):
     """Summarize posts in store that lack a summary (via LLM)."""
-    if args.seed_json:
-        p = Path(args.seed_json)
-        if p.exists():
-            n = load_from_json_and_save(p)
-            if not args.quiet:
-                print(f"Seeded store from {p}: {n} posts")
     n = summarize_posts(
         limit=args.limit,
         batch_size=args.batch_size,
@@ -132,12 +120,6 @@ def _summarize_posts_streaming(args, summary_provider=None, summary_model=None):
     Generator variant of _summarize_posts.
     Yields (batches_done, total_batches) per batch. Returns total via StopIteration.
     """
-    if args.seed_json:
-        p = Path(args.seed_json)
-        if p.exists():
-            n = load_from_json_and_save(p)
-            if not args.quiet:
-                print(f"Seeded store from {p}: {n} posts")
     gen = summarize_posts_streaming(
         limit=args.limit,
         batch_size=args.batch_size,
@@ -157,7 +139,6 @@ def run_pipeline_ui(
     from_cache: bool = False,
     limit: int | None = None,
     batch_size: int = 5,
-    seed_json: str | None = None,
 ) -> tuple[bool, str]:
     """
     Run the MVP pipeline with given options; capture stdout and return (success, log).
@@ -167,7 +148,6 @@ def run_pipeline_ui(
     args = SimpleNamespace(
         last=last,
         from_cache=from_cache,
-        seed_json=seed_json,
         limit=limit,
         batch_size=batch_size,
         quiet=False,
@@ -201,7 +181,6 @@ def run_pipeline_ui_streaming(
     from_cache: bool = False,
     limit: int | None = None,
     batch_size: int = 5,
-    seed_json: str | None = None,
     summary_provider: str | None = None,
     summary_model: str | None = None,
 ):
@@ -214,7 +193,6 @@ def run_pipeline_ui_streaming(
     args = SimpleNamespace(
         last=last,
         from_cache=from_cache,
-        seed_json=seed_json,
         limit=limit,
         batch_size=batch_size,
         quiet=False,
@@ -301,11 +279,6 @@ def main() -> int:
         action="store_true",
         dest="from_cache",
         help="Use only cached data from activities.csv (no API fetch)",
-    )
-    parser.add_argument(
-        "--seed-json",
-        metavar="PATH",
-        help="Load enriched JSON into store first (for history backfill)",
     )
     parser.add_argument("--limit", type=int, help="Limit posts per phase")
     parser.add_argument("--batch-size", type=int, default=5, help="Phase 3 batch size")

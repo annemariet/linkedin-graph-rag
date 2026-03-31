@@ -13,12 +13,9 @@ import argparse
 import json
 import re
 import warnings
-from pathlib import Path
 
 from linkedin_api.content_store import (
     list_posts_needing_summary,
-    save_content,
-    save_metadata,
     update_summary_metadata,
 )
 from linkedin_api.llm_config import create_llm
@@ -121,29 +118,8 @@ def _summarize_batch(posts: list[dict], llm) -> int:
         return 0
 
 
-def load_from_json_and_save(path) -> int:
-    """Load enriched activities JSON, upsert into content store. Returns count saved."""
-    data = json.loads(path.read_text())
-    activities = data if isinstance(data, list) else data.get("activities", [])
-    seen: set[str] = set()
-    count = 0
-    for a in activities:
-        urn = a.get("post_urn", "")
-        content = a.get("content", "")
-        urls = a.get("urls") or []
-        post_url = a.get("post_url", "")
-        if not urn or not content or len(content) < 50 or urn in seen:
-            continue
-        seen.add(urn)
-        save_content(urn, content)
-        save_metadata(urn, urls=urls, post_url=post_url or "")
-        count += 1
-    return count
-
-
 def summarize_posts(
     *,
-    from_json: str | None = None,
     limit: int | None = None,
     batch_size: int = BATCH_SIZE,
     quiet: bool = False,
@@ -151,12 +127,6 @@ def summarize_posts(
     llm_model: str | None = None,
 ) -> int:
     """Summarize posts. Returns count summarized."""
-    if from_json:
-        p = Path(from_json)
-        if p.exists():
-            n = load_from_json_and_save(p)
-            if not quiet:
-                print(f"Loaded {n} posts from {from_json} into store")
     posts = list_posts_needing_summary(limit=limit)
     if not posts:
         if not quiet:
@@ -218,18 +188,11 @@ def summarize_posts_streaming(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize posts via LLM (Phase 3).")
-    parser.add_argument(
-        "--from-json",
-        type=str,
-        metavar="PATH",
-        help="Load enriched activities JSON into store first",
-    )
     parser.add_argument("--limit", type=int, help="Max posts to process")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("-q", "--quiet", action="store_true")
     args = parser.parse_args()
     n = summarize_posts(
-        from_json=args.from_json,
         limit=args.limit,
         batch_size=args.batch_size,
         quiet=args.quiet,
