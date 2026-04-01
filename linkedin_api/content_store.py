@@ -119,10 +119,11 @@ def _normalize_activity_time_iso(meta: dict) -> str:
 
 def _iso_to_ms(iso_str: str | None) -> int | None:
     """Parse ISO string to epoch ms for sorting. Returns None if invalid."""
-    if not (iso_str or "").strip():
+    s = (iso_str or "").strip()
+    if not s:
         return None
     try:
-        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         return int(dt.timestamp() * 1000)
     except (ValueError, TypeError):
         return None

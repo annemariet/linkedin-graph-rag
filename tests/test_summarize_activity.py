@@ -6,8 +6,10 @@ from linkedin_api.activity_csv import (
     ActivityRecord,
     ActivityType,
     append_records_csv,
+    load_records_csv,
     make_activity_id,
 )
+from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.summarize_activity import (
     _parse_last,
     collect_from_csv,
@@ -60,16 +62,22 @@ class TestCollectFromCsv:
         return path
 
     def test_reactions(self, csv_with_reaction):
-        records = collect_from_csv(csv_path=csv_with_reaction)
-        assert len(records) == 1
-        assert records[0].post_urn == "urn:li:activity:123"
-        assert records[0].content == "Hello"
-        assert records[0].interaction_type == "reaction"
-        assert records[0].reaction_type == "INTEREST"
-        assert records[0].created_at == "2023-11-14T22:13:20+0000"
+        rows = collect_from_csv(csv_path=csv_with_reaction)
+        assert len(rows) == 1
+        assert rows[0].post_urn == "urn:li:activity:123"
+        assert rows[0].content == "Hello"
+        assert rows[0].interaction_type == "reaction"
+        assert rows[0].reaction_type == "INTEREST"
+        assert rows[0].created_at == "2023-11-14T22:13:20+0000"
 
     def test_empty_csv(self, tmp_path):
         path = tmp_path / "empty.csv"
         path.touch()
         records = collect_from_csv(csv_path=path)
         assert records == []
+
+    def test_from_activity_record_matches_collect(self, csv_with_reaction):
+        ar = load_records_csv(csv_with_reaction)[0]
+        expected = EnrichedRecord.from_activity_record(ar)
+        rows = collect_from_csv(csv_path=csv_with_reaction)
+        assert rows == [expected]
