@@ -50,15 +50,26 @@ def test_get_default_provider_model_maps_openai_to_mammouth(monkeypatch):
 
     p, m = get_default_provider_model("summary")
     assert p == "mammouth"
-    assert m == "gpt-4o"
+    assert m == "gpt-5-nano"
 
 
-def test_resolve_provider_model_fallback_to_global(monkeypatch):
-    """When stage-specific vars unset, use global."""
+def test_resolve_provider_model_summary_defaults_to_cheap_openai(monkeypatch):
+    """Summary stage uses gpt-5-nano for openai when LLM_SUMMARY_MODEL unset (LUC-102)."""
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
     monkeypatch.delenv("LLM_SUMMARY_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_SUMMARY_MODEL", raising=False)
+
+    p, m = _resolve_provider_model("summary")
+    assert p == "openai"
+    assert m == "gpt-5-nano"
+
+
+def test_resolve_provider_model_summary_can_match_global_via_env(monkeypatch):
+    """Explicit LLM_SUMMARY_MODEL still overrides default cheap summary model."""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setenv("LLM_SUMMARY_MODEL", "gpt-4o-mini")
 
     p, m = _resolve_provider_model("summary")
     assert p == "openai"

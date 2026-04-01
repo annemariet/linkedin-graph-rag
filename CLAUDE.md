@@ -288,7 +288,7 @@ LLM/Embedder configuration (used by enrichment, indexing, and query):
 LLM_PROVIDER=openai              # openai | ollama | vertexai | anthropic
 LLM_MODEL=gpt-4o                 # Model name
 LLM_SUMMARY_PROVIDER=            # Override for summarization (cheaper model; e.g. ollama)
-LLM_SUMMARY_MODEL=               # Override model for summarization
+LLM_SUMMARY_MODEL=               # Override model for summarization (default gpt-5-nano for openai when unset)
 LLM_REPORT_PROVIDER=             # Override for report generation (stronger model)
 LLM_REPORT_MODEL=                # Override model for report
 LLM_BASE_URL=                    # Custom base URL (e.g., Mammouth endpoint; omit for standard OpenAI)

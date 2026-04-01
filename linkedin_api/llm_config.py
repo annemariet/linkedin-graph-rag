@@ -23,7 +23,8 @@ Environment variables:
 
   LLM_PROVIDER         openai | ollama | vertexai | anthropic (default: openai)
   LLM_MODEL           Model name                   (default: gpt-4o)
-  LLM_SUMMARY_PROVIDER / LLM_SUMMARY_MODEL  Override for summarization stage (cheaper)
+  LLM_SUMMARY_PROVIDER / LLM_SUMMARY_MODEL  Override for summarization stage (cheaper;
+    for openai, default model is gpt-5-nano when LLM_SUMMARY_MODEL is unset)
   LLM_REPORT_PROVIDER / LLM_REPORT_MODEL    Override for report stage (stronger)
   LLM_BASE_URL        Custom base URL               (default: https://api.mammouth.ai/v1)
   LLM_API_KEY         API key (for OpenAI-compatible providers)
@@ -42,6 +43,9 @@ from typing import Literal
 
 MAMMOUTH_BASE_URL = "https://api.mammouth.ai/v1"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
+
+# Default for per-item summarization when LLM_SUMMARY_MODEL is unset (LUC-102).
+_DEFAULT_SUMMARY_MODEL_OPENAI = "gpt-5-nano"
 
 # Keyring service/account for LLM API keys
 _KEYRING_SERVICE = "agent-fleet-rts"
@@ -177,12 +181,16 @@ def _resolve_provider_model(
         "vertexai": "gemini-1.5-pro",
         "anthropic": "claude-sonnet-4-5",
     }
-    model = (
-        os.getenv(f"{prefix}MODEL")
-        or os.getenv("LLM_MODEL")
-        or defaults.get(provider, "gpt-4o")
-        or "gpt-4o"
-    )
+    stage_model_env = os.getenv(f"{prefix}MODEL")
+    if stage == "summary" and not stage_model_env and provider == "openai":
+        model = _DEFAULT_SUMMARY_MODEL_OPENAI
+    else:
+        model = (
+            stage_model_env
+            or os.getenv("LLM_MODEL")
+            or defaults.get(provider, "gpt-4o")
+            or "gpt-4o"
+        )
     return provider, model
 
 
