@@ -22,9 +22,8 @@ API key resolution order (for Anthropic provider):
 Environment variables:
 
   LLM_PROVIDER         openai | ollama | vertexai | anthropic (default: openai)
-  LLM_MODEL           Model name                   (default: gpt-4o)
-  LLM_SUMMARY_PROVIDER / LLM_SUMMARY_MODEL  Override for summarization stage (cheaper;
-    for openai, default model is gpt-5-nano when LLM_SUMMARY_MODEL is unset)
+  LLM_MODEL           Model name                   (default: gpt-5-nano for openai)
+  LLM_SUMMARY_PROVIDER / LLM_SUMMARY_MODEL  Override for summarization stage (cheaper)
   LLM_REPORT_PROVIDER / LLM_REPORT_MODEL    Override for report stage (stronger)
   LLM_BASE_URL        Custom base URL               (default: https://api.mammouth.ai/v1)
   LLM_API_KEY         API key (for OpenAI-compatible providers)
@@ -44,8 +43,8 @@ from typing import Literal
 MAMMOUTH_BASE_URL = "https://api.mammouth.ai/v1"
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
-# Default for per-item summarization when LLM_SUMMARY_MODEL is unset (LUC-102).
-_DEFAULT_SUMMARY_MODEL_OPENAI = "gpt-5-nano"
+# Default model for OpenAI-compatible API (Mammouth, etc.) when LLM_MODEL is unset.
+OPENAI_COMPAT_DEFAULT_MODEL = "gpt-5-nano"
 
 # Keyring service/account for LLM API keys
 _KEYRING_SERVICE = "agent-fleet-rts"
@@ -176,21 +175,17 @@ def _resolve_provider_model(
     prefix = f"LLM_{stage.upper()}_" if stage else "LLM_"
     provider = os.getenv(f"{prefix}PROVIDER") or os.getenv("LLM_PROVIDER") or "openai"
     defaults: dict[str, str] = {
-        "openai": "gpt-4o",
+        "openai": OPENAI_COMPAT_DEFAULT_MODEL,
         "ollama": OLLAMA_DEFAULT_LLM_MODEL,
         "vertexai": "gemini-1.5-pro",
         "anthropic": "claude-sonnet-4-5",
     }
-    stage_model_env = os.getenv(f"{prefix}MODEL")
-    if stage == "summary" and not stage_model_env and provider == "openai":
-        model = _DEFAULT_SUMMARY_MODEL_OPENAI
-    else:
-        model = (
-            stage_model_env
-            or os.getenv("LLM_MODEL")
-            or defaults.get(provider, "gpt-4o")
-            or "gpt-4o"
-        )
+    model = (
+        os.getenv(f"{prefix}MODEL")
+        or os.getenv("LLM_MODEL")
+        or defaults.get(provider, OPENAI_COMPAT_DEFAULT_MODEL)
+        or OPENAI_COMPAT_DEFAULT_MODEL
+    )
     return provider, model
 
 
@@ -268,10 +263,11 @@ def create_llm(
             if not quiet:
                 warnings.warn(
                     f"LLM_MODEL={model!r} may be invalid for Mammouth. "
-                    "Using gpt-4o. Set LLM_MODEL to a model from GET /v1/models if needed.",
+                    f"Using {OPENAI_COMPAT_DEFAULT_MODEL}. "
+                    "Set LLM_MODEL to a model from GET /v1/models if needed.",
                     stacklevel=2,
                 )
-            model = "gpt-4o"
+            model = OPENAI_COMPAT_DEFAULT_MODEL
 
         from neo4j_graphrag.llm import OpenAILLM
 
