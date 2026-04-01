@@ -146,6 +146,9 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     post_author=post_author or "",
                     activity_time_iso=_ms_to_iso(ts_ms),
                     post_created_at=post_created,
+                    post_urn=urn,
+                    post_id=rec.post_id or "",
+                    activities_ids=[rec.activity_id] if rec.activity_id else [],
                 )
                 enriched_count += 1
             else:
@@ -169,6 +172,9 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         post_author=post_author or "",
                         activity_time_iso=_ms_to_iso(ts_ms),
                         post_created_at=post_created,
+                        post_urn=urn,
+                        post_id=rec.post_id or "",
+                        activities_ids=[rec.activity_id] if rec.activity_id else [],
                     )
                     enriched_count += 1
                 elif urls_from_api:
@@ -180,6 +186,9 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         post_author=post_author or "",
                         activity_time_iso=_ms_to_iso(ts_ms),
                         post_created_at=post_created,
+                        post_urn=urn,
+                        post_id=rec.post_id or "",
+                        activities_ids=[rec.activity_id] if rec.activity_id else [],
                     )
                     enriched_count += 1
                 else:
