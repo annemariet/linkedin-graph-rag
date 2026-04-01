@@ -1,6 +1,6 @@
 # Freelance pitch proposals (LUC-100) — with survey-backed numbers
 
-One-line pitches, descriptions, and **quantitative hooks** you can use in outbound, talks, and proposals. Figures below are from **industry surveys** cited in the sources section; replace or extend with any extra percentages from your Linear `survey.md` once merged into this doc.
+One-line pitches, descriptions, and **quantitative hooks** you can use in outbound, talks, and proposals. **Full tables and citations:** [`survey.md`](./survey.md).
 
 ---
 
@@ -36,6 +36,7 @@ One-line pitches, descriptions, and **quantitative hooks** you can use in outbou
 - **Trust and adoption:** **57%** of leaders in **high**-maturity organizations said business units **trust and are ready** to use new AI solutions — vs. **14%** in **low**-maturity organizations (Gartner Q4 2024 survey, n=432; [same press release](https://www.gartner.com/en/newsroom/press-releases/2025-06-30-gartner-survey-finds-forty-five-percent-of-organizations-with-high-artificial-intelligence-maturity-keep-artificial-intelligence-projects-operational-for-at-least-three-years)).
 - **Staying power of initiatives:** **45%** of high-maturity orgs kept AI initiatives **in production for three years or more** vs. **20%** in low-maturity orgs — longevity correlates with governance, engineering practices, and value-focused project selection (same source).
 - **Leadership and operating model:** **91%** of high-maturity orgs reported **dedicated AI leaders**; **~60%** reported **centralized** AI strategy, governance, data, and infrastructure capabilities (same source).
+- **Governance as stated barrier:** In Deloitte’s Q3 2024 GenAI survey, **29%** cited **lack of a governance model** and **30%** **difficulty managing risks** among top deployment barriers ([Deloitte](https://www2.deloitte.com/us/en/pages/about-deloitte/articles/press-releases/state-of-generative-ai-Q3.html)) — aligns with “doctor” work on operating model, not just models.
 
 **Description:** Diagnose silos, unclear ownership, and business–tech tension using validated team-level patterns from your literature stack (e.g. community smells, socio-technical anti-patterns). Follow with coaching, rituals, and light structural recommendations. Monthly retainer friendly.
 
@@ -58,8 +59,10 @@ One-line pitches, descriptions, and **quantitative hooks** you can use in outbou
 **Survey hooks**
 
 - **Production vs. pilot culture:** MIT Sloan Management Review (reporting with BCG) describes organizations running **many pilots and proofs of concept** but **few production deployments**, with much “AI” still legacy ML or small RPA — i.e. a structural **pilot–production gap** rather than a single magic metric ([The Problem With AI Pilots](https://sloanreview.mit.edu/article/the-problem-with-ai-pilots/)).
-- **Why discipline matters:** **63%** of high-maturity orgs run **financial risk analysis, ROI analysis, and concrete customer-impact measurement** on AI initiatives — practices associated with sustaining value (Gartner, same press release as above).
-- **Security as scale barrier:** **48%** of high-maturity leaders listed **security threats** in their **top three** barriers — a production-hard problem, not a notebook problem (Gartner).
+- **GenAI still mostly experiments:** Deloitte (Q3 2024 GenAI survey, n=2,770) found a **large majority (68%)** of organizations had moved **30% or fewer** of GenAI experiments **fully into production** ([Deloitte press release](https://www2.deloitte.com/us/en/pages/about-deloitte/articles/press-releases/state-of-generative-ai-Q3.html)).
+- **Classic pilot→production rate:** Gartner’s 2021–22 AI survey (n=699) reported on average **54%** of AI projects **from pilot to production** — so nearly **half** do not ([Gartner, Aug 2022](https://www.gartner.com/en/newsroom/press-releases/2022-08-22-gartner-survey-reveals-80-percent-of-executives-think-automation-can-be-applied-to-any-business-decision)).
+- **Why discipline matters:** **63%** of high-maturity orgs run **financial risk analysis, ROI analysis, and concrete customer-impact measurement** on AI initiatives — practices associated with sustaining value (Gartner Q4 2024, [Jun 2025](https://www.gartner.com/en/newsroom/press-releases/2025-06-30-gartner-survey-finds-forty-five-percent-of-organizations-with-high-artificial-intelligence-maturity-keep-artificial-intelligence-projects-operational-for-at-least-three-years)).
+- **Security as scale barrier:** **48%** of high-maturity leaders listed **security threats** in their **top three** barriers — a production-hard problem, not a notebook problem (Gartner Q4 2024, same link).
 
 **Description:** For a chosen use case: path to deployment, minimal MLOps, monitoring hooks, ownership handoff. Mix implementation and pairing.
 
@@ -81,8 +84,9 @@ One-line pitches, descriptions, and **quantitative hooks** you can use in outbou
 
 **Survey hooks**
 
-- **Use-case clarity (low maturity):** **37%** of low-maturity leaders — **finding the right use case** in the **top three** barriers (Gartner) — good opener for workshop scope: “from idea to spec.”
-- **Metrics culture:** **63%** of high-maturity orgs tie AI work to **ROI and customer impact** measurement (Gartner) — workshops can install a **minimum viable metrics** set for teams that score lower today.
+- **Use-case clarity (low maturity):** **37%** of low-maturity leaders — **finding the right use case** in the **top three** barriers (Gartner Q4 2024) — good opener for workshop scope: “from idea to spec.”
+- **Metrics culture:** **63%** of high-maturity orgs tie AI work to **ROI and customer impact** measurement (Gartner Q4 2024) — workshops can install a **minimum viable metrics** set for teams that score lower today.
+- **Measurement gap (GenAI):** **41%** of Deloitte Q3 2024 respondents **struggled to define and measure** GenAI impacts; only **16%** produced **regular CFO reports** on value ([Deloitte](https://www2.deloitte.com/us/en/pages/about-deloitte/articles/press-releases/state-of-generative-ai-Q3.html)).
 
 **Description:** Facilitated discovery: success metrics, data needs, workflow change, rollout risks. Part-time, workshop-based.
 
@@ -104,8 +108,9 @@ One-line pitches, descriptions, and **quantitative hooks** you can use in outbou
 
 **Survey hooks**
 
-- **Trust gap as teaching moment:** **57% vs. 14%** business-unit trust/readiness (high vs. low maturity) — frame the course around **trust, governance, and adoption**, not model trivia (Gartner).
-- **Barrier literacy:** Top barriers differ by maturity — **use case** (37% low) vs. **security** (48% high) and **data quality** (~30–34% across maturity) — good module boundaries for executives (Gartner).
+- **Trust gap as teaching moment:** **57% vs. 14%** business-unit trust/readiness (high vs. low maturity) — frame the course around **trust, governance, and adoption**, not model trivia (Gartner Q4 2024).
+- **Barrier literacy:** Top barriers differ by maturity — **use case** (37% low) vs. **security** (48% high) and **data quality** (~30–34% across maturity) — good module boundaries for executives (Gartner Q4 2024).
+- **Enthusiasm vs. proof:** Deloitte Q3 2024: **high/very high** GenAI interest among senior execs **63%** (**−11** pp vs Q1 2024) and boards **53%** (**−8** pp), while **41%** still struggle to measure impact — good narrative for “ask better questions before the next budget round” ([Deloitte](https://www2.deloitte.com/us/en/pages/about-deloitte/articles/press-releases/state-of-generative-ai-Q3.html)).
 
 **Description:** Short practical sessions: what AI can/can’t do, evaluating proposals, procurement red flags, minimal governance. Feeds inbound for proposals 1–2.
 
@@ -131,14 +136,11 @@ One-line pitches, descriptions, and **quantitative hooks** you can use in outbou
 
 ## Sources (survey-backed)
 
+Abbreviated index — **full tables:** [`survey.md`](./survey.md).
+
 | Stat (summary) | Source |
 |----------------|--------|
-| 45% vs 20% — AI initiatives in production 3+ years (high vs. low maturity); n=432; Q4 2024 | [Gartner, 30 Jun 2025](https://www.gartner.com/en/newsroom/press-releases/2025-06-30-gartner-survey-finds-forty-five-percent-of-organizations-with-high-artificial-intelligence-maturity-keep-artificial-intelligence-projects-operational-for-at-least-three-years) |
-| 57% vs 14% — business units trust / ready to use new AI (high vs. low maturity) | Same |
-| 34% / 29% — data availability & quality as top AI implementation challenges (low / high maturity) | Same |
-| 37% low-maturity — “right use case” in top 3 barriers; 48% high-maturity — security in top 3 | Same |
-| 63% high-maturity — financial / ROI / customer-impact measurement | Same |
-| 91% high-maturity — dedicated AI leaders; ~60% centralized strategy/governance/data/infra | Same |
-| Pilot-heavy, production-light pattern in large orgs | [MIT SMR — The Problem With AI Pilots](https://sloanreview.mit.edu/article/the-problem-with-ai-pilots/) |
-
-**Note:** Merge in any additional percentages from Linear issue LUC-100 `survey.md` here so all numbers live in one place.
+| Gartner Q4 2024 maturity survey (longevity, trust, barriers, metrics, leadership, n=432) | [Gartner, 30 Jun 2025](https://www.gartner.com/en/newsroom/press-releases/2025-06-30-gartner-survey-finds-forty-five-percent-of-organizations-with-high-artificial-intelligence-maturity-keep-artificial-intelligence-projects-operational-for-at-least-three-years) |
+| ~54% pilot→production (avg.); n=699; Oct–Dec 2021 | [Gartner, 22 Aug 2022](https://www.gartner.com/en/newsroom/press-releases/2022-08-22-gartner-survey-reveals-80-percent-of-executives-think-automation-can-be-applied-to-any-business-decision) |
+| GenAI production gap, data avoidance, risk barriers, measurement (n=2,770; May–Jun 2024) | [Deloitte GenAI Q3 press release](https://www2.deloitte.com/us/en/pages/about-deloitte/articles/press-releases/state-of-generative-ai-Q3.html) |
+| Pilot-heavy, production-light pattern (qualitative) | [MIT SMR — The Problem With AI Pilots](https://sloanreview.mit.edu/article/the-problem-with-ai-pilots/) |

@@ -6,7 +6,7 @@ Grouped by which problems they help you probe. Use as hooks, discovery calls, or
 
 ## Lead generation — “AI Team Doctor” / fractional diagnostics
 
-Questions aimed at **qualifying buyers**, surfacing **organizational** pain, and opening a **short diagnostic** or paid discovery. Pair with stats on trust, longevity, and metrics (see `pitches.md`).
+Questions aimed at **qualifying buyers**, surfacing **organizational** pain, and opening a **short diagnostic** or paid discovery. Pair with stats on trust, longevity, and metrics (see [`survey.md`](./survey.md) and [`pitches.md`](./pitches.md)).
 
 **Fit & urgency**
 
