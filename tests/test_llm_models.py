@@ -4,6 +4,7 @@ import json
 from unittest.mock import patch
 
 from linkedin_api.llm_models import (
+    ensure_models_in_choices,
     fetch_anthropic_models,
     fetch_models_for_provider,
     fetch_ollama_models,
@@ -13,6 +14,13 @@ from linkedin_api.llm_models import (
 
 def test_fetch_models_for_provider_unknown():
     assert fetch_models_for_provider("unknown") == []
+
+
+def test_ensure_models_in_choices_prepends_missing():
+    base = [("kimi · Moonshot", "kimi-2-thinking"), ("gpt-4o · OpenAI", "gpt-4o")]
+    out = ensure_models_in_choices(base, "gpt-5-nano", "gpt-4o")
+    assert out[0] == ("gpt-5-nano", "gpt-5-nano")
+    assert out[1:] == base
 
 
 def test_fetch_ollama_models_success():

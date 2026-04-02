@@ -40,7 +40,11 @@ from linkedin_api.llm_config import (
     get_default_provider_model,
     get_report_model_id,
 )
-from linkedin_api.llm_models import fetch_all_provider_models, fetch_models_for_provider
+from linkedin_api.llm_models import (
+    ensure_models_in_choices,
+    fetch_all_provider_models,
+    fetch_models_for_provider,
+)
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -1146,6 +1150,12 @@ def create_pipeline_interface():
             for prov in (sp, rp):
                 if not models_by_provider.get(prov, []):
                     models_by_provider[prov] = fetch_models_for_provider(prov) or []
+            # Mammouth: API list is cost-sorted and may omit the configured default.
+            for prov in {sp, rp}:
+                if prov == "mammouth":
+                    models_by_provider[prov] = ensure_models_in_choices(
+                        models_by_provider.get(prov, []), sm, rm
+                    )
 
             def _choice_ids(choices: list[tuple[str, str]]) -> list[str]:
                 """Extract model ids from (label, model_id) choices."""
