@@ -43,18 +43,19 @@ def test_get_report_model_id_includes_model_in_cache_key(monkeypatch):
 
 
 def test_get_default_provider_model_maps_openai_to_mammouth(monkeypatch):
-    """UI default for openai provider is mammouth."""
+    """UI default for openai provider is mammouth; default model is gpt-5-nano."""
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_SUMMARY_MODEL", raising=False)
     from linkedin_api.llm_config import get_default_provider_model
 
     p, m = get_default_provider_model("summary")
     assert p == "mammouth"
-    assert m == "gpt-4o"
+    assert m == "gpt-5-nano"
 
 
 def test_resolve_provider_model_fallback_to_global(monkeypatch):
-    """When stage-specific vars unset, use global."""
+    """When stage-specific vars unset, summary uses LLM_MODEL then openai default."""
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
     monkeypatch.delenv("LLM_SUMMARY_PROVIDER", raising=False)
