@@ -1,9 +1,40 @@
 ---
 name: linear-use
-description: Linear workflow and how to attach images or files without brittle base64 hacks. Use for Linear issues, comments, attachments, or when the user mentions Linear tickets.
+description: Use Linear for task management; update tickets via MCP when working on them. Attach screenshots to demonstrate progress when relevant.
 ---
 
 # Linear
+
+## Overview
+
+Follow these rules when working with Linear task management.
+
+## Updating Linear via MCP
+
+Linear is connected as **plugin-linear-linear**. Use it to keep tickets in sync:
+
+- **Set status**: `update_issue` with `id` (issue UUID or identifier like `LUC-41`) and `state` (e.g. `"In Progress"`, `"Done"`, `"In Review"`, `"Backlog"`).
+- **Add a comment**: `create_comment` with `issueId` (UUID) and `body` (markdown).
+- **Get issue**: `get_issue` with `id` (e.g. `LUC-41`) returns full issue including `id` (UUID for update_issue/create_comment).
+- **List issues**: `list_issues` for recent issues.
+
+
+## Linear updates
+
+I'll assign tasks with a Linear ticket id or a link to a task.
+
+- When you start working on it, mark it as "in progress"
+- Start with a proposed implementation plan:
+    - Follow Tidy First principles and TDD as much as possible when planning.
+    - Post the plan as a comment on the Linear task
+    - Mark the ticket as "in review"
+- Once you get a reply from me, either through Linear or in the chat:
+    - set the ticket back to "in progress"
+    - create a working git branch with the ticket id in the branch name to work on the ticket
+    - start updating the code with small steps
+    - make small, well identified commits using gitmoji and conventional commits
+- push a new pull request with the ticket id in the branch name, then mark the ticket to "in review" again
+- Once the last PR is merged, mark the ticket as done
 
 ## Tickets and PRs
 
@@ -28,4 +59,4 @@ description: Linear workflow and how to attach images or files without brittle b
 
 ## Gradio / UI evidence
 
-If a screenshot must show **env-driven defaults** (e.g. `.env` overrides), confirm **local env** matches what you’re demonstrating before capturing; otherwise the UI will disagree with “code defaults.”
+If a screenshot must show **env-driven defaults** (e.g. `.env` overrides), confirm **local env** matches what you’re demonstrating before capturing; otherwise the UI will disagree with “code defaults.” If working on a VM, setup the local `.env` file as needed.
