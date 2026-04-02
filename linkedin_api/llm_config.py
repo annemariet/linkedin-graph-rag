@@ -174,8 +174,8 @@ def _resolve_provider_model(
     """Resolve provider and model for a pipeline stage. Fallback to global vars."""
     prefix = f"LLM_{stage.upper()}_" if stage else "LLM_"
     provider = os.getenv(f"{prefix}PROVIDER") or os.getenv("LLM_PROVIDER") or "openai"
+    # Per-provider defaults when LLM_*_MODEL and LLM_MODEL are unset (openai → gpt-5-nano below).
     defaults: dict[str, str] = {
-        "openai": OPENAI_COMPAT_DEFAULT_MODEL,
         "ollama": OLLAMA_DEFAULT_LLM_MODEL,
         "vertexai": "gemini-1.5-pro",
         "anthropic": "claude-sonnet-4-5",
@@ -183,7 +183,7 @@ def _resolve_provider_model(
     model = (
         os.getenv(f"{prefix}MODEL")
         or os.getenv("LLM_MODEL")
-        or defaults.get(provider, OPENAI_COMPAT_DEFAULT_MODEL)
+        or defaults.get(provider)
         or OPENAI_COMPAT_DEFAULT_MODEL
     )
     return provider, model
