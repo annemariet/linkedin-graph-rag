@@ -22,25 +22,6 @@ from linkedin_api.llm_config import (
 logger = logging.getLogger(__name__)
 
 
-def ensure_models_in_choices(
-    choices: list[tuple[str, str]], *model_ids: str
-) -> list[tuple[str, str]]:
-    """Prepend model ids missing from choices as (id, id) labels.
-
-    Mammouth lists are sorted by cost; the configured default (e.g. gpt-5-nano) may be
-    absent from the API response. Without this, the UI falls back to the first listed
-    model (often a different cheap model).
-    """
-    present = {c[1] for c in choices}
-    extra: list[tuple[str, str]] = []
-    for mid in model_ids:
-        if not mid or mid in present:
-            continue
-        extra.append((mid, mid))
-        present.add(mid)
-    return extra + choices
-
-
 def fetch_ollama_models(base_url: str | None = None) -> list[tuple[str, str]]:
     """List models available in Ollama. Returns (label, model_id); label same as id. Starts Ollama if needed."""
     base = base_url or OLLAMA_DEFAULT_URL

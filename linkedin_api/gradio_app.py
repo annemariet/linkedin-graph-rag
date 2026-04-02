@@ -40,11 +40,7 @@ from linkedin_api.llm_config import (
     get_default_provider_model,
     get_report_model_id,
 )
-from linkedin_api.llm_models import (
-    ensure_models_in_choices,
-    fetch_all_provider_models,
-    fetch_models_for_provider,
-)
+from linkedin_api.llm_models import fetch_all_provider_models, fetch_models_for_provider
 from linkedin_api.query_graphrag import (
     NEO4J_DATABASE,
     NEO4J_PASSWORD,
@@ -1150,30 +1146,42 @@ def create_pipeline_interface():
             for prov in (sp, rp):
                 if not models_by_provider.get(prov, []):
                     models_by_provider[prov] = fetch_models_for_provider(prov) or []
-            # Mammouth: API list is cost-sorted and may omit the configured default.
-            for prov in {sp, rp}:
-                if prov == "mammouth":
-                    models_by_provider[prov] = ensure_models_in_choices(
-                        models_by_provider.get(prov, []), sm, rm
-                    )
 
             def _choice_ids(choices: list[tuple[str, str]]) -> list[str]:
                 """Extract model ids from (label, model_id) choices."""
                 return [c[1] for c in choices]
 
+            def _resolve_model_value(
+                stage: str,
+                provider: str,
+                default_model: str,
+                choices: list[tuple[str, str]],
+            ) -> str:
+                ids = _choice_ids(choices)
+                if default_model in ids:
+                    return default_model
+                fallback = ids[0] if ids else ""
+                if default_model:
+                    logger.warning(
+                        "Configured %s model %r is not in the %s provider list; "
+                        "using %r instead. Check LLM_*_MODEL / LLM_MODEL and provider.",
+                        stage,
+                        default_model,
+                        provider,
+                        fallback,
+                    )
+                return fallback
+
             def _choices_for(
-                d: dict, provider: str, default_model: str
+                d: dict, provider: str, default_model: str, stage: str
             ) -> tuple[list[tuple[str, str]], str]:
                 models = d.get(provider, [])
                 choices = models if models else [(default_model, default_model)]
-                ids = _choice_ids(choices)
-                value = (
-                    default_model if default_model in ids else (ids[0] if ids else "")
-                )
+                value = _resolve_model_value(stage, provider, default_model, choices)
                 return choices, value
 
-            s_choices, s_val = _choices_for(models_by_provider, sp, sm)
-            r_choices, r_val = _choices_for(models_by_provider, rp, rm)
+            s_choices, s_val = _choices_for(models_by_provider, sp, sm, "summary")
+            r_choices, r_val = _choices_for(models_by_provider, rp, rm, "report")
 
             with gr.Row():
                 with gr.Column():
@@ -1203,14 +1211,12 @@ def create_pipeline_interface():
 
             def refresh_summary_models(provider):
                 choices = fetch_models_for_provider(provider) or [(sm, sm)]
-                ids = _choice_ids(choices)
-                value = sm if sm in ids else (ids[0] if ids else "")
+                value = _resolve_model_value("summary", provider, sm, choices)
                 return gr.update(choices=choices, value=value)
 
             def refresh_report_models(provider):
                 choices = fetch_models_for_provider(provider) or [(rm, rm)]
-                ids = _choice_ids(choices)
-                value = rm if rm in ids else (ids[0] if ids else "")
+                value = _resolve_model_value("report", provider, rm, choices)
                 return gr.update(choices=choices, value=value)
 
             summary_provider.change(
