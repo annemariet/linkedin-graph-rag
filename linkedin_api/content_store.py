@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from linkedin_api.activity_csv import get_data_dir
+from linkedin_api.utils.urls import resolve_redirect
 
 
 def _content_dir() -> Path:
@@ -90,11 +91,36 @@ _META_KEYS = (
     "category",
     "urls",
     "post_url",
+    "post_urn",
     "post_author",
+    "post_author_url",
+    "post_id",
+    "activities_ids",
     "summarized_at",
     "activity_time_iso",
     "post_created_at",
 )
+
+
+def resolve_urls_for_metadata(urls: list[str] | None) -> list[str]:
+    """Return unique URLs after best-effort redirect resolution (see ``resolve_redirect``)."""
+    if not urls:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        s = (u or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        try:
+            resolved = resolve_redirect(s)
+        except Exception:
+            resolved = s
+        if resolved not in seen:
+            seen.add(resolved)
+        out.append(resolved)
+    return out
 
 
 def _ms_to_iso(ts_ms: int | float | None) -> str:
@@ -140,8 +166,16 @@ def save_metadata(
     post_url: str = "",
     **extra: Any,
 ) -> Path:
-    """Save metadata for urn. Overwrites existing."""
-    meta = {
+    """Save metadata for *urn*.
+
+    Merges with any existing file: ``activities_ids`` are unioned in order;
+    ``post_id``, ``post_urn``, and ``post_author_url`` are kept from the
+    previous file when the new values are empty. ``urls`` are de-duplicated
+    and passed through ``resolve_urls_for_metadata``.
+    """
+    existing = dict(load_metadata(urn) or {})
+    from_extra = {k: v for k, v in extra.items() if k in _META_KEYS}
+    meta: dict[str, Any] = {
         "summary": summary,
         "topics": topics or [],
         "technologies": technologies or [],
@@ -149,8 +183,50 @@ def save_metadata(
         "category": category or "",
         "urls": urls or [],
         "post_url": post_url or "",
-        **{k: v for k, v in extra.items() if k in _META_KEYS},
+        "post_urn": "",
+        "post_author": "",
+        "post_author_url": "",
+        "post_id": "",
+        "activities_ids": [],
+        "summarized_at": existing.get("summarized_at") or "",
+        "activity_time_iso": "",
+        "post_created_at": "",
     }
+    meta.update({k: v for k, v in existing.items() if k in _META_KEYS})
+    meta.update(from_extra)
+    meta["summary"] = summary
+    meta["topics"] = topics or []
+    meta["technologies"] = technologies or []
+    meta["people"] = people or []
+    meta["category"] = category or ""
+    meta["urls"] = resolve_urls_for_metadata(urls or [])
+    meta["post_url"] = post_url or meta.get("post_url") or ""
+
+    prev_ids = existing.get("activities_ids") or []
+    if not isinstance(prev_ids, list):
+        prev_ids = [str(prev_ids)]
+    else:
+        prev_ids = [str(x) for x in prev_ids if x]
+    new_ids = meta.get("activities_ids") or []
+    if not isinstance(new_ids, list):
+        new_ids = [str(new_ids)]
+    else:
+        new_ids = [str(x) for x in new_ids if x]
+    meta["activities_ids"] = list(dict.fromkeys(prev_ids + new_ids))
+
+    for k in ("post_id", "post_urn", "post_author_url"):
+        if not (str(meta.get(k) or "")).strip() and existing.get(k):
+            meta[k] = existing[k]
+
+    if not (str(meta.get("post_created_at") or "")).strip() and existing.get(
+        "post_created_at"
+    ):
+        meta["post_created_at"] = existing["post_created_at"]
+    if not (str(meta.get("activity_time_iso") or "")).strip() and existing.get(
+        "activity_time_iso"
+    ):
+        meta["activity_time_iso"] = existing["activity_time_iso"]
+
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
     return path
@@ -159,10 +235,11 @@ def save_metadata(
 def update_urls_metadata(urn: str, urls: list[str]) -> Path:
     """Update only the ``urls`` field in metadata, preserving all other fields.
 
-    Creates a minimal metadata record if none exists yet.
+    Creates a minimal metadata record if none exists yet. URLs are resolved
+    via ``resolve_urls_for_metadata``.
     """
     meta = dict(load_metadata(urn) or {})
-    meta["urls"] = urls
+    meta["urls"] = resolve_urls_for_metadata(urls)
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
     return path
@@ -247,6 +324,9 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
             meta = json.loads(path.read_text(encoding="utf-8"))
             if not (meta.get("summary") or "").strip():
                 continue
+            act_ids = meta.get("activities_ids") or []
+            if not isinstance(act_ids, list):
+                act_ids = []
             out.append(
                 {
                     "urn": urn or "",
@@ -257,7 +337,11 @@ def list_summarized_metadata(limit: int | None = None) -> list[dict[str, Any]]:
                     "category": meta.get("category") or "",
                     "summarized_at": meta.get("summarized_at") or "",
                     "post_url": meta.get("post_url") or "",
+                    "post_urn": (meta.get("post_urn") or "").strip(),
                     "post_author": (meta.get("post_author") or "").strip(),
+                    "post_author_url": (meta.get("post_author_url") or "").strip(),
+                    "post_id": (meta.get("post_id") or "").strip(),
+                    "activities_ids": [str(x) for x in act_ids if x],
                     "activity_time_iso": _normalize_activity_time_iso(meta),
                     "post_created_at": (meta.get("post_created_at") or "").strip(),
                 }
