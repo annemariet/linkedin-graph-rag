@@ -34,62 +34,21 @@ from linkedin_api.content_store import (
 )
 from linkedin_api.summarize_activity import collect_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
+from linkedin_api.utils.post_html import (
+    parse_post_body_from_soup,
+    parse_post_meta_from_soup,
+)
 from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
-_CONTENT_SELECTORS = [
-    "article[data-id]",
-    ".feed-shared-update-v2__description",
-    ".feed-shared-text",
-    '[data-test-id="main-feed-activity-card"]',
-]
-
-
-def _parse_content_from_html(html: str) -> str:
-    """Extract post body text from LinkedIn page HTML."""
-    soup = BeautifulSoup(html, "html.parser")
-    content_text = []
-    for selector in _CONTENT_SELECTORS:
-        for elem in soup.select(selector):
-            text = elem.get_text(strip=True)
-            if text and len(text) > 20:
-                content_text.append(text)
-    if content_text:
-        return "\n".join(content_text)
-    og = soup.find("meta", property="og:description")
-    if og and og.get("content"):
-        content_text.append(str(og["content"]))
-    title = soup.find("title")
-    if title:
-        t = title.get_text(strip=True)
-        if " | " in t:
-            content_text.append(t.split(" | ")[0])
-    return "\n".join(content_text) if content_text else ""
-
-
-def _parse_meta_from_html(html: str) -> dict:
-    """
-    Best-effort extraction of post_created_at and post_author from HTML.
-
-    Looks for meta tags (article:published_time, og:article:author, etc.).
-    LinkedIn's SPA may not expose these; works better for third-party articles.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    out: dict = {}
-    for meta in soup.find_all("meta"):
-        prop = meta.get("property") or meta.get("name", "")
-        content = str(meta.get("content") or "").strip()
-        if not content:
-            continue
-        if prop in ("article:published_time", "og:article:published_time"):
-            out["post_created_at"] = content
-        elif (
-            prop in ("article:author", "og:article:author", "author")
-            and "post_author" not in out
-        ):
-            out["post_author"] = content
-    return out
+_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
 
 
 def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
@@ -98,14 +57,17 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
     non-200, empty content, or error. html_meta may have post_created_at, post_author.
     """
     try:
-        resp = requests.get(url, timeout=10, allow_redirects=True)
+        resp = requests.get(
+            url, timeout=10, allow_redirects=True, headers=_FETCH_HEADERS
+        )
         if resp.status_code != 200:
             return None
         html = resp.text
-        content = _parse_content_from_html(html)
+        soup = BeautifulSoup(html, "html.parser")
+        content = parse_post_body_from_soup(soup)
         if not content or len(content) < 50:
             return None
-        html_meta = _parse_meta_from_html(html)
+        html_meta = parse_post_meta_from_soup(soup)
         return content, extract_urls_from_text(content), html_meta
     except Exception:
         return None
@@ -131,6 +93,7 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
             if not post_created:
                 post_created = post_created_at_from_urn(urn)
             post_author: str | None = None
+            post_author_url: str | None = None
             urls_from_api = rec.urls
 
             # 1) Content already in store (e.g. from a previous HTTP fetch)
@@ -144,6 +107,7 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     urls=rec.urls,
                     post_url=url,
                     post_author=post_author or "",
+                    post_author_url=post_author_url or "",
                     activity_time_iso=_ms_to_iso(ts_ms),
                     post_created_at=post_created,
                     post_urn=urn,
@@ -160,6 +124,8 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         post_created = html_meta["post_created_at"]
                     if html_meta.get("post_author"):
                         post_author = html_meta["post_author"]
+                    if html_meta.get("post_author_url"):
+                        post_author_url = html_meta["post_author_url"]
                     all_urls = list(dict.fromkeys(urls_from_api + fetched_urls))
                     rec.urls = all_urls
                     if not rec.content:
@@ -170,6 +136,7 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         urls=all_urls,
                         post_url=url,
                         post_author=post_author or "",
+                        post_author_url=post_author_url or "",
                         activity_time_iso=_ms_to_iso(ts_ms),
                         post_created_at=post_created,
                         post_urn=urn,
@@ -184,6 +151,7 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         urls=urls_from_api,
                         post_url=url,
                         post_author=post_author or "",
+                        post_author_url=post_author_url or "",
                         activity_time_iso=_ms_to_iso(ts_ms),
                         post_created_at=post_created,
                         post_urn=urn,
