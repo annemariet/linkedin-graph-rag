@@ -35,6 +35,7 @@ from linkedin_api.content_store import (
 from linkedin_api.summarize_activity import collect_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.post_html import (
+    linkedin_http_fetch_is_blocked,
     parse_post_body_from_soup,
     parse_post_meta_from_soup,
 )
@@ -63,6 +64,8 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
         if resp.status_code != 200:
             return None
         html = resp.text
+        if linkedin_http_fetch_is_blocked(resp.url, html):
+            return None
         soup = BeautifulSoup(html, "html.parser")
         content = parse_post_body_from_soup(soup)
         if not content or len(content) < 50:
@@ -144,23 +147,42 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         activities_ids=[rec.activity_id] if rec.activity_id else [],
                     )
                     enriched_count += 1
-                elif urls_from_api:
-                    rec.urls = urls_from_api
-                    save_metadata(
-                        urn,
-                        urls=urls_from_api,
-                        post_url=url,
-                        post_author=post_author or "",
-                        post_author_url=post_author_url or "",
-                        activity_time_iso=_ms_to_iso(ts_ms),
-                        post_created_at=post_created,
-                        post_urn=urn,
-                        post_id=rec.post_id or "",
-                        activities_ids=[rec.activity_id] if rec.activity_id else [],
-                    )
-                    enriched_count += 1
                 else:
-                    needs_browser.append(rec)
+                    api_body = (rec.content or "").strip()
+                    api_urls = list(dict.fromkeys(urls_from_api))
+                    if len(api_body) >= 50:
+                        rec.urls = api_urls
+                        save_content(urn, api_body)
+                        save_metadata(
+                            urn,
+                            urls=api_urls,
+                            post_url=url,
+                            post_author=post_author or "",
+                            post_author_url=post_author_url or "",
+                            activity_time_iso=_ms_to_iso(ts_ms),
+                            post_created_at=post_created,
+                            post_urn=urn,
+                            post_id=rec.post_id or "",
+                            activities_ids=[rec.activity_id] if rec.activity_id else [],
+                        )
+                        enriched_count += 1
+                    elif api_urls:
+                        rec.urls = api_urls
+                        save_metadata(
+                            urn,
+                            urls=api_urls,
+                            post_url=url,
+                            post_author=post_author or "",
+                            post_author_url=post_author_url or "",
+                            activity_time_iso=_ms_to_iso(ts_ms),
+                            post_created_at=post_created,
+                            post_urn=urn,
+                            post_id=rec.post_id or "",
+                            activities_ids=[rec.activity_id] if rec.activity_id else [],
+                        )
+                        enriched_count += 1
+                    else:
+                        needs_browser.append(rec)
         yield i + 1, total
 
     for rec in needs_browser:

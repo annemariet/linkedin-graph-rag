@@ -24,7 +24,10 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
-from linkedin_api.utils.post_html import parse_post_author_from_soup
+from linkedin_api.utils.post_html import (
+    linkedin_http_fetch_is_blocked,
+    parse_post_author_from_soup,
+)
 from linkedin_api.utils.urns import comment_urn_to_post_url
 
 logger = logging.getLogger(__name__)
@@ -243,6 +246,16 @@ def fetch_post_page(
             raw = cached_path.read_text(encoding="utf-8", errors="replace")
             out["html"] = raw
             out["from_cache"] = True
+            if linkedin_http_fetch_is_blocked(normalized, raw):
+                try:
+                    cached_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                out["error"] = (
+                    "Cached HTML was LinkedIn login/signup page; cache entry removed."
+                )
+                out["html"] = None
+                return out
             soup = BeautifulSoup(raw, "html.parser")
             out["author"] = _parse_author_from_soup(soup)
             out["content"] = _parse_content_from_soup(soup)
@@ -260,6 +273,13 @@ def fetch_post_page(
         response.raise_for_status()
         raw = response.text
         out["html"] = raw
+        if linkedin_http_fetch_is_blocked(response.url, raw):
+            out["error"] = (
+                "LinkedIn returned login/signup page instead of public post HTML."
+            )
+            out["content"] = ""
+            out["author"] = None
+            return out
         if save_to_cache and cached_path:
             try:
                 cached_path.write_text(raw, encoding="utf-8")

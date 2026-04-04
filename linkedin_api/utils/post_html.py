@@ -10,6 +10,10 @@ from bs4 import BeautifulSoup
 
 _LI_SUBDOMAIN = re.compile(r"https?://[a-z]{2}\.linkedin\.com", re.I)
 
+# Logged-out ``/feed/update/urn:li:activity:…`` often redirects here; og:description is this blurb.
+_LI_GENERIC_OG_BLURB = "500 million+ members"
+_LI_GENERIC_OG_BLURB_2 = "manage your professional identity"
+
 # Same as enrich_activities / enrich_profiles (public post body)
 _CONTENT_SELECTORS = [
     "article[data-id]",
@@ -147,6 +151,29 @@ def parse_post_author_from_html(html: str) -> dict[str, str]:
     if not html:
         return {}
     return parse_post_author_from_soup(BeautifulSoup(html, "html.parser"))
+
+
+def linkedin_http_fetch_is_blocked(final_url: str, html: str) -> bool:
+    """
+    True if the HTTP response is LinkedIn's login/signup shell, not a public post page.
+
+    Unauthenticated requests to ``/feed/update/urn:li:…`` commonly redirect to
+    ``/signup/cold-join``; parsing ``og:description`` then yields generic marketing
+    copy that must not be stored as post content.
+    """
+    u = (final_url or "").lower()
+    if "linkedin.com/signup" in u or "linkedin.com/uas/login" in u:
+        return True
+    h = html or ""
+    if "d_registration-cold-join" in h:
+        return True
+    if 'data-app-id="com.linkedin.registration-frontend' in h:
+        return True
+    hl = h.lower()
+    if _LI_GENERIC_OG_BLURB.lower() in hl and _LI_GENERIC_OG_BLURB_2.lower() in hl:
+        if "socialmediaposting" not in hl:
+            return True
+    return False
 
 
 def parse_post_body_from_soup(soup: BeautifulSoup) -> str:

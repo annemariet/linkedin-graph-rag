@@ -1,8 +1,15 @@
 """Tests for enrich_activities module."""
 
+from unittest.mock import patch
+
 import pytest
 
-from linkedin_api.content_store import has_metadata, load_metadata, save_content
+from linkedin_api.content_store import (
+    has_metadata,
+    load_content,
+    load_metadata,
+    save_content,
+)
 from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.enrich_activities import enrich_activities
 from linkedin_api.utils.urls import is_comment_feed_url
@@ -56,7 +63,7 @@ class TestEnrichSavesTimestamps:
                 post_created_at=post_created,
             )
         ]
-        enriched, count = enrich_activities(activities)
+        _, count = enrich_activities(activities)
         assert count == 1
 
         meta = load_metadata(urn)
@@ -83,10 +90,46 @@ class TestEnrichSavesTimestamps:
                 created_at="",
             )
         ]
-        enriched, count = enrich_activities(activities)
+        _, count = enrich_activities(activities)
         assert count == 1
 
         meta = load_metadata(urn)
         assert meta is not None
         assert meta.get("activity_time_iso") in (None, "")
         assert meta.get("post_created_at") in (None, "")
+
+    def test_login_wall_falls_back_to_csv_content_not_generic_blurb(self):
+        """When HTTP returns signup shell, use Portability text from CSV for .md."""
+        urn = "urn:li:activity:7445812127325401089"
+        url = "https://www.linkedin.com/feed/update/urn:li:activity:7445812127325401089"
+        api_text = (
+            "Real post body from the API with enough characters to pass the fifty "
+            "character minimum for summarization and storage in the content store."
+        )
+
+        activities = [
+            EnrichedRecord(
+                post_urn=urn,
+                post_url=url,
+                content=api_text,
+                urls=["https://example.org/paper"],
+                interaction_type="reaction",
+                reaction_type=None,
+                comment_text="",
+                post_id="7445812127325401089",
+                activity_id="abc",
+                timestamp=1,
+                created_at="",
+            )
+        ]
+        with patch(
+            "linkedin_api.enrich_activities._fetch_with_requests", return_value=None
+        ):
+            _, count = enrich_activities(activities)
+        assert count == 1
+        stored = load_content(urn)
+        assert stored == api_text
+        assert "500 million" not in (stored or "")
+        meta = load_metadata(urn)
+        assert meta is not None
+        assert meta.get("urls")

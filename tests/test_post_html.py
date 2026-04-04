@@ -7,6 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from linkedin_api.utils.post_html import (
+    linkedin_http_fetch_is_blocked,
     normalize_linkedin_profile_url,
     parse_post_author_from_html,
     parse_post_author_from_soup,
@@ -33,6 +34,36 @@ to pass enrichment length checks here.</p>
 Jane Example</a>
 </body></html>
 """
+
+
+def test_linkedin_http_fetch_is_blocked_cold_join():
+    url = "https://www.linkedin.com/signup/cold-join?session_redirect=x"
+    html = '<meta name="pageKey" content="d_registration-cold-join">'
+    assert linkedin_http_fetch_is_blocked(url, html) is True
+
+
+def test_linkedin_http_fetch_is_blocked_generic_og_without_post():
+    url = "https://www.linkedin.com/feed/update/urn:li:activity:1"
+    html = (
+        '<meta property="og:description" content="500 million+ members | '
+        "Manage your professional identity. Build and engage with your professional network."
+        ' Access knowledge, insights and opportunities.">'
+    )
+    assert linkedin_http_fetch_is_blocked(url, html) is True
+
+
+def test_linkedin_http_fetch_not_blocked_real_post_has_jsonld():
+    html = (
+        '<script type="application/ld+json">'
+        '{"@type":"SocialMediaPosting","author":{"name":"A"}}'
+        "</script>"
+        '<meta property="og:description" content="500 million+ members | Manage your '
+        'professional identity. Build and engage with your professional network.">'
+    )
+    assert (
+        linkedin_http_fetch_is_blocked("https://www.linkedin.com/posts/x", html)
+        is False
+    )
 
 
 def test_normalize_linkedin_profile_url():
