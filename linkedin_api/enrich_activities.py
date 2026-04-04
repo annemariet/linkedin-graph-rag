@@ -148,9 +148,11 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     )
                     enriched_count += 1
                 else:
+                    # CSV ``content`` is only the *post* body for activity_type=post.
+                    # Repost rows carry reshare commentary; comments use ``comment_text``.
                     api_body = (rec.content or "").strip()
                     api_urls = list(dict.fromkeys(urls_from_api))
-                    if len(api_body) >= 50:
+                    if rec.interaction_type == "post" and len(api_body) >= 50:
                         rec.urls = api_urls
                         save_content(urn, api_body)
                         save_metadata(

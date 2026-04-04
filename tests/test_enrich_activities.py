@@ -99,7 +99,7 @@ class TestEnrichSavesTimestamps:
         assert meta.get("post_created_at") in (None, "")
 
     def test_login_wall_falls_back_to_csv_content_not_generic_blurb(self):
-        """When HTTP returns signup shell, use Portability text from CSV for .md."""
+        """When HTTP fails, only ``post`` rows may use CSV body as .md (not reactions)."""
         urn = "urn:li:activity:7445812127325401089"
         url = "https://www.linkedin.com/feed/update/urn:li:activity:7445812127325401089"
         api_text = (
@@ -113,7 +113,7 @@ class TestEnrichSavesTimestamps:
                 post_url=url,
                 content=api_text,
                 urls=["https://example.org/paper"],
-                interaction_type="reaction",
+                interaction_type="post",
                 reaction_type=None,
                 comment_text="",
                 post_id="7445812127325401089",
@@ -133,3 +133,28 @@ class TestEnrichSavesTimestamps:
         meta = load_metadata(urn)
         assert meta is not None
         assert meta.get("urls")
+
+    def test_login_wall_does_not_save_csv_body_for_reaction_rows(self):
+        urn = "urn:li:activity:999"
+        with patch(
+            "linkedin_api.enrich_activities._fetch_with_requests", return_value=None
+        ):
+            _, count = enrich_activities(
+                [
+                    EnrichedRecord(
+                        post_urn=urn,
+                        post_url=f"https://www.linkedin.com/feed/update/{urn}",
+                        content="Wrong: this would be post text on a bad mapping",
+                        urls=[],
+                        interaction_type="reaction",
+                        reaction_type="LIKE",
+                        comment_text="",
+                        post_id="999",
+                        activity_id="x",
+                        timestamp=1,
+                        created_at="",
+                    )
+                ]
+            )
+        assert count == 0
+        assert load_content(urn) is None
