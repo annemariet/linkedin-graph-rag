@@ -9,6 +9,7 @@ from linkedin_api.content_store import (
     load_metadata,
     list_posts_needing_summary,
     list_summarized_metadata,
+    merge_post_identity,
     needs_summary,
     resolve_urls_for_metadata,
     save_content,
@@ -138,6 +139,17 @@ class TestMetadata:
         assert meta["post_author"] == "Scott Condron"
         assert meta["post_author_url"] == "https://www.linkedin.com/in/condronscott/"
         assert meta["activities_ids"] == ["id-reaction-1", "id-comment-2"]
+
+    def test_merge_post_identity_noop_returns_none(self):
+        urn = "urn:li:activity:merge_noop"
+        save_content(urn, "x" * 100)
+        save_metadata(urn, summary="S", post_urn=urn, post_id="1", activities_ids=["a"])
+        assert (
+            merge_post_identity(
+                urn, post_id="1", post_urn=urn, extra_activity_ids=["a"]
+            )
+            is None
+        )
 
 
 class TestNeedsSummary:

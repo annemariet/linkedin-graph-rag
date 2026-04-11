@@ -256,6 +256,49 @@ def update_metadata_fields(urn: str, **kwargs: Any) -> Path:
     return path
 
 
+def merge_post_identity(
+    urn: str,
+    *,
+    post_id: str = "",
+    post_urn: str = "",
+    extra_activity_ids: list[str] | None = None,
+) -> Path | None:
+    """
+    Fill identity fields from CSV without touching summary/topics or re-resolving ``urls``.
+
+    - Sets ``post_id`` / ``post_urn`` when currently empty.
+    - Unions ``activities_ids`` with *extra_activity_ids* (order preserved, de-duplicated).
+
+    Returns ``None`` if there is no metadata file or nothing would change.
+    """
+    existing = load_metadata(urn)
+    if existing is None:
+        return None
+    meta = dict(existing)
+    pid = (post_id or "").strip()
+    if pid and not (str(meta.get("post_id") or "")).strip():
+        meta["post_id"] = pid
+    pu = (post_urn or "").strip()
+    if pu and not (str(meta.get("post_urn") or "")).strip():
+        meta["post_urn"] = pu
+
+    prev = meta.get("activities_ids") or []
+    if not isinstance(prev, list):
+        prev = [str(prev)] if prev else []
+    else:
+        prev = [str(x) for x in prev if x]
+    extra = extra_activity_ids or []
+    extra = [str(x) for x in extra if x]
+    meta["activities_ids"] = list(dict.fromkeys(prev + extra))
+
+    if meta == existing:
+        return None
+
+    path = _meta_path(urn)
+    path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
+    return path
+
+
 def update_summary_metadata(
     urn: str,
     summary: str,
