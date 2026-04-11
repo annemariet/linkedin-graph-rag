@@ -1275,6 +1275,7 @@ dependencies = [
     { name = "ollama" },
     { name = "python-dotenv" },
     { name = "requests" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -1304,6 +1305,7 @@ requires-dist = [
     { name = "ollama", specifier = ">=0.6.1" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "requests" },
+    { name = "tqdm", specifier = ">=4.67" },
 ]
 
 [package.metadata.requires-dev]

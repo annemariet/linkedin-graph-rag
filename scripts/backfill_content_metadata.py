@@ -27,8 +27,8 @@ Examples::
     # Light HTTP: only rows missing author, 1s between GETs
     uv run python scripts/backfill_content_metadata.py --fetch-author --sleep 1.0 --limit 50
 
-    # More detail on stderr (per-file merges, each author GET)
-    uv run python scripts/backfill_content_metadata.py -v --fetch-author --progress-every 50
+    # Per-file debug lines (still uses tqdm bars unless --no-progress)
+    uv run python scripts/backfill_content_metadata.py -v --fetch-author
 """
 
 from __future__ import annotations
@@ -39,9 +39,9 @@ import logging
 import sys
 import time
 from pathlib import Path
-
 import requests
 from bs4 import BeautifulSoup
+from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -103,14 +103,14 @@ def _post_id_from_urn(urn: str) -> str:
     return (extract_urn_id(urn) or "").strip()
 
 
-def _count_author_candidates(
+def _author_fetch_jobs(
     stems: list[str],
     registry: dict[str, str],
     content_dir: Path,
     limit: int,
-) -> int:
-    """How many registry entries would be considered for author fetch (before --limit)."""
-    n = 0
+) -> list[tuple[str, str, str]]:
+    """(stem, urn, post_url) for metadata rows missing post_author, in registry order."""
+    out: list[tuple[str, str, str]] = []
     for stem in stems:
         urn = (registry.get(stem) or "").strip()
         if not urn:
@@ -126,10 +126,10 @@ def _count_author_candidates(
         post_url = (meta.get("post_url") or "").strip()
         if not post_url or is_comment_feed_url(post_url):
             continue
-        n += 1
-        if limit and n >= limit:
+        out.append((stem, urn, post_url))
+        if limit and len(out) >= limit:
             break
-    return n
+    return out
 
 
 def _fetch_author_meta(post_url: str, timeout: float) -> dict[str, str]:
@@ -190,14 +190,12 @@ def main() -> int:
         "-q",
         "--quiet",
         action="store_true",
-        help="Only warnings and errors",
+        help="Only warnings and errors (disables tqdm)",
     )
     ap.add_argument(
-        "--progress-every",
-        type=int,
-        default=25,
-        metavar="N",
-        help="Log CSV merge progress every N metadata files (0 = only start/end)",
+        "--no-progress",
+        action="store_true",
+        help="Disable tqdm progress bars",
     )
     args = ap.parse_args()
 
@@ -207,13 +205,14 @@ def main() -> int:
     log_level = (
         logging.DEBUG
         if args.verbose
-        else (logging.WARNING if args.quiet else logging.INFO)
+        else (logging.WARNING if args.quiet else logging.WARNING)
     )
     logging.basicConfig(
         level=log_level,
         format="%(levelname)s %(message)s",
         stream=sys.stderr,
     )
+    use_tqdm = not (args.quiet or args.no_progress)
 
     data_dir = args.data_dir or get_data_dir()
     csv_path = args.csv or (data_dir / "activities.csv")
@@ -238,24 +237,25 @@ def main() -> int:
         for s in stems
         if (registry.get(s) or "").strip() and (content_dir / f"{s}.meta.json").exists()
     ]
-    logger.info(
-        "Starting CSV identity merge: data_dir=%s csv=%s (%d rows) content=%s "
-        "(%d registry URNs, %d with .meta.json)",
-        data_dir,
-        csv_path,
-        n_csv_rows,
-        content_dir,
-        len(registry),
-        len(eligible),
-    )
+    if not args.quiet:
+        print(
+            f"CSV identity merge: {len(eligible)} metadata file(s), "
+            f"{n_csv_rows} CSV row(s), {len(registry)} registry entr(ies)",
+            file=sys.stderr,
+        )
 
     csv_merged = 0
     author_fetches = 0
     author_updated = 0
-    total_eligible = len(eligible)
-    pe = max(0, args.progress_every)
 
-    for i, stem in enumerate(eligible, 1):
+    csv_iter = tqdm(
+        eligible,
+        desc="CSV merge",
+        unit="file",
+        disable=not use_tqdm,
+        file=sys.stderr,
+    )
+    for stem in csv_iter:
         urn = (registry.get(stem) or "").strip()
 
         extra_ids = by_urn.get(urn, [])
@@ -267,10 +267,8 @@ def main() -> int:
             need_ids = not (meta.get("activities_ids") or [])
             need_pid = not (str(meta.get("post_id") or "")).strip()
             if extra_ids or need_ids or need_pid:
-                logger.info(
-                    "[dry-run] would merge CSV identity [%d/%d] urn=%s... extra_ids=%d",
-                    i,
-                    total_eligible,
+                logger.debug(
+                    "[dry-run] would merge urn=%s... extra_ids=%d",
                     urn[:56],
                     len(extra_ids),
                 )
@@ -285,84 +283,62 @@ def main() -> int:
         if out is not None:
             csv_merged += 1
             logger.debug(
-                "merged [%d/%d] urn=%s... +%d activity_id(s)",
-                i,
-                total_eligible,
+                "merged urn=%s... +%d activity_id(s)",
                 urn[:48],
                 len(extra_ids),
             )
-        if pe and (i % pe == 0 or i == total_eligible):
-            logger.info(
-                "CSV merge progress %d/%d (%d file(s) updated so far)",
-                i,
-                total_eligible,
-                csv_merged,
-            )
 
-    if not args.dry_run:
-        logger.info("CSV identity merge done: updated %d metadata file(s)", csv_merged)
-    else:
-        logger.info("[dry-run] CSV identity pass finished (no files written)")
+    if not args.quiet:
+        if not args.dry_run:
+            print(
+                f"CSV merge done: updated {csv_merged} metadata file(s).",
+                file=sys.stderr,
+            )
+        else:
+            print("[dry-run] CSV merge finished (no files written).", file=sys.stderr)
 
     if not args.fetch_author:
-        logger.info(
-            "Done (no --fetch-author). Re-run with --fetch-author to fill post_author from HTML."
-        )
+        if not args.quiet:
+            print(
+                "Done (no --fetch-author). Re-run with --fetch-author for post_author from HTML.",
+                file=sys.stderr,
+            )
         return 0
 
     if args.dry_run:
-        logger.info(
-            "[dry-run] author pass would run after CSV merge (use without --dry-run)."
-        )
+        jobs = _author_fetch_jobs(stems, registry, content_dir, args.limit)
+        if not args.quiet:
+            print(
+                f"[dry-run] would run {len(jobs)} author GET(s) (no HTTP sent).",
+                file=sys.stderr,
+            )
+        return 0
 
     # Second pass: optional HTTP for missing author
-    author_plan = _count_author_candidates(stems, registry, content_dir, 0)
-    to_do = min(author_plan, args.limit) if args.limit else author_plan
-    logger.info(
-        "Starting author fetch pass: %d candidate(s)%s, sleep=%.2fs timeout=%.1fs",
-        author_plan,
-        f" (processing up to {args.limit})" if args.limit else "",
-        args.sleep,
-        args.timeout,
-    )
+    jobs = _author_fetch_jobs(stems, registry, content_dir, args.limit)
+    if not args.quiet:
+        print(
+            f"Author fetch: {len(jobs)} GET(s), sleep={args.sleep:.2f}s, "
+            f"timeout={args.timeout:.1f}s",
+            file=sys.stderr,
+        )
 
-    fetches = 0
-    for stem in stems:
-        urn = (registry.get(stem) or "").strip()
-        if not urn:
-            continue
+    author_bar = tqdm(
+        jobs,
+        desc="Author fetch",
+        unit="GET",
+        disable=not use_tqdm,
+        file=sys.stderr,
+    )
+    for _stem, urn, post_url in author_bar:
         meta = load_metadata(urn)
         if meta is None:
             continue
-        if (str(meta.get("post_author") or "")).strip():
-            continue
-        post_url = (meta.get("post_url") or "").strip()
-        if not post_url or is_comment_feed_url(post_url):
-            continue
-        if args.limit and fetches >= args.limit:
-            break
-
-        if args.dry_run:
-            logger.info(
-                "[dry-run] would fetch author [%d] %s",
-                fetches + 1,
-                post_url[:90],
-            )
-            fetches += 1
-            continue
-
-        denom = max(to_do, 1) if to_do else max(author_plan, 1)
-        logger.info(
-            "Author GET [%d/%d] %s",
-            author_fetches + 1,
-            denom,
-            post_url[:100],
-        )
+        logger.debug("GET %s", post_url[:120])
         html_meta = _fetch_author_meta(post_url, args.timeout)
         author_fetches += 1
-        fetches += 1
         if not html_meta.get("post_author") and not html_meta.get("post_author_url"):
-            logger.info("  -> no post_author / post_author_url (wall or parse miss)")
+            logger.debug("  no post_author (wall or parse miss)")
             if args.sleep > 0:
                 time.sleep(args.sleep)
             continue
@@ -382,19 +358,20 @@ def main() -> int:
             update_metadata_fields(urn, **kwargs)
             author_updated += 1
             pa = kwargs.get("post_author", "")
-            logger.info(
-                "  -> updated author=%s url=%s",
+            logger.debug(
+                "  updated author=%s url=%s",
                 (str(pa)[:40] + "...") if len(str(pa)) > 40 else pa,
                 "yes" if kwargs.get("post_author_url") else "no",
             )
         if args.sleep > 0:
             time.sleep(args.sleep)
 
-    logger.info(
-        "Author fetch done: %d GET(s), %d file(s) updated with post_author / post_author_url.",
-        author_fetches,
-        author_updated,
-    )
+    if not args.quiet:
+        print(
+            f"Author fetch done: {author_fetches} GET(s), "
+            f"{author_updated} file(s) updated (post_author / post_author_url).",
+            file=sys.stderr,
+        )
     return 0
 
 
