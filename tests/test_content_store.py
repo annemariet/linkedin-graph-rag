@@ -9,7 +9,9 @@ from linkedin_api.content_store import (
     load_metadata,
     list_posts_needing_summary,
     list_summarized_metadata,
+    merge_post_identity,
     needs_summary,
+    resolve_urls_for_metadata,
     save_content,
     save_metadata,
     update_summary_metadata,
@@ -97,7 +99,7 @@ class TestMetadata:
         meta = load_metadata(urn)
         assert meta["summary"] == "A summary"
         assert meta["topics"] == ["AI"]
-        assert meta["urls"] == ["https://example.com"]
+        assert meta["urls"] == resolve_urls_for_metadata(["https://example.com"])
 
     def test_update_preserves_urls(self):
         urn = "urn:li:ugcPost:789"
@@ -108,9 +110,46 @@ class TestMetadata:
         update_summary_metadata(urn, "Summary", ["topic1"], ["py"], ["Alice"], "paper")
         meta = load_metadata(urn)
         assert meta["summary"] == "Summary"
-        assert meta["urls"] == ["https://x.com"]
+        assert meta["urls"] == resolve_urls_for_metadata(["https://x.com"])
         assert meta["post_url"] == "https://linkedin.com/feed/..."
         assert "summarized_at" in meta
+
+    def test_schema_fields_and_activities_ids_merge(self):
+        urn = "urn:li:activity:7437247151593857024"
+        save_content(urn, "x" * 100)
+        save_metadata(
+            urn,
+            post_url="https://www.linkedin.com/posts/example",
+            post_urn=urn,
+            post_id="7437247151593857024",
+            post_author="Scott Condron",
+            post_author_url="https://www.linkedin.com/in/condronscott/",
+            activities_ids=["id-reaction-1"],
+            urls=["https://github.com/foo/bar"],
+        )
+        save_metadata(
+            urn,
+            activities_ids=["id-comment-2"],
+            urls=["https://github.com/foo/bar"],
+            post_url="https://www.linkedin.com/posts/example",
+        )
+        meta = load_metadata(urn)
+        assert meta["post_urn"] == urn
+        assert meta["post_id"] == "7437247151593857024"
+        assert meta["post_author"] == "Scott Condron"
+        assert meta["post_author_url"] == "https://www.linkedin.com/in/condronscott/"
+        assert meta["activities_ids"] == ["id-reaction-1", "id-comment-2"]
+
+    def test_merge_post_identity_noop_returns_none(self):
+        urn = "urn:li:activity:merge_noop"
+        save_content(urn, "x" * 100)
+        save_metadata(urn, summary="S", post_urn=urn, post_id="1", activities_ids=["a"])
+        assert (
+            merge_post_identity(
+                urn, post_id="1", post_urn=urn, extra_activity_ids=["a"]
+            )
+            is None
+        )
 
 
 class TestNeedsSummary:

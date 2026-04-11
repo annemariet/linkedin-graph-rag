@@ -24,6 +24,10 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
+from linkedin_api.utils.post_html import (
+    linkedin_http_fetch_is_blocked,
+    parse_post_author_from_soup,
+)
 from linkedin_api.utils.urns import comment_urn_to_post_url
 
 logger = logging.getLogger(__name__)
@@ -101,30 +105,11 @@ def _is_private_post_url(url: str) -> bool:
 
 def _parse_author_from_soup(soup: BeautifulSoup) -> Optional[Dict[str, str]]:
     """Extract author name and profile_url from parsed post HTML."""
-    for link in soup.find_all("a", href=True):
-        href = str(link["href"])
-        if "/in/" not in href or (
-            "feed-actor-name" not in href and "actor-name" not in href
-        ):
-            continue
-        profile_url = str(link["href"]).split("?")[0]
-        profile_url = re.sub(
-            r"https?://[a-z]{2}\.linkedin\.com",
-            "https://www.linkedin.com",
-            profile_url,
-        )
-        if (
-            not profile_url.startswith("https://www.linkedin.com")
-            and "//linkedin.com" in profile_url
-        ):
-            profile_url = profile_url.replace("//linkedin.com", "//www.linkedin.com")
-        name = (
-            link.get_text(strip=True)
-            if link.string is None
-            else (link.string or "").strip()
-        )
-        if name and 1 < len(name) < 100:
-            return {"name": name, "profile_url": profile_url}
+    meta = parse_post_author_from_soup(soup)
+    name = (meta.get("post_author") or "").strip()
+    profile_url = (meta.get("post_author_url") or "").strip()
+    if name and 1 < len(name) < 200:
+        return {"name": name, "profile_url": profile_url}
     return None
 
 
@@ -261,6 +246,16 @@ def fetch_post_page(
             raw = cached_path.read_text(encoding="utf-8", errors="replace")
             out["html"] = raw
             out["from_cache"] = True
+            if linkedin_http_fetch_is_blocked(normalized, raw):
+                try:
+                    cached_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                out["error"] = (
+                    "Cached HTML was LinkedIn login/signup page; cache entry removed."
+                )
+                out["html"] = None
+                return out
             soup = BeautifulSoup(raw, "html.parser")
             out["author"] = _parse_author_from_soup(soup)
             out["content"] = _parse_content_from_soup(soup)
@@ -278,6 +273,13 @@ def fetch_post_page(
         response.raise_for_status()
         raw = response.text
         out["html"] = raw
+        if linkedin_http_fetch_is_blocked(response.url, raw):
+            out["error"] = (
+                "LinkedIn returned login/signup page instead of public post HTML."
+            )
+            out["content"] = ""
+            out["author"] = None
+            return out
         if save_to_cache and cached_path:
             try:
                 cached_path.write_text(raw, encoding="utf-8")
