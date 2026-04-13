@@ -14,14 +14,16 @@ Comments and full comment threads are out of scope (may need Playwright later).
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-# Increment when DOM classification, markdown conversion, or metadata shape changes.
-ENRICHMENT_VERSION = 2
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from linkedin_api.content_store import (
+    resolve_urls_for_metadata,
+    save_content,
+    save_metadata,
+)
 from linkedin_api.utils.post_html import (
     find_post_body_root,
     linkedin_http_fetch_is_blocked,
@@ -35,6 +37,9 @@ from linkedin_api.utils.urls import (
     is_linkedin_internal_url,
     linkedin_hashtag_keyword,
 )
+
+# Increment when DOM classification, markdown conversion, or metadata shape changes.
+ENRICHMENT_VERSION = 2
 
 
 def _is_comment_actor_href(href: str) -> bool:
@@ -175,7 +180,6 @@ class PostExtractionResult:
 
 def append_missing_resource_urls(markdown: str, urls: list[str]) -> str:
     """Append ``## Links`` for resource URLs not present as text (resolved-aware)."""
-    from linkedin_api.content_store import resolve_urls_for_metadata
     from linkedin_api.utils.urls import extract_urls_from_text, resolve_redirect
 
     def _resolved_set(urls_in: list[str]) -> set[str]:
@@ -244,6 +248,48 @@ def merge_classification_with_api(
                 by_url[u]["name"] = m["name"]
     tag_set = set(dom_tags) | set(ex_t)
     return out_urls, list(by_url.values()), sorted(tag_set)
+
+
+def save_extraction_to_store(
+    *,
+    urn: str,
+    post_url: str,
+    ext: PostExtractionResult,
+    urls_from_api: list[str],
+    activity_time_iso: str,
+    post_created: str,
+    post_id: str,
+    activities_ids: list[str],
+) -> tuple[str, list[str]]:
+    """
+    Merge CSV URLs, resolve, append ``## Links`` if needed, write ``.md`` + ``.meta.json``.
+
+    Shared by ``enrich_activities`` and ``backfill_content_store`` for successful HTML extraction.
+    Returns ``(body_markdown, resolved_resource_urls)``.
+    """
+    u, m, t = merge_classification_with_api(
+        ext.urls, ext.mentions, ext.tags, urls_from_api
+    )
+    meta_urls = resolve_urls_for_metadata(u)
+    body = append_missing_resource_urls(ext.markdown_body, meta_urls)
+    save_content(urn, body)
+    save_metadata(
+        urn,
+        urls=meta_urls,
+        mentions=m,
+        tags=t,
+        images=ext.image_urls,
+        post_url=post_url,
+        post_author=ext.html_meta.get("post_author") or "",
+        post_author_url=ext.html_meta.get("post_author_url") or "",
+        activity_time_iso=activity_time_iso,
+        post_created_at=post_created,
+        post_urn=urn,
+        post_id=post_id,
+        activities_ids=activities_ids,
+        enrichment_version=ENRICHMENT_VERSION,
+    )
+    return body, meta_urls
 
 
 def extract_post_from_html(html: str, final_url: str) -> PostExtractionResult | None:

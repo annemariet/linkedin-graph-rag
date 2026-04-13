@@ -22,7 +22,7 @@ class TestAppendMissingResourceUrls:
         body = "See https://gisk.ar/41lYlde for more."
         with (
             patch(
-                "linkedin_api.content_store.resolve_urls_for_metadata",
+                "linkedin_api.post_extraction.resolve_urls_for_metadata",
                 return_value=["https://docs.giskard.ai/en/stable/"],
             ),
             patch(
@@ -146,7 +146,7 @@ class TestEnrichSavesTimestamps:
             )
         ]
         with patch(
-            "linkedin_api.enrich_activities._fetch_html",
+            "linkedin_api.enrich_activities.fetch_linkedin_post_html",
             return_value=None,
         ):
             _, count = enrich_activities(activities)
@@ -162,7 +162,7 @@ class TestEnrichSavesTimestamps:
     def test_login_wall_does_not_save_csv_body_for_reaction_rows(self):
         urn = "urn:li:activity:999"
         with patch(
-            "linkedin_api.enrich_activities._fetch_html",
+            "linkedin_api.enrich_activities.fetch_linkedin_post_html",
             return_value=None,
         ):
             _, count = enrich_activities(

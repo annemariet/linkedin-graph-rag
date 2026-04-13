@@ -23,8 +23,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import requests
-
 from linkedin_api.activity_csv import get_default_csv_path
 from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.content_store import (
@@ -37,15 +35,16 @@ from linkedin_api.content_store import (
     save_content,
     save_metadata,
 )
+from linkedin_api.http_client import fetch_linkedin_post_html
 from linkedin_api.post_extraction import (
     ENRICHMENT_VERSION,
     append_missing_resource_urls,
     extract_post_from_html,
     merge_classification_with_api,
+    save_extraction_to_store,
 )
 from linkedin_api.summarize_activity import collect_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
-from linkedin_api.utils.post_html import linkedin_http_fetch_is_blocked
 from linkedin_api.utils.urls import (
     extract_classified_links,
     extract_urls_from_text,
@@ -55,14 +54,6 @@ from linkedin_api.utils.urls import (
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
 logger = logging.getLogger(__name__)
-
-_FETCH_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
 
 
 @dataclass
@@ -101,20 +92,6 @@ class EnrichmentTelemetry:
             "yes",
         ):
             print(msg, flush=True)
-
-
-def _fetch_html(url: str) -> tuple[str, str] | None:
-    try:
-        resp = requests.get(
-            url, timeout=10, allow_redirects=True, headers=_FETCH_HEADERS
-        )
-    except OSError:
-        return None
-    if resp.status_code != 200:
-        return None
-    if linkedin_http_fetch_is_blocked(resp.url, resp.text):
-        return None
-    return resp.text, resp.url or url
 
 
 def _meta_version(meta: dict | None) -> int:
@@ -245,35 +222,23 @@ def _apply_html_extraction(
 ) -> bool:
     ext = extract_post_from_html(html, final_url)
     if ext:
-        u, m, t = merge_classification_with_api(
-            ext.urls, ext.mentions, ext.tags, rec.urls
-        )
-        meta_urls = resolve_urls_for_metadata(u)
-        body = append_missing_resource_urls(ext.markdown_body, meta_urls)
-        rec.urls = meta_urls
-        if not rec.content:
-            rec.content = body
-            save_content(urn, body)
         if ext.html_meta.get("post_created_at") and not post_created:
             post_created = ext.html_meta["post_created_at"]
-        save_metadata(
-            urn,
-            urls=meta_urls,
-            mentions=m,
-            tags=t,
-            images=ext.image_urls,
+        body, meta_urls = save_extraction_to_store(
+            urn=urn,
             post_url=url,
-            post_author=ext.html_meta.get("post_author") or "",
-            post_author_url=ext.html_meta.get("post_author_url") or "",
+            ext=ext,
+            urls_from_api=rec.urls,
             activity_time_iso=_ms_to_iso(
                 int(rec.timestamp) if rec.timestamp is not None else None
             ),
-            post_created_at=post_created or "",
-            post_urn=urn,
+            post_created=post_created or "",
             post_id=rec.post_id or "",
             activities_ids=[rec.activity_id] if rec.activity_id else [],
-            enrichment_version=ENRICHMENT_VERSION,
         )
+        rec.urls = meta_urls
+        if not rec.content:
+            rec.content = body
         telemetry.full_html_success += 1
         return True
 
@@ -372,20 +337,17 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
             and _meta_version(existing_meta) == ENRICHMENT_VERSION
         )
 
-        # Legacy: ``.md`` without ``.meta.json`` — classify from disk only
-        if existing_meta is None and stored and len(stored) >= 50:
+        if (
+            stored
+            and len(stored) >= 50
+            and (existing_meta is None or (not stale and current_version_on_disk))
+        ):
             _reclassify_stored_markdown(rec, urn, url, post_created, tel)
             enriched_count += 1
             yield i + 1, total
             continue
 
-        if not stale and current_version_on_disk and stored and len(stored) >= 50:
-            _reclassify_stored_markdown(rec, urn, url, post_created, tel)
-            enriched_count += 1
-            yield i + 1, total
-            continue
-
-        fetched = _fetch_html(url)
+        fetched = fetch_linkedin_post_html(url)
         if fetched:
             html, final_url = fetched
             if _apply_html_extraction(
@@ -415,12 +377,12 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
     return enriched_count, tel
 
 
-def enrich_activities(
+def _activities_to_enrich(
     activities: list[EnrichedRecord],
     *,
-    limit: int | None = None,
-) -> tuple[list[EnrichedRecord], int]:
-    to_enrich = [
+    limit: int | None,
+) -> list[EnrichedRecord]:
+    rows = [
         a
         for a in activities
         if a.post_url
@@ -428,7 +390,16 @@ def enrich_activities(
         and _row_needs_work(a)[0] != "skip"
     ]
     if limit:
-        to_enrich = to_enrich[:limit]
+        return rows[:limit]
+    return rows
+
+
+def enrich_activities(
+    activities: list[EnrichedRecord],
+    *,
+    limit: int | None = None,
+) -> tuple[list[EnrichedRecord], int]:
+    to_enrich = _activities_to_enrich(activities, limit=limit)
     if not to_enrich:
         return activities, 0
 
@@ -447,15 +418,7 @@ def enrich_activities_streaming(
     *,
     limit: int | None = None,
 ):
-    to_enrich = [
-        a
-        for a in activities
-        if a.post_url
-        and not is_comment_feed_url(a.post_url)
-        and _row_needs_work(a)[0] != "skip"
-    ]
-    if limit:
-        to_enrich = to_enrich[:limit]
+    to_enrich = _activities_to_enrich(activities, limit=limit)
     if not to_enrich:
         return activities, 0
 

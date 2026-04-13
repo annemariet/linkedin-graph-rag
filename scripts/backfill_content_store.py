@@ -25,8 +25,8 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
-import requests
 from tqdm import tqdm
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,25 +35,17 @@ if str(_REPO_ROOT) not in sys.path:
 
 from linkedin_api.activity_csv import get_data_dir, load_records_csv  # noqa: E402
 from linkedin_api.content_store import (  # noqa: E402
-    _ms_to_iso,
     load_metadata,
     merge_post_identity,
-    resolve_urls_for_metadata,
-    save_content,
-    save_metadata,
     update_metadata_fields,
 )
 from linkedin_api.enriched_record import EnrichedRecord  # noqa: E402
+from linkedin_api.http_client import fetch_linkedin_post_html  # noqa: E402
 from linkedin_api.post_extraction import (  # noqa: E402
-    ENRICHMENT_VERSION,
-    append_missing_resource_urls,
     extract_post_from_html,
-    merge_classification_with_api,
+    save_extraction_to_store,
 )
-from linkedin_api.utils.post_html import (
-    linkedin_http_fetch_is_blocked,
-    parse_post_meta_from_soup,
-)  # noqa: E402
+from linkedin_api.utils.post_html import parse_post_meta_from_soup  # noqa: E402
 from linkedin_api.utils.urns import extract_urn_id  # noqa: E402
 from linkedin_api.utils.urls import (
     extract_urls_from_text,
@@ -62,20 +54,12 @@ from linkedin_api.utils.urls import (
 
 logger = logging.getLogger("backfill_content_store")
 
-_FETCH_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
-
 
 def _load_registry(content_dir: Path) -> dict[str, str]:
     p = content_dir / "_urn_registry.json"
     if not p.exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    return cast(dict[str, str], json.loads(p.read_text(encoding="utf-8")))
 
 
 def _aggregate_csv_by_post_urn(
@@ -164,22 +148,13 @@ def _html_fetch_jobs(
 
 
 def _fetch_author_only(post_url: str, timeout: float) -> dict[str, str]:
-    try:
-        resp = requests.get(
-            post_url,
-            timeout=timeout,
-            allow_redirects=True,
-            headers=_FETCH_HEADERS,
-        )
-    except OSError:
+    fetched = fetch_linkedin_post_html(post_url, timeout=timeout)
+    if not fetched:
         return {}
-    if resp.status_code != 200:
-        return {}
-    if linkedin_http_fetch_is_blocked(resp.url, resp.text):
-        return {}
+    html, final_url = fetched
     from bs4 import BeautifulSoup
 
-    return parse_post_meta_from_soup(BeautifulSoup(resp.text, "html.parser"))
+    return parse_post_meta_from_soup(BeautifulSoup(html, "html.parser"))
 
 
 def main() -> int:
@@ -293,59 +268,37 @@ def main() -> int:
             meta = load_metadata(urn)
             if meta is None:
                 continue
-            try:
-                resp = requests.get(
-                    post_url,
-                    timeout=args.timeout,
-                    allow_redirects=True,
-                    headers=_FETCH_HEADERS,
-                )
-            except OSError as e:
-                logger.warning("GET failed %s: %s", post_url[:80], e)
+            fetched = fetch_linkedin_post_html(post_url, timeout=args.timeout)
+            if fetched is None:
+                logger.warning("GET failed or blocked: %s", post_url[:80])
                 if args.sleep > 0:
                     time.sleep(args.sleep)
                 continue
-            if resp.status_code != 200:
-                if args.sleep > 0:
-                    time.sleep(args.sleep)
-                continue
-            ext = extract_post_from_html(resp.text, resp.url or post_url)
+            html, final_url = fetched
+            ext = extract_post_from_html(html, final_url)
             if ext is None:
                 if args.sleep > 0:
                     time.sleep(args.sleep)
                 continue
             api_urls = urls_by_urn.get(urn, [])
-            urls, mentions, tags = merge_classification_with_api(
-                ext.urls, ext.mentions, ext.tags, api_urls
-            )
-            meta_urls = resolve_urls_for_metadata(urls)
-            body = append_missing_resource_urls(ext.markdown_body, meta_urls)
-            save_content(urn, body)
-            ts_ms = None
-            try:
-                from linkedin_api.utils.linkedin_snowflake import (
-                    post_created_at_from_urn,
-                )
+            post_created = (ext.html_meta.get("post_created_at") or "").strip() or None
+            if not post_created:
+                try:
+                    from linkedin_api.utils.linkedin_snowflake import (
+                        post_created_at_from_urn,
+                    )
 
-                pca = (ext.html_meta.get("post_created_at") or "").strip() or None
-                if not pca:
-                    pca = post_created_at_from_urn(urn) or None
-            except Exception:
-                pca = ext.html_meta.get("post_created_at") or None
-            save_metadata(
-                urn,
-                urls=meta_urls,
-                mentions=mentions,
-                tags=tags,
-                images=ext.image_urls,
+                    post_created = post_created_at_from_urn(urn) or None
+                except Exception:
+                    post_created = None
+            save_extraction_to_store(
+                urn=urn,
                 post_url=post_url,
-                post_author=ext.html_meta.get("post_author") or "",
-                post_author_url=ext.html_meta.get("post_author_url") or "",
-                activity_time_iso=_ms_to_iso(ts_ms),
-                post_created_at=pca or "",
-                post_urn=urn,
-                enrichment_version=ENRICHMENT_VERSION,
-                post_id=(str(meta.get("post_id") or "") or _post_id_from_urn(urn)),
+                ext=ext,
+                urls_from_api=api_urls,
+                activity_time_iso=(meta.get("activity_time_iso") or "").strip() or "",
+                post_created=post_created or "",
+                post_id=str(meta.get("post_id") or "") or _post_id_from_urn(urn),
                 activities_ids=list(
                     dict.fromkeys(
                         (meta.get("activities_ids") or []) + by_urn.get(urn, [])
