@@ -145,7 +145,10 @@ class TestEnrichSavesTimestamps:
                 created_at="",
             )
         ]
-        with patch("linkedin_api.enrich_activities._fetch_html", return_value=None):
+        with patch(
+            "linkedin_api.enrich_activities._fetch_html",
+            return_value=None,
+        ):
             _, count = enrich_activities(activities)
         assert count == 1
         stored = load_content(urn)
@@ -158,7 +161,10 @@ class TestEnrichSavesTimestamps:
 
     def test_login_wall_does_not_save_csv_body_for_reaction_rows(self):
         urn = "urn:li:activity:999"
-        with patch("linkedin_api.enrich_activities._fetch_html", return_value=None):
+        with patch(
+            "linkedin_api.enrich_activities._fetch_html",
+            return_value=None,
+        ):
             _, count = enrich_activities(
                 [
                     EnrichedRecord(

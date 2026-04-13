@@ -1,6 +1,9 @@
 """
 Single pipeline for public LinkedIn post HTML → markdown + structured metadata.
 
+Bump ``ENRICHMENT_VERSION`` when extraction/classification semantics change so
+downstream can re-fetch stale ``.meta.json`` (see ``enrich_activities``).
+
 Flow: fetch HTML → parse with BeautifulSoup → classify links from the **post body DOM**
 (not from markdown strings) → body text as Markdown via **trafilatura** (fallback: BS
 markdown / plain). Author/date from JSON-LD + existing ``post_html`` helpers.
@@ -11,6 +14,9 @@ Comments and full comment threads are out of scope (may need Playwright later).
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+# Increment when DOM classification, markdown conversion, or metadata shape changes.
+ENRICHMENT_VERSION = 2
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup

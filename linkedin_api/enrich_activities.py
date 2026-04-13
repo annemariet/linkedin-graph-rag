@@ -2,13 +2,15 @@
 """
 Enrich activities with post content and structured metadata.
 
-Pipeline per row (CSV → ``EnrichedRecord``):
+- **skip** — ``.meta.json`` has ``enrichment_version`` = current, ``.md`` exists, and
+  this row's ``activity_id`` is already in ``activities_ids``.
+- **merge** — same version and body on disk, but a **new** CSV line (union
+  ``activities_ids``, fill empty ``post_url`` / ``activity_time_iso``).
+- **full** — no metadata, missing ``.md``, wrong ``enrichment_version``, or first
+  time for this post — GET HTML via :mod:`linkedin_api.post_extraction`.
 
-1. If no ``.meta.json`` yet: GET ``post_url``, parse HTML via
-   :mod:`linkedin_api.post_extraction` — DOM-classified ``urls`` / ``mentions`` /
-   ``tags``, ``images``, trafilatura markdown (fallback: BS markdown / plain),
-   JSON-LD author. Merge URL list from CSV text. Write ``.md`` + ``.meta.json``.
-2. If content exists but metadata missing: classify from stored body + CSV URLs.
+Set ``ENRICH_TELEMETRY=1`` to print a path-count summary to stderr. INFO logs
+include the same counts.
 
 Comments / Playwright are not implemented (see ticket backlog).
 """
@@ -16,6 +18,9 @@ Comments / Playwright are not implemented (see ticket backlog).
 from __future__ import annotations
 
 import argparse
+import logging
+import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import requests
@@ -24,13 +29,16 @@ from linkedin_api.activity_csv import get_default_csv_path
 from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.content_store import (
     _ms_to_iso,
-    has_metadata,
+    has_content,
     load_content,
+    load_metadata,
+    merge_enrichment_activity,
     resolve_urls_for_metadata,
     save_content,
     save_metadata,
 )
 from linkedin_api.post_extraction import (
+    ENRICHMENT_VERSION,
     append_missing_resource_urls,
     extract_post_from_html,
     merge_classification_with_api,
@@ -46,6 +54,8 @@ from linkedin_api.utils.urls import (
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
+logger = logging.getLogger(__name__)
+
 _FETCH_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -53,6 +63,44 @@ _FETCH_HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+
+@dataclass
+class EnrichmentTelemetry:
+    """Counts per path (validate fallback value in production logs)."""
+
+    skip_already_complete: int = 0
+    merge_activity_only: int = 0
+    stale_version_refetch: int = 0
+    full_html_success: int = 0
+    reclassified_stored_md_no_http: int = 0
+    fallback_extract_fail_post_body: int = 0
+    fallback_extract_fail_urls_only: int = 0
+    fallback_http_fail_post_body: int = 0
+    fallback_http_fail_urls_only: int = 0
+    needs_browser: int = 0
+
+    def log_summary(self) -> None:
+        msg = (
+            "enrich telemetry:\n"
+            f"  skip_already_complete={self.skip_already_complete}\n"
+            f"  merge_activity_only={self.merge_activity_only}\n"
+            f"  stale_version_refetch={self.stale_version_refetch}\n"
+            f"  full_html_success={self.full_html_success}\n"
+            f"  reclassified_stored_md_no_http={self.reclassified_stored_md_no_http}\n"
+            f"  fallback_extract_fail_post_md={self.fallback_extract_fail_post_body}\n"
+            f"  fallback_extract_fail_urls_only={self.fallback_extract_fail_urls_only}\n"
+            f"  fallback_http_fail_post_md={self.fallback_http_fail_post_body}\n"
+            f"  fallback_http_fail_urls_only={self.fallback_http_fail_urls_only}\n"
+            f"  needs_browser={self.needs_browser}"
+        )
+        logger.info(msg)
+        if os.environ.get("ENRICH_TELEMETRY", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            print(msg, flush=True)
 
 
 def _fetch_html(url: str) -> tuple[str, str] | None:
@@ -69,191 +117,302 @@ def _fetch_html(url: str) -> tuple[str, str] | None:
     return resp.text, resp.url or url
 
 
+def _meta_version(meta: dict | None) -> int:
+    if not meta:
+        return 0
+    try:
+        return int(meta.get("enrichment_version") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _activity_id_in_meta(meta: dict, activity_id: str) -> bool:
+    aid = (activity_id or "").strip()
+    if not aid:
+        return True
+    raw = meta.get("activities_ids") or []
+    if not isinstance(raw, list):
+        raw = [str(raw)] if raw else []
+    ids = {str(x) for x in raw if x}
+    return aid in ids
+
+
+def _row_needs_work(rec: EnrichedRecord) -> tuple[str, dict | None]:
+    """
+    ``skip`` | ``merge`` | ``full`` — see module docstring.
+    """
+    urn = rec.post_urn
+    meta = load_metadata(urn)
+    if meta is None:
+        return "full", None
+
+    if not has_content(urn):
+        return "full", meta
+
+    if _meta_version(meta) != ENRICHMENT_VERSION:
+        return "full", meta
+
+    if _activity_id_in_meta(meta, rec.activity_id or ""):
+        return "skip", meta
+
+    return "merge", meta
+
+
+def _save_from_api_fallback(
+    rec: EnrichedRecord,
+    urn: str,
+    url: str,
+    post_created: str | None,
+    *,
+    telemetry: EnrichmentTelemetry,
+    reason: str,
+) -> bool:
+    """CSV/API-only when HTML unusable. Returns True if wrote metadata."""
+    urls_from_api = rec.urls
+    api_body = (rec.content or "").strip()
+    api_urls = list(dict.fromkeys(urls_from_api))
+
+    if rec.interaction_type == "post" and len(api_body) >= 50:
+        u, m, t = merge_classification_with_api([], [], [], api_urls)
+        u, m, t = merge_classification_with_api(
+            u, m, t, extract_urls_from_text(api_body)
+        )
+        meta_urls = resolve_urls_for_metadata(u)
+        body = append_missing_resource_urls(api_body, meta_urls)
+        rec.urls = meta_urls
+        save_content(urn, body)
+        save_metadata(
+            urn,
+            urls=meta_urls,
+            mentions=m,
+            tags=t,
+            post_url=url,
+            post_author="",
+            post_author_url="",
+            activity_time_iso=_ms_to_iso(
+                int(rec.timestamp) if rec.timestamp is not None else None
+            ),
+            post_created_at=post_created or "",
+            post_urn=urn,
+            post_id=rec.post_id or "",
+            activities_ids=[rec.activity_id] if rec.activity_id else [],
+            enrichment_version=ENRICHMENT_VERSION,
+        )
+        if reason == "extract_fail":
+            telemetry.fallback_extract_fail_post_body += 1
+        else:
+            telemetry.fallback_http_fail_post_body += 1
+        return True
+
+    if api_urls:
+        u, m, t = merge_classification_with_api([], [], [], api_urls)
+        meta_urls = resolve_urls_for_metadata(u)
+        rec.urls = meta_urls
+        save_metadata(
+            urn,
+            urls=meta_urls,
+            mentions=m,
+            tags=t,
+            post_url=url,
+            post_author="",
+            post_author_url="",
+            activity_time_iso=_ms_to_iso(
+                int(rec.timestamp) if rec.timestamp is not None else None
+            ),
+            post_created_at=post_created or "",
+            post_urn=urn,
+            post_id=rec.post_id or "",
+            activities_ids=[rec.activity_id] if rec.activity_id else [],
+            enrichment_version=ENRICHMENT_VERSION,
+        )
+        if reason == "extract_fail":
+            telemetry.fallback_extract_fail_urls_only += 1
+        else:
+            telemetry.fallback_http_fail_urls_only += 1
+        return True
+
+    return False
+
+
+def _apply_html_extraction(
+    rec: EnrichedRecord,
+    urn: str,
+    url: str,
+    html: str,
+    final_url: str,
+    post_created: str | None,
+    telemetry: EnrichmentTelemetry,
+) -> bool:
+    ext = extract_post_from_html(html, final_url)
+    if ext:
+        u, m, t = merge_classification_with_api(
+            ext.urls, ext.mentions, ext.tags, rec.urls
+        )
+        meta_urls = resolve_urls_for_metadata(u)
+        body = append_missing_resource_urls(ext.markdown_body, meta_urls)
+        rec.urls = meta_urls
+        if not rec.content:
+            rec.content = body
+            save_content(urn, body)
+        if ext.html_meta.get("post_created_at") and not post_created:
+            post_created = ext.html_meta["post_created_at"]
+        save_metadata(
+            urn,
+            urls=meta_urls,
+            mentions=m,
+            tags=t,
+            images=ext.image_urls,
+            post_url=url,
+            post_author=ext.html_meta.get("post_author") or "",
+            post_author_url=ext.html_meta.get("post_author_url") or "",
+            activity_time_iso=_ms_to_iso(
+                int(rec.timestamp) if rec.timestamp is not None else None
+            ),
+            post_created_at=post_created or "",
+            post_urn=urn,
+            post_id=rec.post_id or "",
+            activities_ids=[rec.activity_id] if rec.activity_id else [],
+            enrichment_version=ENRICHMENT_VERSION,
+        )
+        telemetry.full_html_success += 1
+        return True
+
+    return _save_from_api_fallback(
+        rec,
+        urn,
+        url,
+        post_created,
+        telemetry=telemetry,
+        reason="extract_fail",
+    )
+
+
+def _reclassify_stored_markdown(
+    rec: EnrichedRecord,
+    urn: str,
+    url: str,
+    post_created: str | None,
+    telemetry: EnrichmentTelemetry,
+) -> None:
+    """Re-run classification on existing ``.md`` without HTTP (current version only)."""
+    stored = load_content(urn) or ""
+    if not rec.content:
+        rec.content = stored
+    u2, m2, t2 = extract_classified_links(stored, rec.urls)
+    meta_urls = resolve_urls_for_metadata(u2)
+    rec.urls = meta_urls
+    save_metadata(
+        urn,
+        urls=meta_urls,
+        mentions=m2,
+        tags=t2,
+        post_url=url,
+        post_author="",
+        post_author_url="",
+        activity_time_iso=_ms_to_iso(
+            int(rec.timestamp) if rec.timestamp is not None else None
+        ),
+        post_created_at=post_created or "",
+        post_urn=urn,
+        post_id=rec.post_id or "",
+        activities_ids=[rec.activity_id] if rec.activity_id else [],
+        enrichment_version=ENRICHMENT_VERSION,
+    )
+    telemetry.reclassified_stored_md_no_http += 1
+
+
 def _run_enrichment(to_enrich: list[EnrichedRecord]):
     total = len(to_enrich)
     enriched_count = 0
     needs_browser: list[EnrichedRecord] = []
+    tel = EnrichmentTelemetry()
 
     for i, rec in enumerate(to_enrich):
         urn = rec.post_urn
         url = rec.post_url
-        if urn and url:
-            ts_ms = int(rec.timestamp) if rec.timestamp is not None else None
-            post_created = (rec.post_created_at or "").strip() or None
-            if not post_created:
-                post_created = post_created_at_from_urn(urn)
-            post_author: str | None = None
-            post_author_url: str | None = None
-            urls_from_api = rec.urls
+        if not (urn and url):
+            yield i + 1, total
+            continue
 
-            stored = load_content(urn)
-            if stored and len(stored) >= 50:
-                if not rec.content:
-                    rec.content = stored
-                u2, m2, t2 = extract_classified_links(stored, urls_from_api)
-                meta_urls = resolve_urls_for_metadata(u2)
-                rec.urls = meta_urls
-                save_metadata(
-                    urn,
-                    urls=meta_urls,
-                    mentions=m2,
-                    tags=t2,
-                    post_url=url,
-                    post_author=post_author or "",
-                    post_author_url=post_author_url or "",
-                    activity_time_iso=_ms_to_iso(ts_ms),
-                    post_created_at=post_created or "",
-                    post_urn=urn,
-                    post_id=rec.post_id or "",
-                    activities_ids=[rec.activity_id] if rec.activity_id else [],
-                )
+        mode, existing_meta = _row_needs_work(rec)
+        if mode == "skip":
+            tel.skip_already_complete += 1
+            yield i + 1, total
+            continue
+
+        ts_ms = int(rec.timestamp) if rec.timestamp is not None else None
+        post_created = (rec.post_created_at or "").strip() or None
+        if not post_created:
+            post_created = post_created_at_from_urn(urn)
+
+        if mode == "merge":
+            out = merge_enrichment_activity(
+                urn,
+                activity_id=rec.activity_id or "",
+                post_url=url,
+                activity_time_iso=_ms_to_iso(ts_ms),
+            )
+            if out is not None:
+                tel.merge_activity_only += 1
+                enriched_count += 1
+            yield i + 1, total
+            continue
+
+        # --- full enrichment ---
+        stale = (
+            existing_meta is not None
+            and _meta_version(existing_meta) != ENRICHMENT_VERSION
+        )
+        if stale:
+            tel.stale_version_refetch += 1
+
+        stored = load_content(urn)
+        current_version_on_disk = (
+            existing_meta is not None
+            and _meta_version(existing_meta) == ENRICHMENT_VERSION
+        )
+
+        # Legacy: ``.md`` without ``.meta.json`` — classify from disk only
+        if existing_meta is None and stored and len(stored) >= 50:
+            _reclassify_stored_markdown(rec, urn, url, post_created, tel)
+            enriched_count += 1
+            yield i + 1, total
+            continue
+
+        if not stale and current_version_on_disk and stored and len(stored) >= 50:
+            _reclassify_stored_markdown(rec, urn, url, post_created, tel)
+            enriched_count += 1
+            yield i + 1, total
+            continue
+
+        fetched = _fetch_html(url)
+        if fetched:
+            html, final_url = fetched
+            if _apply_html_extraction(
+                rec, urn, url, html, final_url, post_created, tel
+            ):
                 enriched_count += 1
             else:
-                fetched = _fetch_html(url)
-                if fetched:
-                    html, final_url = fetched
-                    ext = extract_post_from_html(html, final_url)
-                    if ext:
-                        u, m, t = merge_classification_with_api(
-                            ext.urls, ext.mentions, ext.tags, urls_from_api
-                        )
-                        meta_urls = resolve_urls_for_metadata(u)
-                        body = append_missing_resource_urls(
-                            ext.markdown_body, meta_urls
-                        )
-                        rec.urls = meta_urls
-                        if not rec.content:
-                            rec.content = body
-                            save_content(urn, body)
-                        if ext.html_meta.get("post_created_at") and not post_created:
-                            post_created = ext.html_meta["post_created_at"]
-                        post_author = ext.html_meta.get("post_author")
-                        post_author_url = ext.html_meta.get("post_author_url")
-                        save_metadata(
-                            urn,
-                            urls=meta_urls,
-                            mentions=m,
-                            tags=t,
-                            images=ext.image_urls,
-                            post_url=url,
-                            post_author=post_author or "",
-                            post_author_url=post_author_url or "",
-                            activity_time_iso=_ms_to_iso(ts_ms),
-                            post_created_at=post_created or "",
-                            post_urn=urn,
-                            post_id=rec.post_id or "",
-                            activities_ids=[rec.activity_id] if rec.activity_id else [],
-                        )
-                        enriched_count += 1
-                    else:
-                        api_body = (rec.content or "").strip()
-                        api_urls = list(dict.fromkeys(urls_from_api))
-                        if rec.interaction_type == "post" and len(api_body) >= 50:
-                            u, m, t = merge_classification_with_api(
-                                [], [], [], api_urls
-                            )
-                            u, m, t = merge_classification_with_api(
-                                u, m, t, extract_urls_from_text(api_body)
-                            )
-                            meta_urls = resolve_urls_for_metadata(u)
-                            body = append_missing_resource_urls(api_body, meta_urls)
-                            rec.urls = meta_urls
-                            save_content(urn, body)
-                            save_metadata(
-                                urn,
-                                urls=meta_urls,
-                                mentions=m,
-                                tags=t,
-                                post_url=url,
-                                post_author=post_author or "",
-                                post_author_url=post_author_url or "",
-                                activity_time_iso=_ms_to_iso(ts_ms),
-                                post_created_at=post_created or "",
-                                post_urn=urn,
-                                post_id=rec.post_id or "",
-                                activities_ids=(
-                                    [rec.activity_id] if rec.activity_id else []
-                                ),
-                            )
-                            enriched_count += 1
-                        elif api_urls:
-                            u, m, t = merge_classification_with_api(
-                                [], [], [], api_urls
-                            )
-                            meta_urls = resolve_urls_for_metadata(u)
-                            rec.urls = meta_urls
-                            save_metadata(
-                                urn,
-                                urls=meta_urls,
-                                mentions=m,
-                                tags=t,
-                                post_url=url,
-                                post_author=post_author or "",
-                                post_author_url=post_author_url or "",
-                                activity_time_iso=_ms_to_iso(ts_ms),
-                                post_created_at=post_created or "",
-                                post_urn=urn,
-                                post_id=rec.post_id or "",
-                                activities_ids=(
-                                    [rec.activity_id] if rec.activity_id else []
-                                ),
-                            )
-                            enriched_count += 1
-                        else:
-                            needs_browser.append(rec)
-                else:
-                    api_body = (rec.content or "").strip()
-                    api_urls = list(dict.fromkeys(urls_from_api))
-                    if rec.interaction_type == "post" and len(api_body) >= 50:
-                        u, m, t = merge_classification_with_api([], [], [], api_urls)
-                        u, m, t = merge_classification_with_api(
-                            u, m, t, extract_urls_from_text(api_body)
-                        )
-                        meta_urls = resolve_urls_for_metadata(u)
-                        body = append_missing_resource_urls(api_body, meta_urls)
-                        rec.urls = meta_urls
-                        save_content(urn, body)
-                        save_metadata(
-                            urn,
-                            urls=meta_urls,
-                            mentions=m,
-                            tags=t,
-                            post_url=url,
-                            post_author=post_author or "",
-                            post_author_url=post_author_url or "",
-                            activity_time_iso=_ms_to_iso(ts_ms),
-                            post_created_at=post_created or "",
-                            post_urn=urn,
-                            post_id=rec.post_id or "",
-                            activities_ids=[rec.activity_id] if rec.activity_id else [],
-                        )
-                        enriched_count += 1
-                    elif api_urls:
-                        u, m, t = merge_classification_with_api([], [], [], api_urls)
-                        meta_urls = resolve_urls_for_metadata(u)
-                        rec.urls = meta_urls
-                        save_metadata(
-                            urn,
-                            urls=meta_urls,
-                            mentions=m,
-                            tags=t,
-                            post_url=url,
-                            post_author=post_author or "",
-                            post_author_url=post_author_url or "",
-                            activity_time_iso=_ms_to_iso(ts_ms),
-                            post_created_at=post_created or "",
-                            post_urn=urn,
-                            post_id=rec.post_id or "",
-                            activities_ids=[rec.activity_id] if rec.activity_id else [],
-                        )
-                        enriched_count += 1
-                    else:
-                        needs_browser.append(rec)
+                needs_browser.append(rec)
+                tel.needs_browser += 1
+        else:
+            if stale and stored and len(stored) >= 50:
+                _reclassify_stored_markdown(rec, urn, url, post_created, tel)
+                enriched_count += 1
+            elif _save_from_api_fallback(
+                rec, urn, url, post_created, telemetry=tel, reason="http_fail"
+            ):
+                enriched_count += 1
+            else:
+                needs_browser.append(rec)
+                tel.needs_browser += 1
+
         yield i + 1, total
 
     for rec in needs_browser:
         rec.enrich_error = "Browser required; not implemented"
-    return enriched_count
+
+    return enriched_count, tel
 
 
 def enrich_activities(
@@ -266,7 +425,7 @@ def enrich_activities(
         for a in activities
         if a.post_url
         and not is_comment_feed_url(a.post_url)
-        and not has_metadata(a.post_urn)
+        and _row_needs_work(a)[0] != "skip"
     ]
     if limit:
         to_enrich = to_enrich[:limit]
@@ -278,7 +437,9 @@ def enrich_activities(
         while True:
             next(gen)
     except StopIteration as e:
-        return activities, e.value
+        count, telemetry = e.value
+        telemetry.log_summary()
+        return activities, count
 
 
 def enrich_activities_streaming(
@@ -291,7 +452,7 @@ def enrich_activities_streaming(
         for a in activities
         if a.post_url
         and not is_comment_feed_url(a.post_url)
-        and not has_metadata(a.post_urn)
+        and _row_needs_work(a)[0] != "skip"
     ]
     if limit:
         to_enrich = to_enrich[:limit]
@@ -303,10 +464,15 @@ def enrich_activities_streaming(
         while True:
             yield next(gen)
     except StopIteration as e:
-        return activities, e.value
+        count, telemetry = e.value
+        telemetry.log_summary()
+        return activities, count
 
 
 def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
     parser = argparse.ArgumentParser(
         description="Enrich activities with post content (HTTP and store only).",
     )

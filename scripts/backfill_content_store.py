@@ -45,6 +45,7 @@ from linkedin_api.content_store import (  # noqa: E402
 )
 from linkedin_api.enriched_record import EnrichedRecord  # noqa: E402
 from linkedin_api.post_extraction import (  # noqa: E402
+    ENRICHMENT_VERSION,
     append_missing_resource_urls,
     extract_post_from_html,
     merge_classification_with_api,
@@ -343,6 +344,7 @@ def main() -> int:
                 activity_time_iso=_ms_to_iso(ts_ms),
                 post_created_at=pca or "",
                 post_urn=urn,
+                enrichment_version=ENRICHMENT_VERSION,
                 post_id=(str(meta.get("post_id") or "") or _post_id_from_urn(urn)),
                 activities_ids=list(
                     dict.fromkeys(

@@ -102,6 +102,7 @@ _META_KEYS = (
     "summarized_at",
     "activity_time_iso",
     "post_created_at",
+    "enrichment_version",
 )
 
 
@@ -223,6 +224,7 @@ def save_metadata(
         "summarized_at": existing.get("summarized_at") or "",
         "activity_time_iso": "",
         "post_created_at": "",
+        "enrichment_version": "",
     }
     meta.update({k: v for k, v in existing.items() if k in _META_KEYS})
     meta.update(from_extra)
@@ -287,6 +289,10 @@ def save_metadata(
         "activity_time_iso"
     ):
         meta["activity_time_iso"] = existing["activity_time_iso"]
+    if not (str(meta.get("enrichment_version") or "")).strip() and existing.get(
+        "enrichment_version"
+    ):
+        meta["enrichment_version"] = existing["enrichment_version"]
 
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
@@ -312,6 +318,48 @@ def update_metadata_fields(urn: str, **kwargs: Any) -> Path:
     for k, v in kwargs.items():
         if k in _META_KEYS:
             meta[k] = v
+    path = _meta_path(urn)
+    path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
+    return path
+
+
+def merge_enrichment_activity(
+    urn: str,
+    *,
+    activity_id: str = "",
+    post_url: str = "",
+    activity_time_iso: str = "",
+) -> Path | None:
+    """
+    Union ``activity_id`` into ``activities_ids``; fill empty ``post_url`` /
+    ``activity_time_iso`` from the current CSV row when missing.
+
+    Returns ``None`` if there is no metadata or nothing would change.
+    """
+    existing = load_metadata(urn)
+    if existing is None:
+        return None
+    meta = dict(existing)
+    prev = meta.get("activities_ids") or []
+    if not isinstance(prev, list):
+        prev = [str(prev)] if prev else []
+    else:
+        prev = [str(x) for x in prev if x]
+    aid = (activity_id or "").strip()
+    merged = list(dict.fromkeys(prev + ([aid] if aid else [])))
+    changed = merged != prev
+    if merged != prev:
+        meta["activities_ids"] = merged
+    if (post_url or "").strip() and not (str(meta.get("post_url") or "")).strip():
+        meta["post_url"] = post_url.strip()
+        changed = True
+    if (activity_time_iso or "").strip() and not (
+        str(meta.get("activity_time_iso") or "")
+    ).strip():
+        meta["activity_time_iso"] = activity_time_iso.strip()
+        changed = True
+    if not changed:
+        return None
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
     return path
