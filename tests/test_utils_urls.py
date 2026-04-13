@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 
 from linkedin_api.utils.urls import (
     categorize_url,
+    extract_urls_from_markdown,
     extract_urls_from_text,
+    is_linkedin_internal_url,
     resolve_redirect,
     should_ignore_url,
 )
@@ -31,6 +33,21 @@ class TestExtractUrlsFromText:
         text = "https://a.com and https://a.com again"
         urls = extract_urls_from_text(text)
         assert len(urls) == 1
+
+
+class TestExtractUrlsFromMarkdown:
+    def test_link_targets(self):
+        md = "See [paper](https://arxiv.org/abs/123) and [site](https://example.com/x)."
+        urls = extract_urls_from_markdown(md)
+        assert "https://arxiv.org/abs/123" in urls
+        assert "https://example.com/x" in urls
+
+
+class TestIsLinkedinInternalUrl:
+    def test_subdomains(self):
+        assert is_linkedin_internal_url("https://ie.linkedin.com/in/x") is True
+        assert is_linkedin_internal_url("https://lnkd.in/abc") is True
+        assert is_linkedin_internal_url("https://github.com/x") is False
 
 
 class TestCategorizeUrl:

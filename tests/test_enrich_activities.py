@@ -128,11 +128,12 @@ class TestEnrichSavesTimestamps:
             _, count = enrich_activities(activities)
         assert count == 1
         stored = load_content(urn)
-        assert stored == api_text
+        assert api_text in (stored or "")
         assert "500 million" not in (stored or "")
+        assert "https://example.org/paper" in (stored or "")
         meta = load_metadata(urn)
         assert meta is not None
-        assert meta.get("urls")
+        assert meta.get("urls") == ["https://example.org/paper"]
 
     def test_login_wall_does_not_save_csv_body_for_reaction_rows(self):
         urn = "urn:li:activity:999"

@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from bs4.element import NavigableString, PageElement, Tag
 
 _LI_SUBDOMAIN = re.compile(r"https?://[a-z]{2}\.linkedin\.com", re.I)
 
@@ -174,6 +176,138 @@ def linkedin_http_fetch_is_blocked(final_url: str, html: str) -> bool:
         if "socialmediaposting" not in hl:
             return True
     return False
+
+
+def _find_post_body_element(soup: BeautifulSoup) -> Tag | None:
+    """First substantial post body node from known LinkedIn selectors."""
+    for selector in _CONTENT_SELECTORS:
+        for elem in soup.select(selector):
+            text = elem.get_text(strip=True)
+            if text and len(text) > 20:
+                return elem
+    return None
+
+
+def _collapse_blank_lines(text: str) -> str:
+    out = re.sub(r"\n{3,}", "\n\n", text)
+    return out.strip()
+
+
+def _html_inline_to_markdown(node: PageElement, base_url: str) -> str:
+    """Convert inline HTML to Markdown (links, emphasis); used inside block walk."""
+    if isinstance(node, NavigableString):
+        return str(node)
+    if not isinstance(node, Tag):
+        return ""
+    name = node.name.lower()
+    if name == "a":
+        raw_href = node.get("href")
+        if raw_href:
+            href = str(raw_href).strip()
+            if href.startswith("#") or href.lower().startswith("javascript:"):
+                return "".join(
+                    _html_inline_to_markdown(c, base_url) for c in node.children
+                )
+            url = urljoin(base_url, href)
+            label = "".join(
+                _html_inline_to_markdown(c, base_url) for c in node.children
+            )
+            label = label.strip() or url
+            safe = label.replace("]", "\\]")
+            return f"[{safe}]({url})"
+        return "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+    if name == "br":
+        return "\n"
+    if name in ("strong", "b"):
+        inner = "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+        return f"**{inner.strip()}**" if inner.strip() else ""
+    if name in ("em", "i"):
+        inner = "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+        return f"*{inner.strip()}*" if inner.strip() else ""
+    if name == "br":
+        return "\n"
+    return "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+
+
+def _html_block_to_markdown(node: PageElement, base_url: str) -> str:
+    """Block-level HTML to Markdown paragraphs and lists."""
+    if isinstance(node, NavigableString):
+        s = str(node)
+        return (s + "\n\n") if s.strip() else ""
+    if not isinstance(node, Tag):
+        return ""
+    name = node.name.lower()
+    if name in ("script", "style", "noscript"):
+        return ""
+    if name in ("ul", "ol"):
+        items: list[str] = []
+        for li in node.find_all("li", recursive=False):
+            line = "".join(_html_inline_to_markdown(c, base_url) for c in li.children)
+            line = line.strip()
+            if line:
+                items.append(f"- {line}")
+        return ("\n".join(items) + "\n\n") if items else ""
+    if name == "li":
+        inner = "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+        inner = inner.strip()
+        return f"- {inner}\n" if inner else ""
+    if name in ("p", "div", "blockquote", "section", "span"):
+        inner = "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+        inner = inner.strip()
+        return (inner + "\n\n") if inner else ""
+    if name in ("h1", "h2", "h3", "h4"):
+        inner = "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
+        inner = inner.strip()
+        level = min(int(name[1]), 4)
+        return ("#" * level + " " + inner + "\n\n") if inner else ""
+    return "".join(_html_block_to_markdown(c, base_url) for c in node.children)
+
+
+def _article_to_markdown(root: Tag, base_url: str) -> str:
+    """Walk a post root: block tags recurse; unknown tags flatten to inline."""
+    parts: list[str] = []
+    for child in root.children:
+        if isinstance(child, NavigableString):
+            s = str(child)
+            if s.strip():
+                parts.append(s)
+            continue
+        if not isinstance(child, Tag):
+            continue
+        cn = child.name.lower()
+        if cn in (
+            "p",
+            "div",
+            "blockquote",
+            "section",
+            "ul",
+            "ol",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "span",
+        ):
+            parts.append(_html_block_to_markdown(child, base_url))
+        elif cn in ("script", "style", "noscript"):
+            continue
+        elif cn == "br":
+            parts.append("\n")
+        else:
+            parts.append(_html_inline_to_markdown(child, base_url))
+    return _collapse_blank_lines("".join(parts))
+
+
+def parse_post_body_markdown_from_soup(soup: BeautifulSoup, base_url: str = "") -> str:
+    """
+    Extract post body as Markdown: ``[label](url)`` for anchors (incl. LinkedIn
+    profile/hashtag links). Falls back to empty string when no DOM body is found.
+    """
+    root = _find_post_body_element(soup)
+    if root is None:
+        return ""
+    base = (base_url or "").strip() or "https://www.linkedin.com"
+    return _article_to_markdown(root, base)
 
 
 def parse_post_body_from_soup(soup: BeautifulSoup) -> str:

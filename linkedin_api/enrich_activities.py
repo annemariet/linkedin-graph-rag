@@ -13,6 +13,11 @@ that has not been processed yet:
 
 Content is only saved to the store when it was not already available.
 URLs from API text are saved even when the HTTP fetch fails (e.g. login required).
+
+HTTP success stores the body as Markdown when possible (``[text](url)``, including
+LinkedIn profile/hashtag links). ``.meta.json`` ``urls`` lists only non-LinkedIn
+URLs; those are appended under ``## Links`` in the ``.md`` when missing from the
+body so metadata stays consistent with the file.
 """
 
 from __future__ import annotations
@@ -37,11 +42,37 @@ from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.post_html import (
     linkedin_http_fetch_is_blocked,
     parse_post_body_from_soup,
+    parse_post_body_markdown_from_soup,
     parse_post_meta_from_soup,
 )
-from linkedin_api.utils.urls import extract_urls_from_text, is_comment_feed_url
+from linkedin_api.utils.urls import (
+    extract_urls_from_markdown,
+    extract_urls_from_text,
+    is_comment_feed_url,
+    is_linkedin_internal_url,
+)
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
+
+
+def _metadata_external_urls(body_markdown: str, urls_from_api: list[str]) -> list[str]:
+    """Non-LinkedIn URLs for ``.meta.json``; must appear in saved Markdown (see enrich)."""
+    from_md = extract_urls_from_markdown(body_markdown)
+    from_plain = extract_urls_from_text(body_markdown)
+    merged = list(dict.fromkeys(from_md + from_plain))
+    external = [u for u in merged if not is_linkedin_internal_url(u)]
+    api_ext = [u for u in urls_from_api if not is_linkedin_internal_url(u)]
+    return list(dict.fromkeys(external + api_ext))
+
+
+def _append_missing_external_urls(markdown: str, urls: list[str]) -> str:
+    """Ensure every *urls* entry appears as text so metadata stays consistent."""
+    missing = [u for u in urls if u and u not in markdown]
+    if not missing:
+        return markdown
+    block = "\n\n## Links\n\n" + "\n".join(f"- <{u}>" for u in missing)
+    return markdown.rstrip() + block
+
 
 _FETCH_HEADERS = {
     "User-Agent": (
@@ -54,8 +85,9 @@ _FETCH_HEADERS = {
 
 def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
     """
-    Try simple HTTP request. Returns (content, urls, html_meta) if successful, None on
-    non-200, empty content, or error. html_meta may have post_created_at, post_author.
+    Try simple HTTP request. Returns (markdown_body, urls_plain_text, html_meta) if
+    successful, None on non-200, empty content, or error. ``urls_plain_text`` are from
+    the legacy plain extractor (length gate); Markdown adds link targets separately.
     """
     try:
         resp = requests.get(
@@ -67,11 +99,15 @@ def _fetch_with_requests(url: str) -> tuple[str, list[str], dict] | None:
         if linkedin_http_fetch_is_blocked(resp.url, html):
             return None
         soup = BeautifulSoup(html, "html.parser")
-        content = parse_post_body_from_soup(soup)
-        if not content or len(content) < 50:
+        final_url = resp.url or url
+        plain = parse_post_body_from_soup(soup)
+        if not plain or len(plain) < 50:
             return None
+        md = parse_post_body_markdown_from_soup(soup, base_url=final_url)
+        if not md or len(md) < 50:
+            md = plain
         html_meta = parse_post_meta_from_soup(soup)
-        return content, extract_urls_from_text(content), html_meta
+        return md, extract_urls_from_text(plain), html_meta
     except Exception:
         return None
 
@@ -104,10 +140,11 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
             if stored and len(stored) >= 50:
                 if not rec.content:
                     rec.content = stored
-                rec.urls = list(dict.fromkeys(urls_from_api))
+                meta_urls = _metadata_external_urls(stored, urls_from_api)
+                rec.urls = meta_urls
                 save_metadata(
                     urn,
-                    urls=rec.urls,
+                    urls=meta_urls,
                     post_url=url,
                     post_author=post_author or "",
                     post_author_url=post_author_url or "",
@@ -130,13 +167,17 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     if html_meta.get("post_author_url"):
                         post_author_url = html_meta["post_author_url"]
                     all_urls = list(dict.fromkeys(urls_from_api + fetched_urls))
-                    rec.urls = all_urls
+                    meta_urls = _metadata_external_urls(fetched_content, all_urls)
+                    body_saved = _append_missing_external_urls(
+                        fetched_content, meta_urls
+                    )
+                    rec.urls = meta_urls
                     if not rec.content:
-                        rec.content = fetched_content
-                        save_content(urn, fetched_content)
+                        rec.content = body_saved
+                        save_content(urn, body_saved)
                     save_metadata(
                         urn,
-                        urls=all_urls,
+                        urls=meta_urls,
                         post_url=url,
                         post_author=post_author or "",
                         post_author_url=post_author_url or "",
@@ -153,11 +194,13 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     api_body = (rec.content or "").strip()
                     api_urls = list(dict.fromkeys(urls_from_api))
                     if rec.interaction_type == "post" and len(api_body) >= 50:
-                        rec.urls = api_urls
-                        save_content(urn, api_body)
+                        meta_urls = _metadata_external_urls(api_body, api_urls)
+                        body_saved = _append_missing_external_urls(api_body, meta_urls)
+                        rec.urls = meta_urls
+                        save_content(urn, body_saved)
                         save_metadata(
                             urn,
-                            urls=api_urls,
+                            urls=meta_urls,
                             post_url=url,
                             post_author=post_author or "",
                             post_author_url=post_author_url or "",
@@ -169,10 +212,11 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         )
                         enriched_count += 1
                     elif api_urls:
-                        rec.urls = api_urls
+                        meta_urls = _metadata_external_urls("", api_urls)
+                        rec.urls = meta_urls
                         save_metadata(
                             urn,
-                            urls=api_urls,
+                            urls=meta_urls,
                             post_url=url,
                             post_author=post_author or "",
                             post_author_url=post_author_url or "",

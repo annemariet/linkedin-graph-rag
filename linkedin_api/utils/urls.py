@@ -9,6 +9,17 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 
+_MARKDOWN_LINK_URL = re.compile(r"\]\((https?://[^)]+)\)")
+
+
+def extract_urls_from_markdown(text: str) -> List[str]:
+    """URLs inside Markdown ``[...](url)`` link targets."""
+    if not text:
+        return []
+    found = _MARKDOWN_LINK_URL.findall(text)
+    return list(dict.fromkeys(f.strip() for f in found if f.strip()))
+
+
 def extract_urls_from_text(text: str) -> List[str]:
     """
     Extract all URLs from text using regex.
@@ -97,6 +108,21 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
         return {"domain": domain, "type": resource_type}
     except Exception:
         return {"domain": None, "type": "unknown"}
+
+
+def is_linkedin_internal_url(url: str) -> bool:
+    """True for linkedin.com / lnkd.in hosts (incl. regional subdomains)."""
+    if not (url or "").strip():
+        return False
+    try:
+        netloc = urlparse(url.strip()).netloc.lower()
+    except Exception:
+        return False
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return (
+        "linkedin.com" in netloc or netloc == "lnkd.in" or netloc.endswith(".lnkd.in")
+    )
 
 
 def is_comment_feed_url(url: str) -> bool:

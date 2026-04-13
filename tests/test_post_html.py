@@ -11,6 +11,7 @@ from linkedin_api.utils.post_html import (
     normalize_linkedin_profile_url,
     parse_post_author_from_html,
     parse_post_author_from_soup,
+    parse_post_body_markdown_from_soup,
     parse_post_meta_from_html,
 )
 
@@ -28,7 +29,9 @@ _DOM_ONLY_HTML = """
 <html><body>
 <article data-id="x">
 <p class="feed-shared-text">This is the main post body text with enough characters
-to pass enrichment length checks here.</p>
+to pass enrichment length checks here. See also
+<a href="https://github.com/example/repo">the repo</a> and
+<a href="https://www.linkedin.com/feed/hashtag/ai">#ai</a>.</p>
 </article>
 <a href="https://www.linkedin.com/in/example-author?trk=public_post_feed-actor-name">
 Jane Example</a>
@@ -91,6 +94,16 @@ def test_parse_post_author_dom_fallback_feed_actor_name():
     meta = parse_post_author_from_soup(soup)
     assert meta["post_author"] == "Jane Example"
     assert "linkedin.com/in/example-author" in meta["post_author_url"]
+
+
+def test_parse_post_body_markdown_includes_external_and_linkedin_links():
+    soup = BeautifulSoup(_DOM_ONLY_HTML, "html.parser")
+    md = parse_post_body_markdown_from_soup(
+        soup, base_url="https://www.linkedin.com/posts/x"
+    )
+    assert "github.com/example/repo" in md
+    assert "[the repo]" in md
+    assert "feed/hashtag/ai" in md or "hashtag" in md.lower()
 
 
 def test_parse_post_author_skips_comment_actor_links():
