@@ -1342,10 +1342,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "tqdm" },
-]
-
-[package.optional-dependencies]
-poc = [
     { name = "trafilatura" },
 ]
 
@@ -1377,9 +1373,8 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "requests" },
     { name = "tqdm", specifier = ">=4.67" },
-    { name = "trafilatura", marker = "extra == 'poc'", specifier = ">=2.0" },
+    { name = "trafilatura", specifier = ">=2.0" },
 ]
-provides-extras = ["poc"]
 
 [package.metadata.requires-dev]
 dev = [

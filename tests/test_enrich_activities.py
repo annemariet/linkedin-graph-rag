@@ -11,10 +11,8 @@ from linkedin_api.content_store import (
     save_content,
 )
 from linkedin_api.enriched_record import EnrichedRecord
-from linkedin_api.enrich_activities import (
-    _append_missing_resource_urls,
-    enrich_activities,
-)
+from linkedin_api.enrich_activities import enrich_activities
+from linkedin_api.post_extraction import append_missing_resource_urls
 from linkedin_api.utils.urls import is_comment_feed_url
 
 
@@ -24,17 +22,17 @@ class TestAppendMissingResourceUrls:
         body = "See https://gisk.ar/41lYlde for more."
         with (
             patch(
-                "linkedin_api.enrich_activities.resolve_urls_for_metadata",
+                "linkedin_api.content_store.resolve_urls_for_metadata",
                 return_value=["https://docs.giskard.ai/en/stable/"],
             ),
             patch(
-                "linkedin_api.enrich_activities.resolve_redirect",
+                "linkedin_api.utils.urls.resolve_redirect",
                 side_effect=lambda u: (
                     "https://docs.giskard.ai/en/stable/" if "gisk.ar" in u else u
                 ),
             ),
         ):
-            out = _append_missing_resource_urls(
+            out = append_missing_resource_urls(
                 body, ["https://docs.giskard.ai/en/stable/"]
             )
         assert "## Links" not in out
@@ -147,9 +145,7 @@ class TestEnrichSavesTimestamps:
                 created_at="",
             )
         ]
-        with patch(
-            "linkedin_api.enrich_activities._fetch_with_requests", return_value=None
-        ):
+        with patch("linkedin_api.enrich_activities._fetch_html", return_value=None):
             _, count = enrich_activities(activities)
         assert count == 1
         stored = load_content(urn)
@@ -162,9 +158,7 @@ class TestEnrichSavesTimestamps:
 
     def test_login_wall_does_not_save_csv_body_for_reaction_rows(self):
         urn = "urn:li:activity:999"
-        with patch(
-            "linkedin_api.enrich_activities._fetch_with_requests", return_value=None
-        ):
+        with patch("linkedin_api.enrich_activities._fetch_html", return_value=None):
             _, count = enrich_activities(
                 [
                     EnrichedRecord(

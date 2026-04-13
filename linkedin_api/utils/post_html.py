@@ -188,6 +188,11 @@ def _find_post_body_element(soup: BeautifulSoup) -> Tag | None:
     return None
 
 
+def find_post_body_root(soup: BeautifulSoup) -> Tag | None:
+    """Public alias for link classification and DOM-scoped extraction."""
+    return _find_post_body_element(soup)
+
+
 def _collapse_blank_lines(text: str) -> str:
     out = re.sub(r"\n{3,}", "\n\n", text)
     return out.strip()

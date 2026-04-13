@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""
+Backfill content-store ``.meta.json`` from CSV and optionally re-fetch LinkedIn HTML.
+
+1. **CSV only (default):** Merge ``post_id``, ``post_urn``, union ``activities_ids``.
+
+2. **``--fetch-html``:** GET each ``post_url`` and run ``linkedin_api.post_extraction``
+   (same pipeline as enrich): DOM-classified ``urls`` / ``mentions`` / ``tags``,
+   ``images``, trafilatura markdown → ``.md``, JSON-LD author fields.
+
+3. **``--fetch-author`` (deprecated):** Only fill missing ``post_author`` / URL from HTML
+   (lighter than full ``--fetch-html``).
+
+Examples::
+
+    uv run python scripts/backfill_content_store.py
+    uv run python scripts/backfill_content_store.py --fetch-html --sleep 1.0 --limit 20
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sys
+import time
+from pathlib import Path
+
+import requests
+from tqdm import tqdm
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from linkedin_api.activity_csv import get_data_dir, load_records_csv  # noqa: E402
+from linkedin_api.content_store import (  # noqa: E402
+    _ms_to_iso,
+    load_metadata,
+    merge_post_identity,
+    resolve_urls_for_metadata,
+    save_content,
+    save_metadata,
+    update_metadata_fields,
+)
+from linkedin_api.enriched_record import EnrichedRecord  # noqa: E402
+from linkedin_api.post_extraction import (  # noqa: E402
+    append_missing_resource_urls,
+    extract_post_from_html,
+    merge_classification_with_api,
+)
+from linkedin_api.utils.post_html import (
+    linkedin_http_fetch_is_blocked,
+    parse_post_meta_from_soup,
+)  # noqa: E402
+from linkedin_api.utils.urns import extract_urn_id  # noqa: E402
+from linkedin_api.utils.urls import (
+    extract_urls_from_text,
+    is_comment_feed_url,
+)  # noqa: E402
+
+logger = logging.getLogger("backfill_content_store")
+
+_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+
+def _load_registry(content_dir: Path) -> dict[str, str]:
+    p = content_dir / "_urn_registry.json"
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _aggregate_csv_by_post_urn(
+    csv_path: Path,
+) -> tuple[dict[str, list[str]], dict[str, list[str]], int]:
+    """post_urn -> activity_ids; post_urn -> urls from CSV row text."""
+    records = load_records_csv(csv_path)
+    n_rows = len(records)
+    by_urn: dict[str, list[str]] = {}
+    urls_by_urn: dict[str, list[str]] = {}
+    for rec in records:
+        er = EnrichedRecord.from_activity_record(rec)
+        urn = (er.post_urn or "").strip()
+        if not urn:
+            continue
+        aid = (rec.activity_id or "").strip()
+        if aid:
+            if urn not in by_urn:
+                by_urn[urn] = []
+            if aid not in by_urn[urn]:
+                by_urn[urn].append(aid)
+        for u in er.urls:
+            u = (u or "").strip()
+            if not u:
+                continue
+            urls_by_urn.setdefault(urn, [])
+            if u not in urls_by_urn[urn]:
+                urls_by_urn[urn].append(u)
+    return by_urn, urls_by_urn, n_rows
+
+
+def _post_id_from_urn(urn: str) -> str:
+    return (extract_urn_id(urn) or "").strip()
+
+
+def _author_only_jobs(
+    stems: list[str],
+    registry: dict[str, str],
+    content_dir: Path,
+    limit: int,
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    for stem in stems:
+        urn = (registry.get(stem) or "").strip()
+        if not urn:
+            continue
+        if not (content_dir / f"{stem}.meta.json").exists():
+            continue
+        meta = load_metadata(urn)
+        if meta is None:
+            continue
+        if (str(meta.get("post_author") or "")).strip():
+            continue
+        post_url = (meta.get("post_url") or "").strip()
+        if not post_url or is_comment_feed_url(post_url):
+            continue
+        out.append((stem, urn, post_url))
+        if limit and len(out) >= limit:
+            break
+    return out
+
+
+def _html_fetch_jobs(
+    stems: list[str],
+    registry: dict[str, str],
+    content_dir: Path,
+    limit: int,
+) -> list[tuple[str, str, str]]:
+    out: list[tuple[str, str, str]] = []
+    for stem in stems:
+        urn = (registry.get(stem) or "").strip()
+        if not urn:
+            continue
+        if not (content_dir / f"{stem}.meta.json").exists():
+            continue
+        meta = load_metadata(urn)
+        if meta is None:
+            continue
+        post_url = (meta.get("post_url") or "").strip()
+        if not post_url or is_comment_feed_url(post_url):
+            continue
+        out.append((stem, urn, post_url))
+        if limit and len(out) >= limit:
+            break
+    return out
+
+
+def _fetch_author_only(post_url: str, timeout: float) -> dict[str, str]:
+    try:
+        resp = requests.get(
+            post_url,
+            timeout=timeout,
+            allow_redirects=True,
+            headers=_FETCH_HEADERS,
+        )
+    except OSError:
+        return {}
+    if resp.status_code != 200:
+        return {}
+    if linkedin_http_fetch_is_blocked(resp.url, resp.text):
+        return {}
+    from bs4 import BeautifulSoup
+
+    return parse_post_meta_from_soup(BeautifulSoup(resp.text, "html.parser"))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--csv", type=Path, default=None, help="activities.csv")
+    ap.add_argument("--data-dir", type=Path, default=None, help="Data root")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--fetch-html",
+        action="store_true",
+        help="Re-fetch post HTML and refresh .md + classified metadata (trafilatura + DOM)",
+    )
+    ap.add_argument(
+        "--fetch-author",
+        action="store_true",
+        help="Deprecated: only backfill post_author from HTML when empty",
+    )
+    ap.add_argument("--sleep", type=float, default=1.0)
+    ap.add_argument("--timeout", type=float, default=15.0)
+    ap.add_argument("--limit", type=int, default=0, help="Max HTTP jobs (0 = no cap)")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("-q", "--quiet", action="store_true")
+    ap.add_argument("--no-progress", action="store_true")
+    args = ap.parse_args()
+
+    if args.quiet and args.verbose:
+        print("Use only one of --quiet or --verbose", file=sys.stderr)
+        return 2
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(message)s",
+        stream=sys.stderr,
+    )
+    use_tqdm = not (args.quiet or args.no_progress)
+
+    data_dir = args.data_dir or get_data_dir()
+    csv_path = args.csv or (data_dir / "activities.csv")
+    if not csv_path.exists():
+        logger.error("CSV not found: %s", csv_path)
+        return 1
+
+    content_dir = data_dir / "content"
+    if not content_dir.is_dir():
+        logger.error("Content dir not found: %s", content_dir)
+        return 1
+
+    registry = _load_registry(content_dir)
+    if not registry:
+        logger.error("No _urn_registry.json under %s", content_dir)
+        return 1
+
+    by_urn, urls_by_urn, n_csv_rows = _aggregate_csv_by_post_urn(csv_path)
+    stems = sorted(registry.keys())
+    eligible = [
+        s
+        for s in stems
+        if (registry.get(s) or "").strip() and (content_dir / f"{s}.meta.json").exists()
+    ]
+    if not args.quiet:
+        print(
+            f"CSV identity merge: {len(eligible)} metadata file(s), "
+            f"{n_csv_rows} CSV row(s)",
+            file=sys.stderr,
+        )
+
+    csv_merged = 0
+    for stem in tqdm(
+        eligible,
+        desc="CSV merge",
+        unit="file",
+        disable=not use_tqdm,
+        file=sys.stderr,
+    ):
+        urn = (registry.get(stem) or "").strip()
+        extra_ids = by_urn.get(urn, [])
+        pid = _post_id_from_urn(urn)
+        if args.dry_run:
+            continue
+        out = merge_post_identity(
+            urn,
+            post_id=pid,
+            post_urn=urn,
+            extra_activity_ids=extra_ids,
+        )
+        if out is not None:
+            csv_merged += 1
+
+    if not args.quiet and not args.dry_run:
+        print(
+            f"CSV merge done: updated {csv_merged} metadata file(s).", file=sys.stderr
+        )
+
+    lim = args.limit or 0
+
+    if args.fetch_html:
+        if args.dry_run:
+            jobs = _html_fetch_jobs(stems, registry, content_dir, lim)
+            if not args.quiet:
+                print(
+                    f"[dry-run] would run {len(jobs)} HTML fetch(es).", file=sys.stderr
+                )
+            return 0
+        jobs = _html_fetch_jobs(stems, registry, content_dir, lim)
+        if not args.quiet:
+            print(f"HTML fetch: {len(jobs)} job(s)", file=sys.stderr)
+        for _stem, urn, post_url in tqdm(
+            jobs, desc="fetch-html", unit="GET", disable=not use_tqdm, file=sys.stderr
+        ):
+            meta = load_metadata(urn)
+            if meta is None:
+                continue
+            try:
+                resp = requests.get(
+                    post_url,
+                    timeout=args.timeout,
+                    allow_redirects=True,
+                    headers=_FETCH_HEADERS,
+                )
+            except OSError as e:
+                logger.warning("GET failed %s: %s", post_url[:80], e)
+                if args.sleep > 0:
+                    time.sleep(args.sleep)
+                continue
+            if resp.status_code != 200:
+                if args.sleep > 0:
+                    time.sleep(args.sleep)
+                continue
+            ext = extract_post_from_html(resp.text, resp.url or post_url)
+            if ext is None:
+                if args.sleep > 0:
+                    time.sleep(args.sleep)
+                continue
+            api_urls = urls_by_urn.get(urn, [])
+            urls, mentions, tags = merge_classification_with_api(
+                ext.urls, ext.mentions, ext.tags, api_urls
+            )
+            meta_urls = resolve_urls_for_metadata(urls)
+            body = append_missing_resource_urls(ext.markdown_body, meta_urls)
+            save_content(urn, body)
+            ts_ms = None
+            try:
+                from linkedin_api.utils.linkedin_snowflake import (
+                    post_created_at_from_urn,
+                )
+
+                pca = (ext.html_meta.get("post_created_at") or "").strip() or None
+                if not pca:
+                    pca = post_created_at_from_urn(urn) or None
+            except Exception:
+                pca = ext.html_meta.get("post_created_at") or None
+            save_metadata(
+                urn,
+                urls=meta_urls,
+                mentions=mentions,
+                tags=tags,
+                images=ext.image_urls,
+                post_url=post_url,
+                post_author=ext.html_meta.get("post_author") or "",
+                post_author_url=ext.html_meta.get("post_author_url") or "",
+                activity_time_iso=_ms_to_iso(ts_ms),
+                post_created_at=pca or "",
+                post_urn=urn,
+                post_id=(str(meta.get("post_id") or "") or _post_id_from_urn(urn)),
+                activities_ids=list(
+                    dict.fromkeys(
+                        (meta.get("activities_ids") or []) + by_urn.get(urn, [])
+                    )
+                ),
+            )
+            if args.sleep > 0:
+                time.sleep(args.sleep)
+        if not args.quiet:
+            print("HTML backfill done.", file=sys.stderr)
+        return 0
+
+    if args.fetch_author:
+        if args.dry_run:
+            jobs = _author_only_jobs(stems, registry, content_dir, lim)
+            if not args.quiet:
+                print(
+                    f"[dry-run] would run {len(jobs)} author GET(s).", file=sys.stderr
+                )
+            return 0
+        jobs = _author_only_jobs(stems, registry, content_dir, lim)
+        for _stem, urn, post_url in tqdm(
+            jobs, desc="Author fetch", unit="GET", disable=not use_tqdm, file=sys.stderr
+        ):
+            meta = load_metadata(urn)
+            if meta is None:
+                continue
+            html_meta = _fetch_author_only(post_url, args.timeout)
+            if not html_meta.get("post_author") and not html_meta.get(
+                "post_author_url"
+            ):
+                if args.sleep > 0:
+                    time.sleep(args.sleep)
+                continue
+            kwargs: dict = {}
+            if html_meta.get("post_author"):
+                kwargs["post_author"] = html_meta["post_author"]
+            if html_meta.get("post_author_url"):
+                kwargs["post_author_url"] = html_meta["post_author_url"]
+            if (
+                html_meta.get("post_created_at")
+                and not (str(meta.get("post_created_at") or "")).strip()
+            ):
+                kwargs["post_created_at"] = html_meta["post_created_at"]
+            if kwargs:
+                update_metadata_fields(urn, **kwargs)
+            if args.sleep > 0:
+                time.sleep(args.sleep)
+        return 0
+
+    if not args.quiet:
+        print(
+            "Done. Use --fetch-html to refresh body + metadata, or --fetch-author for author only.",
+            file=sys.stderr,
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

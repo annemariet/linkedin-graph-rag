@@ -22,7 +22,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.utils.urls import resolve_redirect
@@ -92,6 +92,7 @@ _META_KEYS = (
     "urls",
     "mentions",
     "tags",
+    "images",
     "post_url",
     "post_urn",
     "post_author",
@@ -185,11 +186,11 @@ def _iso_to_ms(iso_str: str | None) -> int | None:
 
 def save_metadata(
     urn: str,
-    summary: str = "",
-    topics: list[str] | None = None,
-    technologies: list[str] | None = None,
-    people: list[str] | None = None,
-    category: str | None = None,
+    summary: Optional[str] = None,
+    topics: Optional[list[str]] = None,
+    technologies: Optional[list[str]] = None,
+    people: Optional[list[str]] = None,
+    category: Optional[str] = None,
     urls: list[str] | None = None,
     post_url: str = "",
     **extra: Any,
@@ -204,14 +205,15 @@ def save_metadata(
     existing = dict(load_metadata(urn) or {})
     from_extra = {k: v for k, v in extra.items() if k in _META_KEYS}
     meta: dict[str, Any] = {
-        "summary": summary,
-        "topics": topics or [],
-        "technologies": technologies or [],
-        "people": people or [],
-        "category": category or "",
+        "summary": summary if summary is not None else "",
+        "topics": topics if topics is not None else [],
+        "technologies": technologies if technologies is not None else [],
+        "people": people if people is not None else [],
+        "category": category if category is not None else "",
         "urls": urls or [],
         "mentions": [],
         "tags": [],
+        "images": [],
         "post_url": post_url or "",
         "post_urn": "",
         "post_author": "",
@@ -224,11 +226,16 @@ def save_metadata(
     }
     meta.update({k: v for k, v in existing.items() if k in _META_KEYS})
     meta.update(from_extra)
-    meta["summary"] = summary
-    meta["topics"] = topics or []
-    meta["technologies"] = technologies or []
-    meta["people"] = people or []
-    meta["category"] = category or ""
+    if summary is not None:
+        meta["summary"] = summary
+    if topics is not None:
+        meta["topics"] = topics
+    if technologies is not None:
+        meta["technologies"] = technologies
+    if people is not None:
+        meta["people"] = people
+    if category is not None:
+        meta["category"] = category or ""
     meta["urls"] = resolve_urls_for_metadata(urls or [])
     prev_mentions = (
         existing.get("mentions") if isinstance(existing.get("mentions"), list) else None
@@ -242,6 +249,18 @@ def save_metadata(
         prev_tags if isinstance(prev_tags, list) else None,
         meta.get("tags") if isinstance(meta.get("tags"), list) else None,
     )
+    prev_images = existing.get("images")
+    inc_images = meta.get("images")
+    if isinstance(prev_images, list) and isinstance(inc_images, list):
+        meta["images"] = list(
+            dict.fromkeys(str(x) for x in prev_images + inc_images if x)
+        )
+    elif isinstance(inc_images, list):
+        meta["images"] = [str(x) for x in inc_images if x]
+    elif isinstance(prev_images, list):
+        meta["images"] = [str(x) for x in prev_images if x]
+    else:
+        meta["images"] = []
     meta["post_url"] = post_url or meta.get("post_url") or ""
 
     prev_ids = existing.get("activities_ids") or []

@@ -2,9 +2,9 @@
 """
 POC: compare LinkedIn post HTML extraction strategies on one or more URLs.
 
-Install optional deps::
+Run (``trafilatura`` is a core dependency)::
 
-    uv sync --extra poc
+    uv sync
 
 Run::
 
