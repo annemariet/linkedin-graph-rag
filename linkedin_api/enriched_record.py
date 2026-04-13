@@ -31,6 +31,7 @@ def _format_timestamp(ts_ms: int | None) -> str:
 
 
 _TYPE_TO_INTERACTION: dict[str, str] = {
+    ActivityType.POST.value: "post",
     ActivityType.REACTION_TO_POST.value: "reaction",
     ActivityType.REACTION_TO_COMMENT.value: "reaction",
     ActivityType.REPOST.value: "repost",
