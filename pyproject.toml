@@ -30,6 +30,11 @@ dependencies = [
     "tqdm>=4.67",
 ]
 
+[project.optional-dependencies]
+poc = [
+    "trafilatura>=2.0",
+]
+
 [dependency-groups]
 dev = [
     "black",
