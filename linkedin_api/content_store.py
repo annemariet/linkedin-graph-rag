@@ -90,6 +90,8 @@ _META_KEYS = (
     "people",
     "category",
     "urls",
+    "mentions",
+    "tags",
     "post_url",
     "post_urn",
     "post_author",
@@ -100,6 +102,32 @@ _META_KEYS = (
     "activity_time_iso",
     "post_created_at",
 )
+
+
+def _merge_mentions(
+    previous: list[dict[str, Any]] | None, incoming: list[dict[str, Any]] | None
+) -> list[dict[str, str]]:
+    """Union by ``url``; prefer non-empty ``name`` when merging."""
+    by_url: dict[str, dict[str, str]] = {}
+    for group in (previous or [], incoming or []):
+        for raw in group:
+            if not isinstance(raw, dict):
+                continue
+            url = str(raw.get("url") or "").strip()
+            if not url:
+                continue
+            name = str(raw.get("name") or "").strip()
+            if url not in by_url:
+                by_url[url] = {"name": name, "url": url}
+            elif name and not (by_url[url].get("name") or "").strip():
+                by_url[url]["name"] = name
+    return list(by_url.values())
+
+
+def _merge_tags(previous: list[Any] | None, incoming: list[Any] | None) -> list[str]:
+    prev = {str(x).strip() for x in (previous or []) if x and str(x).strip()}
+    inc = {str(x).strip() for x in (incoming or []) if x and str(x).strip()}
+    return sorted(prev | inc)
 
 
 def resolve_urls_for_metadata(urls: list[str] | None) -> list[str]:
@@ -182,6 +210,8 @@ def save_metadata(
         "people": people or [],
         "category": category or "",
         "urls": urls or [],
+        "mentions": [],
+        "tags": [],
         "post_url": post_url or "",
         "post_urn": "",
         "post_author": "",
@@ -200,6 +230,18 @@ def save_metadata(
     meta["people"] = people or []
     meta["category"] = category or ""
     meta["urls"] = resolve_urls_for_metadata(urls or [])
+    prev_mentions = (
+        existing.get("mentions") if isinstance(existing.get("mentions"), list) else None
+    )
+    prev_tags = existing.get("tags")
+    meta["mentions"] = _merge_mentions(
+        prev_mentions,
+        meta.get("mentions") if isinstance(meta.get("mentions"), list) else None,
+    )
+    meta["tags"] = _merge_tags(
+        prev_tags if isinstance(prev_tags, list) else None,
+        meta.get("tags") if isinstance(meta.get("tags"), list) else None,
+    )
     meta["post_url"] = post_url or meta.get("post_url") or ""
 
     prev_ids = existing.get("activities_ids") or []

@@ -12,13 +12,13 @@ from linkedin_api.content_store import (
 )
 from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.enrich_activities import (
-    _append_missing_external_urls,
+    _append_missing_resource_urls,
     enrich_activities,
 )
 from linkedin_api.utils.urls import is_comment_feed_url
 
 
-class TestAppendMissingExternalUrls:
+class TestAppendMissingResourceUrls:
     def test_no_duplicate_when_short_in_body_matches_resolved_metadata(self):
         """Body has gisk.ar short link; metadata list may store resolved URL after redirect."""
         body = "See https://gisk.ar/41lYlde for more."
@@ -34,7 +34,7 @@ class TestAppendMissingExternalUrls:
                 ),
             ),
         ):
-            out = _append_missing_external_urls(
+            out = _append_missing_resource_urls(
                 body, ["https://docs.giskard.ai/en/stable/"]
             )
         assert "## Links" not in out

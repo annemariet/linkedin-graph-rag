@@ -15,9 +15,11 @@ Content is only saved to the store when it was not already available.
 URLs from API text are saved even when the HTTP fetch fails (e.g. login required).
 
 HTTP success stores the body as Markdown when possible (``[text](url)``, including
-LinkedIn profile/hashtag links). ``.meta.json`` ``urls`` lists only non-LinkedIn
-URLs; those are appended under ``## Links`` in the ``.md`` when missing from the
-body so metadata stays consistent with the file.
+LinkedIn profile/hashtag links). ``.meta.json`` classifies links: ``urls`` (posts,
+Pulse, ``/redir/``, external, ``lnkd.in``, …), ``mentions`` (``{name, url}`` for
+``/in/``, ``/company/``, ``/school/``), ``tags`` (hashtag keywords only, no URL).
+Missing resource URLs are appended under ``## Links`` in the ``.md`` when absent
+from the body string.
 """
 
 from __future__ import annotations
@@ -47,24 +49,20 @@ from linkedin_api.utils.post_html import (
     parse_post_meta_from_soup,
 )
 from linkedin_api.utils.urls import (
-    extract_urls_from_markdown,
+    extract_classified_links,
     extract_urls_from_text,
     is_comment_feed_url,
-    is_linkedin_internal_url,
     resolve_redirect,
 )
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
 
 
-def _metadata_external_urls(body_markdown: str, urls_from_api: list[str]) -> list[str]:
-    """Non-LinkedIn URLs for ``.meta.json``; must appear in saved Markdown (see enrich)."""
-    from_md = extract_urls_from_markdown(body_markdown)
-    from_plain = extract_urls_from_text(body_markdown)
-    merged = list(dict.fromkeys(from_md + from_plain))
-    external = [u for u in merged if not is_linkedin_internal_url(u)]
-    api_ext = [u for u in urls_from_api if not is_linkedin_internal_url(u)]
-    return list(dict.fromkeys(external + api_ext))
+def _classified_for_metadata(
+    body: str, urls_from_api: list[str]
+) -> tuple[list[str], list[dict[str, str]], list[str]]:
+    """``urls``, ``mentions``, ``tags`` for ``save_metadata`` (see ``extract_classified_links``)."""
+    return extract_classified_links(body, urls_from_api)
 
 
 def _resolved_url_set(urls: list[str]) -> set[str]:
@@ -84,8 +82,8 @@ def _resolved_url_set(urls: list[str]) -> set[str]:
     return out
 
 
-def _append_missing_external_urls(markdown: str, urls: list[str]) -> str:
-    """Ensure every *urls* entry appears as text so metadata stays consistent.
+def _append_missing_resource_urls(markdown: str, urls: list[str]) -> str:
+    """Ensure every classified resource ``urls`` entry appears as text in the file.
 
     ``save_metadata`` passes ``urls`` through ``resolve_urls_for_metadata``; the
     append step uses the same resolution so we do not duplicate when the body has
@@ -181,11 +179,15 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
             if stored and len(stored) >= 50:
                 if not rec.content:
                     rec.content = stored
-                meta_urls = _metadata_external_urls(stored, urls_from_api)
+                meta_urls, mentions, tags = _classified_for_metadata(
+                    stored, urls_from_api
+                )
                 rec.urls = meta_urls
                 save_metadata(
                     urn,
                     urls=meta_urls,
+                    mentions=mentions,
+                    tags=tags,
                     post_url=url,
                     post_author=post_author or "",
                     post_author_url=post_author_url or "",
@@ -208,8 +210,10 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     if html_meta.get("post_author_url"):
                         post_author_url = html_meta["post_author_url"]
                     all_urls = list(dict.fromkeys(urls_from_api + fetched_urls))
-                    meta_urls = _metadata_external_urls(fetched_content, all_urls)
-                    body_saved = _append_missing_external_urls(
+                    meta_urls, mentions, tags = _classified_for_metadata(
+                        fetched_content, all_urls
+                    )
+                    body_saved = _append_missing_resource_urls(
                         fetched_content, meta_urls
                     )
                     rec.urls = meta_urls
@@ -219,6 +223,8 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     save_metadata(
                         urn,
                         urls=meta_urls,
+                        mentions=mentions,
+                        tags=tags,
                         post_url=url,
                         post_author=post_author or "",
                         post_author_url=post_author_url or "",
@@ -235,13 +241,17 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                     api_body = (rec.content or "").strip()
                     api_urls = list(dict.fromkeys(urls_from_api))
                     if rec.interaction_type == "post" and len(api_body) >= 50:
-                        meta_urls = _metadata_external_urls(api_body, api_urls)
-                        body_saved = _append_missing_external_urls(api_body, meta_urls)
+                        meta_urls, mentions, tags = _classified_for_metadata(
+                            api_body, api_urls
+                        )
+                        body_saved = _append_missing_resource_urls(api_body, meta_urls)
                         rec.urls = meta_urls
                         save_content(urn, body_saved)
                         save_metadata(
                             urn,
                             urls=meta_urls,
+                            mentions=mentions,
+                            tags=tags,
                             post_url=url,
                             post_author=post_author or "",
                             post_author_url=post_author_url or "",
@@ -253,11 +263,15 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                         )
                         enriched_count += 1
                     elif api_urls:
-                        meta_urls = _metadata_external_urls("", api_urls)
+                        meta_urls, mentions, tags = _classified_for_metadata(
+                            "", api_urls
+                        )
                         rec.urls = meta_urls
                         save_metadata(
                             urn,
                             urls=meta_urls,
+                            mentions=mentions,
+                            tags=tags,
                             post_url=url,
                             post_author=post_author or "",
                             post_author_url=post_author_url or "",

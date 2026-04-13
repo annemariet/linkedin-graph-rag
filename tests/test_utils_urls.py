@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from linkedin_api.utils.urls import (
     categorize_url,
+    extract_classified_links,
     extract_urls_from_markdown,
     extract_urls_from_text,
     is_linkedin_internal_url,
@@ -41,6 +42,28 @@ class TestExtractUrlsFromMarkdown:
         urls = extract_urls_from_markdown(md)
         assert "https://arxiv.org/abs/123" in urls
         assert "https://example.com/x" in urls
+
+
+class TestExtractClassifiedLinks:
+    def test_splits_mentions_tags_and_resource_urls(self):
+        body = (
+            "Hi [Jane](https://www.linkedin.com/in/jane) see "
+            "[#ai](https://www.linkedin.com/feed/hashtag/ai?trk=x) and "
+            "https://github.com/x/y"
+        )
+        urls, mentions, tags = extract_classified_links(body)
+        assert tags == ["ai"]
+        assert len(mentions) == 1
+        assert mentions[0]["url"] == "https://www.linkedin.com/in/jane"
+        assert mentions[0]["name"] == "Jane"
+        assert "https://github.com/x/y" in urls
+
+    def test_linkedin_post_stays_in_urls(self):
+        u = "https://www.linkedin.com/posts/foo_activity-123"
+        urls, mentions, tags = extract_classified_links(f"Read {u}", [])
+        assert u in urls
+        assert mentions == []
+        assert tags == []
 
 
 class TestIsLinkedinInternalUrl:
