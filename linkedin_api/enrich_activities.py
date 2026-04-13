@@ -34,6 +34,7 @@ from linkedin_api.content_store import (
     _ms_to_iso,
     has_metadata,
     load_content,
+    resolve_urls_for_metadata,
     save_content,
     save_metadata,
 )
@@ -50,6 +51,7 @@ from linkedin_api.utils.urls import (
     extract_urls_from_text,
     is_comment_feed_url,
     is_linkedin_internal_url,
+    resolve_redirect,
 )
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "outputs"
@@ -65,9 +67,48 @@ def _metadata_external_urls(body_markdown: str, urls_from_api: list[str]) -> lis
     return list(dict.fromkeys(external + api_ext))
 
 
+def _resolved_url_set(urls: list[str]) -> set[str]:
+    """Stable URLs plus resolved targets (for comparing short links to final destinations)."""
+    out: set[str] = set()
+    for u in urls:
+        s = (u or "").strip()
+        if not s:
+            continue
+        out.add(s)
+        try:
+            r = resolve_redirect(s)
+        except Exception:
+            r = ""
+        if r and r != s:
+            out.add(r)
+    return out
+
+
 def _append_missing_external_urls(markdown: str, urls: list[str]) -> str:
-    """Ensure every *urls* entry appears as text so metadata stays consistent."""
-    missing = [u for u in urls if u and u not in markdown]
+    """Ensure every *urls* entry appears as text so metadata stays consistent.
+
+    ``save_metadata`` passes ``urls`` through ``resolve_urls_for_metadata``; the
+    append step uses the same resolution so we do not duplicate when the body has
+    a short link and JSON stores the final URL (or vice versa).
+    """
+    canonical = resolve_urls_for_metadata(urls or [])
+    body_urls = extract_urls_from_text(markdown)
+    body_resolved = _resolved_url_set(body_urls)
+    missing: list[str] = []
+    for u in canonical:
+        if not u:
+            continue
+        if u in markdown:
+            continue
+        try:
+            u_resolved = resolve_redirect(u)
+        except Exception:
+            u_resolved = u
+        if u_resolved in markdown:
+            continue
+        if body_resolved & _resolved_url_set([u]):
+            continue
+        missing.append(u)
     if not missing:
         return markdown
     block = "\n\n## Links\n\n" + "\n".join(f"- <{u}>" for u in missing)

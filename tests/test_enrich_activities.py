@@ -11,8 +11,33 @@ from linkedin_api.content_store import (
     save_content,
 )
 from linkedin_api.enriched_record import EnrichedRecord
-from linkedin_api.enrich_activities import enrich_activities
+from linkedin_api.enrich_activities import (
+    _append_missing_external_urls,
+    enrich_activities,
+)
 from linkedin_api.utils.urls import is_comment_feed_url
+
+
+class TestAppendMissingExternalUrls:
+    def test_no_duplicate_when_short_in_body_matches_resolved_metadata(self):
+        """Body has gisk.ar short link; metadata list may store resolved URL after redirect."""
+        body = "See https://gisk.ar/41lYlde for more."
+        with (
+            patch(
+                "linkedin_api.enrich_activities.resolve_urls_for_metadata",
+                return_value=["https://docs.giskard.ai/en/stable/"],
+            ),
+            patch(
+                "linkedin_api.enrich_activities.resolve_redirect",
+                side_effect=lambda u: (
+                    "https://docs.giskard.ai/en/stable/" if "gisk.ar" in u else u
+                ),
+            ),
+        ):
+            out = _append_missing_external_urls(
+                body, ["https://docs.giskard.ai/en/stable/"]
+            )
+        assert "## Links" not in out
 
 
 class TestIsCommentFeedUrl:
