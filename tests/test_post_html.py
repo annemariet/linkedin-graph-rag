@@ -9,9 +9,11 @@ from bs4 import BeautifulSoup
 from linkedin_api.utils.post_html import (
     linkedin_http_fetch_is_blocked,
     normalize_linkedin_profile_url,
+    parse_comments_from_ld_json,
     parse_post_author_from_html,
     parse_post_author_from_soup,
     parse_post_body_markdown_from_soup,
+    parse_post_images_from_ld_json,
     parse_post_meta_from_html,
 )
 
@@ -118,6 +120,86 @@ def test_parse_post_author_skips_comment_actor_links():
     """
     meta = parse_post_author_from_html(html)
     assert meta["post_author"] == "Real Poster"
+
+
+_LD_JSON_WITH_IMAGES_AND_COMMENTS = """
+<html><head>
+<script type="application/ld+json">
+{"@context":"http://schema.org","@type":"SocialMediaPosting",
+ "commentCount":8,
+ "image":[
+   {"url":"https://media.licdn.com/img1.jpg","@type":"ImageObject"},
+   {"url":"https://media.licdn.com/img2.jpg","@type":"ImageObject"},
+   {"url":"https://media.licdn.com/img3.jpg","@type":"ImageObject"}
+ ],
+ "comment":[
+   {"@type":"Comment","datePublished":"2026-03-07T12:00:00.000Z",
+    "text":"Great post!","author":{"@type":"Person","name":"Alice Smith"},
+    "interactionStatistic":{"@type":"InteractionCounter",
+     "interactionType":"http://schema.org/LikeAction","userInteractionCount":5}},
+   {"@type":"Comment","datePublished":"2026-03-07T13:00:00.000Z",
+    "text":"Thanks Alice","author":{"@type":"Person","name":"Bob Jones"},
+    "interactionStatistic":{"@type":"InteractionCounter",
+     "interactionType":"http://schema.org/LikeAction","userInteractionCount":2}}
+ ]}
+</script>
+</head><body>
+<a href="https://linkedin.com/in/alice?trk=public_post_comment_actor-name">Alice Smith</a>
+<a href="https://linkedin.com/in/bob-j?trk=public_post_comment_actor-name">Bob Jones</a>
+</body></html>
+"""
+
+
+def test_parse_post_images_from_ld_json_extracts_all_urls():
+    soup = BeautifulSoup(_LD_JSON_WITH_IMAGES_AND_COMMENTS, "html.parser")
+    imgs = parse_post_images_from_ld_json(soup)
+    assert imgs == [
+        "https://media.licdn.com/img1.jpg",
+        "https://media.licdn.com/img2.jpg",
+        "https://media.licdn.com/img3.jpg",
+    ]
+
+
+def test_parse_post_images_from_ld_json_og_fallback():
+    html = (
+        "<html><head>"
+        '<meta property="og:image" content="https://cdn.example.com/cover.jpg"/>'
+        "</head><body></body></html>"
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    imgs = parse_post_images_from_ld_json(soup)
+    assert imgs == ["https://cdn.example.com/cover.jpg"]
+
+
+def test_parse_post_images_from_ld_json_empty_when_none():
+    soup = BeautifulSoup("<html><body></body></html>", "html.parser")
+    assert parse_post_images_from_ld_json(soup) == []
+
+
+def test_parse_comments_from_ld_json_structure():
+    soup = BeautifulSoup(_LD_JSON_WITH_IMAGES_AND_COMMENTS, "html.parser")
+    total, comments = parse_comments_from_ld_json(soup)
+    assert total == 8
+    assert len(comments) == 2
+
+    alice = comments[0]
+    assert alice["author"] == "Alice Smith"
+    assert alice["timestamp"] == "2026-03-07T12:00:00.000Z"
+    assert alice["text"] == "Great post!"
+    assert alice["likes"] == 5
+    assert "linkedin.com/in/alice" in alice["author_url"]
+
+    bob = comments[1]
+    assert bob["author"] == "Bob Jones"
+    assert bob["likes"] == 2
+    assert "linkedin.com/in/bob-j" in bob["author_url"]
+
+
+def test_parse_comments_from_ld_json_empty_when_none():
+    soup = BeautifulSoup("<html><body></body></html>", "html.parser")
+    total, comments = parse_comments_from_ld_json(soup)
+    assert total == 0
+    assert comments == []
 
 
 @pytest.mark.integration

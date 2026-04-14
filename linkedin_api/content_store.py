@@ -59,6 +59,105 @@ def save_content(urn: str, text: str) -> Path:
     return path
 
 
+def _images_dir() -> Path:
+    d = _content_dir() / "images"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def download_image_to_store(url: str) -> str | None:
+    """
+    Download *url* to ``content/images/``; return a path relative to the
+    content directory (e.g. ``"images/abc123.jpg"``) or ``None`` on failure.
+
+    Uses a URL-hash filename so repeated calls for the same URL are no-ops.
+    LinkedIn CDN images have a very long expiry but downloading preserves them
+    offline and guards against future URL changes.
+    """
+    import urllib.parse
+
+    try:
+        import requests as _req
+    except ImportError:
+        return None
+
+    url = (url or "").strip()
+    if not url:
+        return None
+
+    images_dir = _images_dir()
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:24]
+    parsed = urllib.parse.urlparse(url)
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+        suffix = ".jpg"
+    filename = f"{url_hash}{suffix}"
+    local_path = images_dir / filename
+    if local_path.exists():
+        return f"images/{filename}"
+    try:
+        resp = _req.get(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        if resp.status_code == 200 and resp.content:
+            local_path.write_bytes(resp.content)
+            return f"images/{filename}"
+    except Exception:
+        pass
+    return None
+
+
+def _comments_path(urn: str) -> Path:
+    return _content_dir() / f"{_urn_to_stem(urn)}.comments.json"
+
+
+def save_comments(
+    urn: str, total_count: int, comments: list[dict[str, Any]]
+) -> Path | None:
+    """
+    Persist comment preview data as a ``{hash}.comments.json`` sidecar.
+
+    ``total_count`` is LinkedIn's reported total (may exceed ``len(comments)``).
+    Each comment dict should have: ``author``, ``author_url``, ``timestamp``,
+    ``text``, ``likes``.
+
+    Returns ``None`` (no write) when ``comments`` is empty.
+    """
+    if not urn or not comments:
+        return None
+    payload: dict[str, Any] = {
+        "post_urn": urn,
+        "total_count": total_count,
+        "comments": comments,
+    }
+    path = _comments_path(urn)
+    path.write_text(json.dumps(payload, indent=0, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def load_comments(urn: str) -> dict[str, Any] | None:
+    """Load comment sidecar for *urn*, or ``None`` if not present."""
+    if not urn:
+        return None
+    path = _comments_path(urn)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def has_comments(urn: str) -> bool:
+    """True if a comment sidecar exists for *urn*."""
+    return bool(urn) and _comments_path(urn).exists()
+
+
 def load_content(urn: str) -> str | None:
     """Load stored content for *urn*, or ``None`` if not found."""
     if not urn:

@@ -13,21 +13,26 @@ Comments and full comment threads are out of scope (may need Playwright later).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from linkedin_api.content_store import (
+    download_image_to_store,
     resolve_urls_for_metadata,
+    save_comments,
     save_content,
     save_metadata,
 )
 from linkedin_api.utils.post_html import (
     find_post_body_root,
     linkedin_http_fetch_is_blocked,
+    parse_comments_from_ld_json,
     parse_post_body_from_soup,
     parse_post_body_markdown_from_soup,
+    parse_post_images_from_ld_json,
     parse_post_meta_from_soup,
 )
 from linkedin_api.utils.urls import (
@@ -38,7 +43,30 @@ from linkedin_api.utils.urls import (
 )
 
 # Increment when DOM classification, markdown conversion, or metadata shape changes.
-ENRICHMENT_VERSION = 2
+ENRICHMENT_VERSION = 3
+
+
+def _strip_trafilatura_comments(md: str) -> str:
+    """
+    Remove LinkedIn comment-preview paragraphs appended by trafilatura.
+
+    LinkedIn server-side HTML includes a few top comments in a section that
+    trafilatura treats as main content.  Comment links carry LinkedIn's
+    ``trk=public_post_comment`` tracking param (distinct from ``public_post-text``
+    used in the post body).  We split on the first paragraph that contains this
+    marker and discard everything from that point on.
+    """
+    if not md:
+        return md
+    paragraphs = re.split(r"\n\n+", md)
+    clean: list[str] = []
+    for para in paragraphs:
+        if "public_post_comment" in para or "public_post_see-more-comments" in para:
+            break
+        clean.append(para)
+    result = "\n\n".join(clean).strip()
+    # Fallback: if stripping removed everything, keep original
+    return result if result else md
 
 
 def _is_comment_actor_href(href: str) -> bool:
@@ -70,7 +98,8 @@ def classify_links_from_soup(
     """
     root = find_post_body_root(soup)
     if root is None:
-        return [], [], [], []
+        # No JS-rendered DOM body; still surface images from JSON-LD.
+        return [], [], [], parse_post_images_from_ld_json(soup)
 
     base = (base_url or "").strip() or "https://www.linkedin.com"
     tags_set: set[str] = set()
@@ -141,6 +170,10 @@ def classify_links_from_soup(
         seen_res.add(u)
         resource_urls.append(u)
 
+    # Supplement: LD-JSON images when DOM has none (common for multi-image posts).
+    if not image_urls:
+        image_urls = parse_post_images_from_ld_json(soup)
+
     return (
         resource_urls,
         list(mentions_map.values()),
@@ -175,6 +208,8 @@ class PostExtractionResult:
     mentions: list[dict[str, str]]
     tags: list[str]
     image_urls: list[str]
+    comment_count: int = 0
+    comments: list[dict] = field(default_factory=list)
 
 
 def append_missing_resource_urls(markdown: str, urls: list[str]) -> str:
@@ -271,6 +306,13 @@ def save_extraction_to_store(
     )
     meta_urls = resolve_urls_for_metadata(u)
     body = append_missing_resource_urls(ext.markdown_body, meta_urls)
+
+    # Download the first image and embed it in the markdown body.
+    if ext.image_urls:
+        local_img = download_image_to_store(ext.image_urls[0])
+        if local_img:
+            body = body.rstrip() + f"\n\n![]({local_img})"
+
     save_content(urn, body)
     save_metadata(
         urn,
@@ -288,6 +330,9 @@ def save_extraction_to_store(
         activities_ids=activities_ids,
         enrichment_version=ENRICHMENT_VERSION,
     )
+    # Save comment sidecar when comments were found in the page.
+    if ext.comments:
+        save_comments(urn, ext.comment_count, ext.comments)
     return body, meta_urls
 
 
@@ -306,8 +351,11 @@ def extract_post_from_html(html: str, final_url: str) -> PostExtractionResult | 
 
     urls, mentions, tags, image_urls = classify_links_from_soup(soup, final_url)
     html_meta = parse_post_meta_from_soup(soup)
+    comment_count, comments = parse_comments_from_ld_json(soup)
 
     md_tf = _trafilatura_markdown(html, final_url)
+    if md_tf:
+        md_tf = _strip_trafilatura_comments(md_tf)
     if md_tf and len(md_tf) >= 50:
         body = md_tf
     else:
@@ -324,4 +372,6 @@ def extract_post_from_html(html: str, final_url: str) -> PostExtractionResult | 
         mentions=mentions,
         tags=tags,
         image_urls=image_urls,
+        comment_count=comment_count,
+        comments=comments,
     )
