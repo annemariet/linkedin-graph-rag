@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from bs4.element import Tag
 
 from linkedin_api.content_store import (
     resolve_urls_for_metadata,
