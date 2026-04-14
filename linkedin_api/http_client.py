@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Final
 
 import requests
 
 from linkedin_api.utils.post_html import linkedin_http_fetch_is_blocked
+
+logger = logging.getLogger(__name__)
 
 LINKEDIN_PUBLIC_FETCH_HEADERS: Final[dict[str, str]] = {
     "User-Agent": (
@@ -23,8 +26,8 @@ def fetch_linkedin_post_html(
     """
     GET a post URL; return ``(html, final_url)`` or ``None`` if unusable.
 
-    Same behavior as the previous inline logic in ``enrich_activities`` /
-    ``backfill_content_store``: non-200, network error, or login-wall HTML → ``None``.
+    Logs the specific failure reason at WARNING level before returning ``None``:
+    network errors, non-200 status codes, and login-wall redirects are distinguished.
     """
     try:
         resp = requests.get(
@@ -33,10 +36,14 @@ def fetch_linkedin_post_html(
             allow_redirects=True,
             headers=LINKEDIN_PUBLIC_FETCH_HEADERS,
         )
-    except OSError:
+    except OSError as e:
+        logger.warning("Network error fetching %s: %s", url, e)
         return None
     if resp.status_code != 200:
+        logger.warning("HTTP %s fetching %s", resp.status_code, url)
         return None
-    if linkedin_http_fetch_is_blocked(resp.url, resp.text):
+    final_url = resp.url or url
+    if linkedin_http_fetch_is_blocked(final_url, resp.text):
+        logger.warning("Login wall fetching %s (landed on %s)", url, final_url)
         return None
-    return resp.text, resp.url or url
+    return resp.text, final_url

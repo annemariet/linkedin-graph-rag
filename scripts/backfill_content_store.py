@@ -270,13 +270,14 @@ def main() -> int:
                 continue
             fetched = fetch_linkedin_post_html(post_url, timeout=args.timeout)
             if fetched is None:
-                logger.warning("GET failed or blocked: %s", post_url[:80])
+                # Reason already logged by fetch_linkedin_post_html.
                 if args.sleep > 0:
                     time.sleep(args.sleep)
                 continue
             html, final_url = fetched
             ext = extract_post_from_html(html, final_url)
             if ext is None:
+                logger.warning("No extractable body: %s", post_url[:80])
                 if args.sleep > 0:
                     time.sleep(args.sleep)
                 continue
