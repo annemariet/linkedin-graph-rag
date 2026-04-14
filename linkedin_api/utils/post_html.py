@@ -349,8 +349,6 @@ def _html_inline_to_markdown(node: PageElement, base_url: str) -> str:
     if name in ("em", "i"):
         inner = "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
         return f"*{inner.strip()}*" if inner.strip() else ""
-    if name == "br":
-        return "\n"
     return "".join(_html_inline_to_markdown(c, base_url) for c in node.children)
 
 
@@ -454,12 +452,6 @@ def parse_post_body_from_soup(soup: BeautifulSoup) -> str:
         if " | " in t:
             content_text.append(t.split(" | ")[0])
     return "\n".join(content_text) if content_text else ""
-
-
-def parse_post_body_from_html(html: str) -> str:
-    if not html:
-        return ""
-    return parse_post_body_from_soup(BeautifulSoup(html, "html.parser"))
 
 
 def parse_post_meta_from_html(html: str) -> dict[str, str]:
