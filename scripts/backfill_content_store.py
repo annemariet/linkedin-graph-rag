@@ -42,6 +42,7 @@ from linkedin_api.content_store import (  # noqa: E402
 from linkedin_api.enriched_record import EnrichedRecord  # noqa: E402
 from linkedin_api.http_client import fetch_linkedin_post_html  # noqa: E402
 from linkedin_api.post_extraction import (  # noqa: E402
+    ENRICHMENT_VERSION,
     extract_post_from_html,
     save_extraction_to_store,
 )
@@ -141,6 +142,11 @@ def _html_fetch_jobs(
         post_url = (meta.get("post_url") or "").strip()
         if not post_url or is_comment_feed_url(post_url):
             continue
+        try:
+            if int(meta.get("enrichment_version") or 0) == ENRICHMENT_VERSION:
+                continue  # already up to date, skip
+        except (TypeError, ValueError):
+            pass
         out.append((stem, urn, post_url))
         if limit and len(out) >= limit:
             break
