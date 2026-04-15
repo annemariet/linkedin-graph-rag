@@ -98,12 +98,14 @@ def _enrich_activities_streaming(activities: list[EnrichedRecord], args):
     return count
 
 
-def _fetch_linked_content_streaming(args):
+def _fetch_linked_content_streaming(args, urns: set[str] | None = None):
     """
     Generator: fetch content from URLs linked in posts. Yields (done, total).
     Returns urls_fetched via StopIteration.
+
+    ``urns`` restricts processing to posts in the current activity period.
     """
-    gen = fetch_linked_content_streaming(limit=args.limit, skip_cached=True)
+    gen = fetch_linked_content_streaming(limit=args.limit, skip_cached=True, urns=urns)
     try:
         while True:
             yield next(gen)
@@ -157,7 +159,8 @@ def run_pipeline_ui(
         sys.stdout = out
         activities, _ = _collect_activities(args)
         _enrich_activities(activities, args)
-        for _ in _fetch_linked_content_streaming(args):
+        urns = {rec.post_urn for rec in activities if rec.post_urn}
+        for _ in _fetch_linked_content_streaming(args, urns=urns):
             pass  # exhaust generator
         _summarize_posts(args)
         return True, out.getvalue()
@@ -225,9 +228,10 @@ def run_pipeline_ui_streaming(
         yield _snapshot()
 
         # Fetch linked URL content (posts with urls in metadata)
+        urns = {rec.post_urn for rec in activities if rec.post_urn}
         n_urls = 0
         lines.append("Fetching linked URLs…")
-        gen = _fetch_linked_content_streaming(args)
+        gen = _fetch_linked_content_streaming(args, urns=urns)
         try:
             while True:
                 done, total = next(gen)
@@ -290,8 +294,12 @@ def main() -> int:
     try:
         activities, _ = _collect_activities(args)
         _enrich_activities(activities, args)
-        for _ in _fetch_linked_content_streaming(args):
-            pass
+        urns = {rec.post_urn for rec in activities if rec.post_urn}
+        for done, total in _fetch_linked_content_streaming(args, urns=urns):
+            if not args.quiet:
+                print(f"\rFetching linked URLs {done}/{total}…", end="", flush=True)
+        if not args.quiet:
+            print()  # newline after progress
         _summarize_posts(args)
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 1
