@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 _LI_SUBDOMAIN = re.compile(r"https?://[a-z]{2}\.linkedin\.com", re.I)
 
@@ -147,6 +147,126 @@ def parse_post_author_from_soup(soup: BeautifulSoup) -> dict[str, str]:
     return merged
 
 
+def _normalize_name(name: str) -> str:
+    return re.sub(r"\s+", " ", (name or "").strip()).lower()
+
+
+def parse_comments_from_ld_json(soup: BeautifulSoup) -> tuple[int, list[dict]]:
+    """
+    Parse comment previews from a ``SocialMediaPosting`` JSON-LD block.
+
+    Returns ``(total_count, comments)`` where ``total_count`` is the ``commentCount``
+    field (may exceed ``len(comments)`` — LinkedIn only embeds the top few).
+
+    Each comment dict has:
+    - ``author``: display name
+    - ``author_url``: LinkedIn profile URL (normalised), or ``""`` if not found in DOM
+    - ``timestamp``: ISO 8601 string from ``datePublished``
+    - ``text``: plain-text body
+    - ``likes``: like count (int)
+
+    Author profile URLs are not in JSON-LD but are available in the DOM via
+    ``trk=public_post_comment_actor-name`` anchors; we join the two by display name.
+    """
+    total_count = 0
+    ld_comments: list[dict] = []
+
+    for obj in _iter_ld_json_objects(soup):
+        t = obj.get("@type")
+        types = {t} if isinstance(t, str) else set(t or [])
+        if not types & {"SocialMediaPosting", "Article", "NewsArticle", "BlogPosting"}:
+            continue
+        total_count = int(obj.get("commentCount") or 0)
+        raw_comments = obj.get("comment") or []
+        if isinstance(raw_comments, dict):
+            raw_comments = [raw_comments]
+        for c in raw_comments:
+            if not isinstance(c, dict):
+                continue
+            author_obj = c.get("author") or {}
+            name = (
+                author_obj.get("name") if isinstance(author_obj, dict) else ""
+            ) or ""
+            name = name.strip()
+            stat = c.get("interactionStatistic") or {}
+            likes = 0
+            if isinstance(stat, dict):
+                try:
+                    likes = int(stat.get("userInteractionCount") or 0)
+                except (TypeError, ValueError):
+                    likes = 0
+            ld_comments.append(
+                {
+                    "author": name,
+                    "author_url": "",
+                    "timestamp": str(c.get("datePublished") or "").strip(),
+                    "text": str(c.get("text") or "").strip(),
+                    "likes": likes,
+                }
+            )
+        break  # only the first matching ld+json block
+
+    if not ld_comments:
+        return total_count, []
+
+    # Enrich with author profile URLs from DOM (trk=public_post_comment_actor-name)
+    url_by_name: dict[str, str] = {}
+    for a in soup.find_all("a", href=True):
+        href = str(a.get("href") or "")
+        if "public_post_comment_actor-name" not in href:
+            continue
+        name = a.get_text(strip=True)
+        if not name:
+            continue
+        url = normalize_linkedin_profile_url(href)
+        if url:
+            url_by_name[_normalize_name(name)] = url
+
+    for c in ld_comments:
+        key = _normalize_name(c["author"])
+        if key in url_by_name:
+            c["author_url"] = url_by_name[key]
+
+    return total_count, ld_comments
+
+
+def parse_post_images_from_ld_json(soup: BeautifulSoup) -> list[str]:
+    """
+    Extract image URLs from a ``SocialMediaPosting`` JSON-LD block.
+
+    Returns URLs from the ``image`` array (``ImageObject.url``), with ``og:image``
+    as a single-item fallback.  LinkedIn posts with attached images list all of them
+    here; the DOM ``<img>`` tags are JS-rendered and absent in static HTML.
+    """
+    for obj in _iter_ld_json_objects(soup):
+        t = obj.get("@type")
+        types = {t} if isinstance(t, str) else set(t or [])
+        if not types & {"SocialMediaPosting", "Article", "NewsArticle", "BlogPosting"}:
+            continue
+        images = obj.get("image") or []
+        if isinstance(images, (str, dict)):
+            images = [images]
+        urls: list[str] = []
+        for img in images:
+            if isinstance(img, dict):
+                url = (img.get("url") or img.get("contentUrl") or "").strip()
+            elif isinstance(img, str):
+                url = img.strip()
+            else:
+                continue
+            if url:
+                urls.append(url)
+        if urls:
+            return urls
+    # Fallback: og:image gives the first (primary) image.
+    og = soup.find("meta", property="og:image")
+    if og:
+        url = str(og.get("content") or "").strip()
+        if url:
+            return [url]
+    return []
+
+
 def parse_post_author_from_html(html: str) -> dict[str, str]:
     if not html:
         return {}
@@ -176,6 +296,21 @@ def linkedin_http_fetch_is_blocked(final_url: str, html: str) -> bool:
     return False
 
 
+def _find_post_body_element(soup: BeautifulSoup) -> Tag | None:
+    """First substantial post body node from known LinkedIn selectors."""
+    for selector in _CONTENT_SELECTORS:
+        for elem in soup.select(selector):
+            text = elem.get_text(strip=True)
+            if text and len(text) > 20:
+                return elem
+    return None
+
+
+def find_post_body_root(soup: BeautifulSoup) -> Tag | None:
+    """Public alias for link classification and DOM-scoped extraction."""
+    return _find_post_body_element(soup)
+
+
 def parse_post_body_from_soup(soup: BeautifulSoup) -> str:
     """Extract main post body text from public LinkedIn HTML."""
     content_text: list[str] = []
@@ -195,12 +330,6 @@ def parse_post_body_from_soup(soup: BeautifulSoup) -> str:
         if " | " in t:
             content_text.append(t.split(" | ")[0])
     return "\n".join(content_text) if content_text else ""
-
-
-def parse_post_body_from_html(html: str) -> str:
-    if not html:
-        return ""
-    return parse_post_body_from_soup(BeautifulSoup(html, "html.parser"))
 
 
 def parse_post_meta_from_html(html: str) -> dict[str, str]:

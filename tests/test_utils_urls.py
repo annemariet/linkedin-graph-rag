@@ -5,7 +5,9 @@ from unittest.mock import MagicMock, patch
 
 from linkedin_api.utils.urls import (
     categorize_url,
+    extract_classified_links,
     extract_urls_from_text,
+    is_linkedin_internal_url,
     resolve_redirect,
     should_ignore_url,
 )
@@ -31,6 +33,34 @@ class TestExtractUrlsFromText:
         text = "https://a.com and https://a.com again"
         urls = extract_urls_from_text(text)
         assert len(urls) == 1
+
+
+class TestExtractClassifiedLinks:
+    def test_splits_mentions_tags_and_resource_urls(self):
+        urls_in = [
+            "https://www.linkedin.com/in/jane",
+            "https://www.linkedin.com/feed/hashtag/ai?trk=x",
+            "https://github.com/x/y",
+        ]
+        urls, mentions, tags = extract_classified_links(urls_in)
+        assert tags == ["ai"]
+        assert len(mentions) == 1
+        assert mentions[0]["url"] == "https://www.linkedin.com/in/jane"
+        assert "https://github.com/x/y" in urls
+
+    def test_linkedin_post_stays_in_urls(self):
+        u = "https://www.linkedin.com/posts/foo_activity-123"
+        urls, mentions, tags = extract_classified_links([u])
+        assert u in urls
+        assert mentions == []
+        assert tags == []
+
+
+class TestIsLinkedinInternalUrl:
+    def test_subdomains(self):
+        assert is_linkedin_internal_url("https://ie.linkedin.com/in/x") is True
+        assert is_linkedin_internal_url("https://lnkd.in/abc") is True
+        assert is_linkedin_internal_url("https://github.com/x") is False
 
 
 class TestCategorizeUrl:

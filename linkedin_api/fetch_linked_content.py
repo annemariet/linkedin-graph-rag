@@ -344,10 +344,29 @@ def fetch_linked_content_streaming(
 # ---------------------------------------------------------------------------
 
 
+def _urls_from_metadata(meta: dict) -> list[str]:
+    """``urls`` plus mention profile/company links (for fetching linked pages)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in meta.get("urls") or []:
+        s = str(u).strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    for m in meta.get("mentions") or []:
+        if not isinstance(m, dict):
+            continue
+        u = str(m.get("url") or "").strip()
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 def _iter_posts_with_urls():
     """Yield (urn, urls) for all posts that have URLs.
 
-    First checks the ``urls`` field in ``.meta.json``; if empty, falls back to
+    First checks ``urls`` and ``mentions`` in ``.meta.json``; if empty, falls back to
     extracting URLs from the ``.md`` content file and persists them so future
     runs skip re-extraction.
     """
@@ -360,19 +379,25 @@ def _iter_posts_with_urls():
         except (json.JSONDecodeError, OSError):
             continue
 
-        urls = meta.get("urls") or []
         stem = meta_path.name.replace(".meta.json", "")
         urn = registry.get(stem, "")
 
-        if not urls:
+        urls = _urls_from_metadata(meta)
+        if not urls and urn:
             md_path = content_dir / f"{stem}.md"
             if md_path.exists():
                 text = md_path.read_text(encoding="utf-8")
-                urls = [
+                extracted = [
                     u for u in extract_urls_from_text(text) if not should_ignore_url(u)
                 ]
-                if urls and urn:
-                    update_urls_metadata(urn, urls)
+                if extracted:
+                    update_urls_metadata(urn, extracted)
+                    try:
+                        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                    else:
+                        urls = _urls_from_metadata(meta)
 
         if not urls:
             continue

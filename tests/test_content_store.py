@@ -196,7 +196,8 @@ class TestUpdateUrlsMetadata:
         update_urls_metadata(urn, ["https://example.com"])
         meta = load_metadata(urn)
         assert meta is not None
-        assert meta["urls"] == ["https://example.com"]
+        # resolve_redirect normalises example.com → example.com/ (trailing slash)
+        assert meta["urls"][0].rstrip("/") == "https://example.com"
 
     def test_preserves_existing_summary(self):
         urn = "urn:li:ugcPost:urls_preserve"

@@ -22,7 +22,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from linkedin_api.activity_csv import get_data_dir
 from linkedin_api.utils.urls import resolve_redirect
@@ -59,6 +59,105 @@ def save_content(urn: str, text: str) -> Path:
     return path
 
 
+def _images_dir() -> Path:
+    d = _content_dir() / "images"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def download_image_to_store(url: str) -> str | None:
+    """
+    Download *url* to ``content/images/``; return a path relative to the
+    content directory (e.g. ``"images/abc123.jpg"``) or ``None`` on failure.
+
+    Uses a URL-hash filename so repeated calls for the same URL are no-ops.
+    LinkedIn CDN images have a very long expiry but downloading preserves them
+    offline and guards against future URL changes.
+    """
+    import urllib.parse
+
+    try:
+        import requests as _req
+    except ImportError:
+        return None
+
+    url = (url or "").strip()
+    if not url:
+        return None
+
+    images_dir = _images_dir()
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:24]
+    parsed = urllib.parse.urlparse(url)
+    suffix = Path(parsed.path).suffix.lower()
+    if suffix not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+        suffix = ".jpg"
+    filename = f"{url_hash}{suffix}"
+    local_path = images_dir / filename
+    if local_path.exists():
+        return f"images/{filename}"
+    try:
+        resp = _req.get(
+            url,
+            timeout=15,
+            allow_redirects=True,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        if resp.status_code == 200 and resp.content:
+            local_path.write_bytes(resp.content)
+            return f"images/{filename}"
+    except Exception:
+        pass
+    return None
+
+
+def _comments_path(urn: str) -> Path:
+    return _content_dir() / f"{_urn_to_stem(urn)}.comments.json"
+
+
+def save_comments(
+    urn: str, total_count: int, comments: list[dict[str, Any]]
+) -> Path | None:
+    """
+    Persist comment preview data as a ``{hash}.comments.json`` sidecar.
+
+    ``total_count`` is LinkedIn's reported total (may exceed ``len(comments)``).
+    Each comment dict should have: ``author``, ``author_url``, ``timestamp``,
+    ``text``, ``likes``.
+
+    Returns ``None`` (no write) when ``comments`` is empty.
+    """
+    if not urn or not comments:
+        return None
+    payload: dict[str, Any] = {
+        "post_urn": urn,
+        "total_count": total_count,
+        "comments": comments,
+    }
+    path = _comments_path(urn)
+    path.write_text(json.dumps(payload, indent=0, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def load_comments(urn: str) -> dict[str, Any] | None:
+    """Load comment sidecar for *urn*, or ``None`` if not present."""
+    if not urn:
+        return None
+    path = _comments_path(urn)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def has_comments(urn: str) -> bool:
+    """True if a comment sidecar exists for *urn*."""
+    return bool(urn) and _comments_path(urn).exists()
+
+
 def load_content(urn: str) -> str | None:
     """Load stored content for *urn*, or ``None`` if not found."""
     if not urn:
@@ -90,6 +189,9 @@ _META_KEYS = (
     "people",
     "category",
     "urls",
+    "mentions",
+    "tags",
+    "images",
     "post_url",
     "post_urn",
     "post_author",
@@ -99,7 +201,34 @@ _META_KEYS = (
     "summarized_at",
     "activity_time_iso",
     "post_created_at",
+    "enrichment_version",
 )
+
+
+def _merge_mentions(
+    previous: list[dict[str, Any]] | None, incoming: list[dict[str, Any]] | None
+) -> list[dict[str, str]]:
+    """Union by ``url``; prefer non-empty ``name`` when merging."""
+    by_url: dict[str, dict[str, str]] = {}
+    for group in (previous or [], incoming or []):
+        for raw in group:
+            if not isinstance(raw, dict):
+                continue
+            url = str(raw.get("url") or "").strip()
+            if not url:
+                continue
+            name = str(raw.get("name") or "").strip()
+            if url not in by_url:
+                by_url[url] = {"name": name, "url": url}
+            elif name and not (by_url[url].get("name") or "").strip():
+                by_url[url]["name"] = name
+    return list(by_url.values())
+
+
+def _merge_tags(previous: list[Any] | None, incoming: list[Any] | None) -> list[str]:
+    prev = {str(x).strip() for x in (previous or []) if x and str(x).strip()}
+    inc = {str(x).strip() for x in (incoming or []) if x and str(x).strip()}
+    return sorted(prev | inc)
 
 
 def resolve_urls_for_metadata(urls: list[str] | None) -> list[str]:
@@ -157,11 +286,11 @@ def _iso_to_ms(iso_str: str | None) -> int | None:
 
 def save_metadata(
     urn: str,
-    summary: str = "",
-    topics: list[str] | None = None,
-    technologies: list[str] | None = None,
-    people: list[str] | None = None,
-    category: str | None = None,
+    summary: Optional[str] = None,
+    topics: Optional[list[str]] = None,
+    technologies: Optional[list[str]] = None,
+    people: Optional[list[str]] = None,
+    category: Optional[str] = None,
     urls: list[str] | None = None,
     post_url: str = "",
     **extra: Any,
@@ -176,12 +305,15 @@ def save_metadata(
     existing = dict(load_metadata(urn) or {})
     from_extra = {k: v for k, v in extra.items() if k in _META_KEYS}
     meta: dict[str, Any] = {
-        "summary": summary,
-        "topics": topics or [],
-        "technologies": technologies or [],
-        "people": people or [],
-        "category": category or "",
+        "summary": summary if summary is not None else "",
+        "topics": topics if topics is not None else [],
+        "technologies": technologies if technologies is not None else [],
+        "people": people if people is not None else [],
+        "category": category if category is not None else "",
         "urls": urls or [],
+        "mentions": [],
+        "tags": [],
+        "images": [],
         "post_url": post_url or "",
         "post_urn": "",
         "post_author": "",
@@ -191,15 +323,45 @@ def save_metadata(
         "summarized_at": existing.get("summarized_at") or "",
         "activity_time_iso": "",
         "post_created_at": "",
+        "enrichment_version": "",
     }
     meta.update({k: v for k, v in existing.items() if k in _META_KEYS})
     meta.update(from_extra)
-    meta["summary"] = summary
-    meta["topics"] = topics or []
-    meta["technologies"] = technologies or []
-    meta["people"] = people or []
-    meta["category"] = category or ""
+    if summary is not None:
+        meta["summary"] = summary
+    if topics is not None:
+        meta["topics"] = topics
+    if technologies is not None:
+        meta["technologies"] = technologies
+    if people is not None:
+        meta["people"] = people
+    if category is not None:
+        meta["category"] = category or ""
     meta["urls"] = resolve_urls_for_metadata(urls or [])
+    prev_mentions = (
+        existing.get("mentions") if isinstance(existing.get("mentions"), list) else None
+    )
+    prev_tags = existing.get("tags")
+    meta["mentions"] = _merge_mentions(
+        prev_mentions,
+        meta.get("mentions") if isinstance(meta.get("mentions"), list) else None,
+    )
+    meta["tags"] = _merge_tags(
+        prev_tags if isinstance(prev_tags, list) else None,
+        meta.get("tags") if isinstance(meta.get("tags"), list) else None,
+    )
+    prev_images = existing.get("images")
+    inc_images = meta.get("images")
+    if isinstance(prev_images, list) and isinstance(inc_images, list):
+        meta["images"] = list(
+            dict.fromkeys(str(x) for x in prev_images + inc_images if x)
+        )
+    elif isinstance(inc_images, list):
+        meta["images"] = [str(x) for x in inc_images if x]
+    elif isinstance(prev_images, list):
+        meta["images"] = [str(x) for x in prev_images if x]
+    else:
+        meta["images"] = []
     meta["post_url"] = post_url or meta.get("post_url") or ""
 
     prev_ids = existing.get("activities_ids") or []
@@ -226,6 +388,10 @@ def save_metadata(
         "activity_time_iso"
     ):
         meta["activity_time_iso"] = existing["activity_time_iso"]
+    if not (str(meta.get("enrichment_version") or "")).strip() and existing.get(
+        "enrichment_version"
+    ):
+        meta["enrichment_version"] = existing["enrichment_version"]
 
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
@@ -251,6 +417,48 @@ def update_metadata_fields(urn: str, **kwargs: Any) -> Path:
     for k, v in kwargs.items():
         if k in _META_KEYS:
             meta[k] = v
+    path = _meta_path(urn)
+    path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
+    return path
+
+
+def merge_enrichment_activity(
+    urn: str,
+    *,
+    activity_id: str = "",
+    post_url: str = "",
+    activity_time_iso: str = "",
+) -> Path | None:
+    """
+    Union ``activity_id`` into ``activities_ids``; fill empty ``post_url`` /
+    ``activity_time_iso`` from the current CSV row when missing.
+
+    Returns ``None`` if there is no metadata or nothing would change.
+    """
+    existing = load_metadata(urn)
+    if existing is None:
+        return None
+    meta = dict(existing)
+    prev = meta.get("activities_ids") or []
+    if not isinstance(prev, list):
+        prev = [str(prev)] if prev else []
+    else:
+        prev = [str(x) for x in prev if x]
+    aid = (activity_id or "").strip()
+    merged = list(dict.fromkeys(prev + ([aid] if aid else [])))
+    changed = merged != prev
+    if merged != prev:
+        meta["activities_ids"] = merged
+    if (post_url or "").strip() and not (str(meta.get("post_url") or "")).strip():
+        meta["post_url"] = post_url.strip()
+        changed = True
+    if (activity_time_iso or "").strip() and not (
+        str(meta.get("activity_time_iso") or "")
+    ).strip():
+        meta["activity_time_iso"] = activity_time_iso.strip()
+        changed = True
+    if not changed:
+        return None
     path = _meta_path(urn)
     path.write_text(json.dumps(meta, indent=0), encoding="utf-8")
     return path

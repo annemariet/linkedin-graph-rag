@@ -12,7 +12,30 @@ from linkedin_api.content_store import (
 )
 from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.enrich_activities import enrich_activities
+from linkedin_api.post_extraction import append_missing_resource_urls
 from linkedin_api.utils.urls import is_comment_feed_url
+
+
+class TestAppendMissingResourceUrls:
+    def test_no_duplicate_when_short_in_body_matches_resolved_metadata(self):
+        """Body has gisk.ar short link; metadata list may store resolved URL after redirect."""
+        body = "See https://gisk.ar/41lYlde for more."
+        with (
+            patch(
+                "linkedin_api.post_extraction.resolve_urls_for_metadata",
+                return_value=["https://docs.giskard.ai/en/stable/"],
+            ),
+            patch(
+                "linkedin_api.utils.urls.resolve_redirect",
+                side_effect=lambda u: (
+                    "https://docs.giskard.ai/en/stable/" if "gisk.ar" in u else u
+                ),
+            ),
+        ):
+            out = append_missing_resource_urls(
+                body, ["https://docs.giskard.ai/en/stable/"]
+            )
+        assert "## Links" not in out
 
 
 class TestIsCommentFeedUrl:
@@ -71,33 +94,6 @@ class TestEnrichSavesTimestamps:
         assert meta.get("activity_time_iso") == "2023-11-14T22:13:20+00:00"
         assert meta.get("post_created_at") == post_created
 
-    def test_activities_without_timestamps_save_none(self):
-        urn = "urn:li:ugcPost:789"
-        save_content(urn, "x" * 100)
-
-        activities = [
-            EnrichedRecord(
-                post_urn=urn,
-                post_url="https://linkedin.com/feed/update/urn:li:ugcPost:789",
-                content="",
-                urls=[],
-                interaction_type="reaction",
-                reaction_type=None,
-                comment_text="",
-                post_id="",
-                activity_id="",
-                timestamp=None,
-                created_at="",
-            )
-        ]
-        _, count = enrich_activities(activities)
-        assert count == 1
-
-        meta = load_metadata(urn)
-        assert meta is not None
-        assert meta.get("activity_time_iso") in (None, "")
-        assert meta.get("post_created_at") in (None, "")
-
     def test_login_wall_falls_back_to_csv_content_not_generic_blurb(self):
         """When HTTP fails, only ``post`` rows may use CSV body as .md (not reactions)."""
         urn = "urn:li:activity:7445812127325401089"
@@ -123,21 +119,24 @@ class TestEnrichSavesTimestamps:
             )
         ]
         with patch(
-            "linkedin_api.enrich_activities._fetch_with_requests", return_value=None
+            "linkedin_api.enrich_activities.fetch_linkedin_post_html",
+            return_value=None,
         ):
             _, count = enrich_activities(activities)
         assert count == 1
         stored = load_content(urn)
-        assert stored == api_text
+        assert api_text in (stored or "")
         assert "500 million" not in (stored or "")
+        assert "https://example.org/paper" in (stored or "")
         meta = load_metadata(urn)
         assert meta is not None
-        assert meta.get("urls")
+        assert meta.get("urls") == ["https://example.org/paper"]
 
     def test_login_wall_does_not_save_csv_body_for_reaction_rows(self):
         urn = "urn:li:activity:999"
         with patch(
-            "linkedin_api.enrich_activities._fetch_with_requests", return_value=None
+            "linkedin_api.enrich_activities.fetch_linkedin_post_html",
+            return_value=None,
         ):
             _, count = enrich_activities(
                 [

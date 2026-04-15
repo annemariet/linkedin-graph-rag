@@ -441,6 +441,22 @@ class TestIterPostsWithUrls:
         _, urls = results[0]
         assert urls == ["https://example.com/article"]
 
+    def test_yields_mention_urls_with_resource_urls(self):
+        """``mentions[].url`` are included for fetch alongside ``urls``."""
+        save_content(self.URN, "x")
+        save_metadata(
+            self.URN,
+            urls=["https://example.com/resource"],
+            mentions=[
+                {"name": "Acme", "url": "https://www.linkedin.com/company/acme"},
+            ],
+        )
+
+        results = list(_iter_posts_with_urls())
+        _, urls = results[0]
+        assert "https://example.com/resource" in urls
+        assert "https://www.linkedin.com/company/acme" in urls
+
     def test_extracts_urls_from_md_when_metadata_urls_empty(self):
         """When urls field is absent, URLs are extracted from the .md content."""
         save_content(self.URN, "Check out https://github.com/user/repo for details.")

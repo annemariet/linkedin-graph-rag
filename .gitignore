@@ -9,6 +9,7 @@ venv/
 .vscode
 .DS_Store
 .idea
+.last_run
 
 *.json
 *.csv

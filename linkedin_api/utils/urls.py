@@ -5,8 +5,67 @@ Extracted from extract_resources.py for reuse across modules.
 """
 
 import re
-from typing import Dict, List, Optional
-from urllib.parse import urlparse
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import unquote, urlparse
+
+
+def linkedin_hashtag_keyword(url: str) -> Optional[str]:
+    """Hashtag text from a LinkedIn hashtag URL, or None if not a hashtag link."""
+    if not url or not is_linkedin_internal_url(url):
+        return None
+    try:
+        path = urlparse(url.strip()).path
+    except Exception:
+        return None
+    m = re.search(r"/hashtag/([^/?#]+)", path, re.I)
+    if not m:
+        return None
+    return unquote(m.group(1)).strip() or None
+
+
+def is_linkedin_mention_url(url: str) -> bool:
+    """True for LinkedIn profile, company, or school URLs."""
+    if not url or not is_linkedin_internal_url(url):
+        return False
+    try:
+        path = urlparse(url.strip()).path.lower()
+    except Exception:
+        return False
+    return bool(
+        re.match(r"/in/[^/]+", path)
+        or re.match(r"/company/[^/]+", path)
+        or re.match(r"/school/[^/]+", path)
+    )
+
+
+def extract_classified_links(
+    urls: List[str],
+) -> Tuple[List[str], List[Dict[str, str]], List[str]]:
+    """
+    Classify a list of URLs for content-store metadata.
+
+    Returns ``(urls, mentions, tags)``:
+
+    - ``urls`` — resources and other links, excluding hashtag and profile/company/school URLs.
+    - ``mentions`` — ``{"name": str, "url": str}`` for LinkedIn profiles/companies/schools.
+    - ``tags`` — hashtag keywords only (no URL stored), from ``/feed/hashtag/…`` links.
+    """
+    deduped = list(dict.fromkeys(u.strip() for u in (urls or []) if u and u.strip()))
+    tags_set: set[str] = set()
+    mentions_map: Dict[str, Dict[str, str]] = {}
+    resource_urls: List[str] = []
+
+    for u in deduped:
+        hk = linkedin_hashtag_keyword(u)
+        if hk:
+            tags_set.add(hk)
+            continue
+        if is_linkedin_mention_url(u):
+            mentions_map[u] = {"name": "", "url": u}
+            continue
+        resource_urls.append(u)
+
+    return resource_urls, list(mentions_map.values()), sorted(tags_set)
 
 
 def extract_urls_from_text(text: str) -> List[str]:
@@ -97,6 +156,21 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
         return {"domain": domain, "type": resource_type}
     except Exception:
         return {"domain": None, "type": "unknown"}
+
+
+def is_linkedin_internal_url(url: str) -> bool:
+    """True for linkedin.com / lnkd.in hosts (incl. regional subdomains)."""
+    if not (url or "").strip():
+        return False
+    try:
+        netloc = urlparse(url.strip()).netloc.lower()
+    except Exception:
+        return False
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return (
+        "linkedin.com" in netloc or netloc == "lnkd.in" or netloc.endswith(".lnkd.in")
+    )
 
 
 def is_comment_feed_url(url: str) -> bool:
