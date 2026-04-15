@@ -112,18 +112,39 @@ FetchStrategy = Callable[[str], tuple[str, str]]  # returns (title, content)
 # ---------------------------------------------------------------------------
 
 
-def _fetch_soup(url: str, timeout: int = 15) -> tuple[BeautifulSoup, str]:
-    """Fetch *url* and return (parsed soup, og:title or <title>)."""
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MB — skip pathologically large pages
+
+
+def _fetch_soup(
+    url: str, timeout: tuple[int, int] = (5, 15)
+) -> tuple[BeautifulSoup, str]:
+    """Fetch *url* and return (parsed soup, og:title or <title>).
+
+    Uses streaming to cap download size at ``_MAX_RESPONSE_BYTES`` so a slow-
+    streaming server cannot block the pipeline indefinitely.
+    ``timeout`` is a (connect, read) tuple: connect must succeed within 5 s,
+    each read chunk within 15 s.
+    """
     resp = requests.get(
         url,
         timeout=timeout,
         allow_redirects=True,
         headers=_HEADERS,
         verify=_ssl_verify(),
+        stream=True,
     )
-    if resp.status_code >= 500 or not resp.text:
+    if resp.status_code >= 500:
         raise ValueError(f"HTTP {resp.status_code}")
-    soup = BeautifulSoup(resp.text, "html.parser")
+    raw = b""
+    for chunk in resp.iter_content(chunk_size=32768):
+        raw += chunk
+        if len(raw) >= _MAX_RESPONSE_BYTES:
+            break
+    resp.close()
+    if not raw:
+        raise ValueError("empty response")
+    html = raw.decode(resp.encoding or "utf-8", errors="replace")
+    soup = BeautifulSoup(html, "html.parser")
     og = soup.find("meta", property="og:title")
     title = (
         str(og["content"]).strip()
@@ -150,7 +171,7 @@ def _fetch_metadata_only(url: str) -> tuple[str, str]:
 
     Used for video platforms (YouTube), code repositories (GitHub), etc.
     """
-    _, title = _fetch_soup(url, timeout=10)
+    _, title = _fetch_soup(url, timeout=(5, 10))
     return title, ""
 
 

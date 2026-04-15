@@ -259,7 +259,7 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
 
     try:
         response = requests.head(
-            url, timeout=15, allow_redirects=True, headers=headers, verify=verify
+            url, timeout=(5, 10), allow_redirects=True, headers=headers, verify=verify
         )
         if response.url != url:
             return str(response.url)
