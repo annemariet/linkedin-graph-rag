@@ -264,7 +264,7 @@ def merge_classification_with_api(
     DOM-derived classification is primary; URLs from Portability CSV text fill gaps
     (same rules as ``extract_classified_links(..., extra_urls)``).
     """
-    extra_only, ex_m, ex_t = extract_classified_links("", urls_from_api)
+    extra_only, ex_m, ex_t = extract_classified_links(urls_from_api)
     url_seen = {u for u in dom_urls}
     out_urls = list(dom_urls)
     for u in extra_only:

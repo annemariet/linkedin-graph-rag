@@ -28,7 +28,6 @@ from linkedin_api.enriched_record import EnrichedRecord
 from linkedin_api.content_store import (
     _ms_to_iso,
     has_content,
-    load_content,
     load_metadata,
     merge_enrichment_activity,
     resolve_urls_for_metadata,
@@ -46,7 +45,6 @@ from linkedin_api.post_extraction import (
 from linkedin_api.summarize_activity import collect_from_csv
 from linkedin_api.utils.linkedin_snowflake import post_created_at_from_urn
 from linkedin_api.utils.urls import (
-    extract_classified_links,
     extract_urls_from_text,
     is_comment_feed_url,
 )
@@ -62,9 +60,7 @@ class EnrichmentTelemetry:
 
     skip_already_complete: int = 0
     merge_activity_only: int = 0
-    stale_version_refetch: int = 0
     full_html_success: int = 0
-    reclassified_stored_md_no_http: int = 0
     fallback_extract_fail_post_body: int = 0
     fallback_extract_fail_urls_only: int = 0
     fallback_http_fail_post_body: int = 0
@@ -75,13 +71,10 @@ class EnrichmentTelemetry:
             "enrich telemetry:\n"
             f"  skip_already_complete={self.skip_already_complete}\n"
             f"  merge_activity_only={self.merge_activity_only}\n"
-            f"  stale_version_refetch={self.stale_version_refetch}\n"
             f"  full_html_success={self.full_html_success}\n"
-            f"  reclassified_stored_md_no_http={self.reclassified_stored_md_no_http}\n"
-            f"  fallback_extract_fail_post_md={self.fallback_extract_fail_post_body}\n"
+            f"  fallback_extract_fail_post_body={self.fallback_extract_fail_post_body}\n"
             f"  fallback_extract_fail_urls_only={self.fallback_extract_fail_urls_only}\n"
-            f"  fallback_http_fail_post_md={self.fallback_http_fail_post_body}\n"
-            f"  fallback_http_fail_urls_only={self.fallback_http_fail_urls_only}\n"
+            f"  fallback_http_fail_post_body={self.fallback_http_fail_post_body}\n"
             f"  fallback_http_fail_urls_only={self.fallback_http_fail_urls_only}"
         )
         logger.info(msg)
@@ -251,40 +244,6 @@ def _apply_html_extraction(
     )
 
 
-def _reclassify_stored_markdown(
-    rec: EnrichedRecord,
-    urn: str,
-    url: str,
-    post_created: str | None,
-    telemetry: EnrichmentTelemetry,
-) -> None:
-    """Re-run classification on existing ``.md`` without HTTP (current version only)."""
-    stored = load_content(urn) or ""
-    if not rec.content:
-        rec.content = stored
-    u2, m2, t2 = extract_classified_links(stored, rec.urls)
-    meta_urls = resolve_urls_for_metadata(u2)
-    rec.urls = meta_urls
-    save_metadata(
-        urn,
-        urls=meta_urls,
-        mentions=m2,
-        tags=t2,
-        post_url=url,
-        post_author="",
-        post_author_url="",
-        activity_time_iso=_ms_to_iso(
-            int(rec.timestamp) if rec.timestamp is not None else None
-        ),
-        post_created_at=post_created or "",
-        post_urn=urn,
-        post_id=rec.post_id or "",
-        activities_ids=[rec.activity_id] if rec.activity_id else [],
-        enrichment_version=ENRICHMENT_VERSION,
-    )
-    telemetry.reclassified_stored_md_no_http += 1
-
-
 def _run_enrichment(to_enrich: list[EnrichedRecord]):
     total = len(to_enrich)
     enriched_count = 0
@@ -322,21 +281,6 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
             continue
 
         # --- full enrichment ---
-        stale = (
-            existing_meta is not None
-            and _meta_version(existing_meta) != ENRICHMENT_VERSION
-        )
-        if stale:
-            tel.stale_version_refetch += 1
-
-        stored = load_content(urn)
-
-        if stored and len(stored) >= 50 and existing_meta is None:
-            _reclassify_stored_markdown(rec, urn, url, post_created, tel)
-            enriched_count += 1
-            yield i + 1, total
-            continue
-
         fetched = fetch_linkedin_post_html(url)
         if fetched:
             html, final_url = fetched
@@ -344,14 +288,10 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                 rec, urn, url, html, final_url, post_created, tel
             ):
                 enriched_count += 1
-        else:
-            if stale and stored and len(stored) >= 50:
-                _reclassify_stored_markdown(rec, urn, url, post_created, tel)
-                enriched_count += 1
-            elif _save_from_api_fallback(
-                rec, urn, url, post_created, telemetry=tel, reason="http_fail"
-            ):
-                enriched_count += 1
+        elif _save_from_api_fallback(
+            rec, urn, url, post_created, telemetry=tel, reason="http_fail"
+        ):
+            enriched_count += 1
 
         yield i + 1, total
 

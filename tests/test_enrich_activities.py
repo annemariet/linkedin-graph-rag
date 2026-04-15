@@ -94,33 +94,6 @@ class TestEnrichSavesTimestamps:
         assert meta.get("activity_time_iso") == "2023-11-14T22:13:20+00:00"
         assert meta.get("post_created_at") == post_created
 
-    def test_activities_without_timestamps_save_none(self):
-        urn = "urn:li:ugcPost:789"
-        save_content(urn, "x" * 100)
-
-        activities = [
-            EnrichedRecord(
-                post_urn=urn,
-                post_url="https://linkedin.com/feed/update/urn:li:ugcPost:789",
-                content="",
-                urls=[],
-                interaction_type="reaction",
-                reaction_type=None,
-                comment_text="",
-                post_id="",
-                activity_id="",
-                timestamp=None,
-                created_at="",
-            )
-        ]
-        _, count = enrich_activities(activities)
-        assert count == 1
-
-        meta = load_metadata(urn)
-        assert meta is not None
-        assert meta.get("activity_time_iso") in (None, "")
-        assert meta.get("post_created_at") in (None, "")
-
     def test_login_wall_falls_back_to_csv_content_not_generic_blurb(self):
         """When HTTP fails, only ``post`` rows may use CSV body as .md (not reactions)."""
         urn = "urn:li:activity:7445812127325401089"

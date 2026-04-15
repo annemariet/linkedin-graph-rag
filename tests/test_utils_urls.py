@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 from linkedin_api.utils.urls import (
     categorize_url,
     extract_classified_links,
-    extract_urls_from_markdown,
     extract_urls_from_text,
     is_linkedin_internal_url,
     resolve_redirect,
@@ -36,31 +35,22 @@ class TestExtractUrlsFromText:
         assert len(urls) == 1
 
 
-class TestExtractUrlsFromMarkdown:
-    def test_link_targets(self):
-        md = "See [paper](https://arxiv.org/abs/123) and [site](https://example.com/x)."
-        urls = extract_urls_from_markdown(md)
-        assert "https://arxiv.org/abs/123" in urls
-        assert "https://example.com/x" in urls
-
-
 class TestExtractClassifiedLinks:
     def test_splits_mentions_tags_and_resource_urls(self):
-        body = (
-            "Hi [Jane](https://www.linkedin.com/in/jane) see "
-            "[#ai](https://www.linkedin.com/feed/hashtag/ai?trk=x) and "
-            "https://github.com/x/y"
-        )
-        urls, mentions, tags = extract_classified_links(body)
+        urls_in = [
+            "https://www.linkedin.com/in/jane",
+            "https://www.linkedin.com/feed/hashtag/ai?trk=x",
+            "https://github.com/x/y",
+        ]
+        urls, mentions, tags = extract_classified_links(urls_in)
         assert tags == ["ai"]
         assert len(mentions) == 1
         assert mentions[0]["url"] == "https://www.linkedin.com/in/jane"
-        assert mentions[0]["name"] == "Jane"
         assert "https://github.com/x/y" in urls
 
     def test_linkedin_post_stays_in_urls(self):
         u = "https://www.linkedin.com/posts/foo_activity-123"
-        urls, mentions, tags = extract_classified_links(f"Read {u}", [])
+        urls, mentions, tags = extract_classified_links([u])
         assert u in urls
         assert mentions == []
         assert tags == []

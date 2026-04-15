@@ -9,31 +9,6 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlparse
 
 
-_MARKDOWN_LINK_URL = re.compile(r"\]\((https?://[^)]+)\)")
-_MARKDOWN_LINK_LABEL = re.compile(r"\[([^\]]*)\]\((https?://[^)]+)\)")
-
-
-def extract_urls_from_markdown(text: str) -> List[str]:
-    """URLs inside Markdown ``[...](url)`` link targets."""
-    if not text:
-        return []
-    found = _MARKDOWN_LINK_URL.findall(text)
-    return list(dict.fromkeys(f.strip() for f in found if f.strip()))
-
-
-def extract_markdown_links(text: str) -> List[Tuple[str, str]]:
-    """``(link_text, url)`` for each ``[text](url)`` in *text* (best-effort)."""
-    if not text:
-        return []
-    out: List[Tuple[str, str]] = []
-    for m in _MARKDOWN_LINK_LABEL.finditer(text):
-        label = (m.group(1) or "").strip()
-        url = (m.group(2) or "").strip()
-        if url:
-            out.append((label, url))
-    return out
-
-
 def linkedin_hashtag_keyword(url: str) -> Optional[str]:
     """Hashtag text from a LinkedIn hashtag URL, or None if not a hashtag link."""
     if not url or not is_linkedin_internal_url(url):
@@ -64,53 +39,33 @@ def is_linkedin_mention_url(url: str) -> bool:
 
 
 def extract_classified_links(
-    body: str,
-    extra_urls: Optional[List[str]] = None,
+    urls: List[str],
 ) -> Tuple[List[str], List[Dict[str, str]], List[str]]:
     """
-    Classify hyperlinks in post body text for content-store metadata.
+    Classify a list of URLs for content-store metadata.
 
     Returns ``(urls, mentions, tags)``:
 
-    - ``urls`` — resources and other links (posts, Pulse, ``/redir/``, external sites,
-      ``lnkd.in``, etc.), excluding pure hashtag URLs and profile/company/school links.
-    - ``mentions`` — ``{"name": str, "url": str}`` for LinkedIn profiles/companies/schools;
-      *name* from markdown label when available.
+    - ``urls`` — resources and other links, excluding hashtag and profile/company/school URLs.
+    - ``mentions`` — ``{"name": str, "url": str}`` for LinkedIn profiles/companies/schools.
     - ``tags`` — hashtag keywords only (no URL stored), from ``/feed/hashtag/…`` links.
     """
-    extras = list(
-        dict.fromkeys(x.strip() for x in (extra_urls or []) if x and x.strip())
-    )
-    md_pairs = extract_markdown_links(body or "")
-    label_by_url: Dict[str, str] = {}
-    for label, u in md_pairs:
-        if u not in label_by_url:
-            label_by_url[u] = label
-
-    from_md = extract_urls_from_markdown(body or "")
-    from_plain = extract_urls_from_text(body or "")
-    all_urls = list(dict.fromkeys(from_md + from_plain + extras))
-
+    deduped = list(dict.fromkeys(u.strip() for u in (urls or []) if u and u.strip()))
     tags_set: set[str] = set()
     mentions_map: Dict[str, Dict[str, str]] = {}
     resource_urls: List[str] = []
 
-    for u in all_urls:
+    for u in deduped:
         hk = linkedin_hashtag_keyword(u)
         if hk:
             tags_set.add(hk)
             continue
         if is_linkedin_mention_url(u):
-            mentions_map[u] = {
-                "name": label_by_url.get(u, ""),
-                "url": u,
-            }
+            mentions_map[u] = {"name": "", "url": u}
             continue
         resource_urls.append(u)
 
-    mentions_list = list(mentions_map.values())
-    tags_list = sorted(tags_set)
-    return resource_urls, mentions_list, tags_list
+    return resource_urls, list(mentions_map.values()), sorted(tags_set)
 
 
 def extract_urls_from_text(text: str) -> List[str]:
