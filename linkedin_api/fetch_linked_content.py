@@ -40,8 +40,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-logger = logging.getLogger(__name__)
-
 import requests
 from bs4 import BeautifulSoup
 
@@ -57,6 +55,8 @@ from linkedin_api.utils.urls import (
     resolve_redirect,
     should_ignore_url,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Request headers
