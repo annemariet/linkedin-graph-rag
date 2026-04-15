@@ -5,8 +5,8 @@ Bump ``ENRICHMENT_VERSION`` when extraction/classification semantics change so
 downstream can re-fetch stale ``.meta.json`` (see ``enrich_activities``).
 
 Flow: fetch HTML → parse with BeautifulSoup → classify links from the **post body DOM**
-(not from markdown strings) → body text as Markdown via **trafilatura** (fallback: BS
-markdown / plain). Author/date from JSON-LD + existing ``post_html`` helpers.
+(not from markdown strings) → body text as Markdown via **trafilatura** (fallback: plain
+text from og:description). Author/date from JSON-LD + existing ``post_html`` helpers.
 
 Comments and full comment threads are out of scope (may need Playwright later).
 """
@@ -31,7 +31,6 @@ from linkedin_api.utils.post_html import (
     linkedin_http_fetch_is_blocked,
     parse_comments_from_ld_json,
     parse_post_body_from_soup,
-    parse_post_body_markdown_from_soup,
     parse_post_images_from_ld_json,
     parse_post_meta_from_soup,
 )
@@ -356,14 +355,7 @@ def extract_post_from_html(html: str, final_url: str) -> PostExtractionResult | 
     md_tf = _trafilatura_markdown(html, final_url)
     if md_tf:
         md_tf = _strip_trafilatura_comments(md_tf)
-    if md_tf and len(md_tf) >= 50:
-        body = md_tf
-    else:
-        md_bs = parse_post_body_markdown_from_soup(soup, base_url=final_url)
-        if md_bs and len(md_bs) >= 50:
-            body = md_bs
-        else:
-            body = plain
+    body = md_tf if (md_tf and len(md_tf) >= 50) else plain
 
     return PostExtractionResult(
         markdown_body=body,

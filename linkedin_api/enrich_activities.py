@@ -69,7 +69,6 @@ class EnrichmentTelemetry:
     fallback_extract_fail_urls_only: int = 0
     fallback_http_fail_post_body: int = 0
     fallback_http_fail_urls_only: int = 0
-    needs_browser: int = 0
 
     def log_summary(self) -> None:
         msg = (
@@ -83,7 +82,7 @@ class EnrichmentTelemetry:
             f"  fallback_extract_fail_urls_only={self.fallback_extract_fail_urls_only}\n"
             f"  fallback_http_fail_post_md={self.fallback_http_fail_post_body}\n"
             f"  fallback_http_fail_urls_only={self.fallback_http_fail_urls_only}\n"
-            f"  needs_browser={self.needs_browser}"
+            f"  fallback_http_fail_urls_only={self.fallback_http_fail_urls_only}"
         )
         logger.info(msg)
         if os.environ.get("ENRICH_TELEMETRY", "").strip().lower() in (
@@ -289,7 +288,6 @@ def _reclassify_stored_markdown(
 def _run_enrichment(to_enrich: list[EnrichedRecord]):
     total = len(to_enrich)
     enriched_count = 0
-    needs_browser: list[EnrichedRecord] = []
     tel = EnrichmentTelemetry()
 
     for i, rec in enumerate(to_enrich):
@@ -332,16 +330,8 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
             tel.stale_version_refetch += 1
 
         stored = load_content(urn)
-        current_version_on_disk = (
-            existing_meta is not None
-            and _meta_version(existing_meta) == ENRICHMENT_VERSION
-        )
 
-        if (
-            stored
-            and len(stored) >= 50
-            and (existing_meta is None or (not stale and current_version_on_disk))
-        ):
+        if stored and len(stored) >= 50 and existing_meta is None:
             _reclassify_stored_markdown(rec, urn, url, post_created, tel)
             enriched_count += 1
             yield i + 1, total
@@ -354,9 +344,6 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                 rec, urn, url, html, final_url, post_created, tel
             ):
                 enriched_count += 1
-            else:
-                needs_browser.append(rec)
-                tel.needs_browser += 1
         else:
             if stale and stored and len(stored) >= 50:
                 _reclassify_stored_markdown(rec, urn, url, post_created, tel)
@@ -365,14 +352,8 @@ def _run_enrichment(to_enrich: list[EnrichedRecord]):
                 rec, urn, url, post_created, telemetry=tel, reason="http_fail"
             ):
                 enriched_count += 1
-            else:
-                needs_browser.append(rec)
-                tel.needs_browser += 1
 
         yield i + 1, total
-
-    for rec in needs_browser:
-        rec.enrich_error = "Browser required; not implemented"
 
     return enriched_count, tel
 

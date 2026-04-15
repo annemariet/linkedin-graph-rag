@@ -12,7 +12,6 @@ from linkedin_api.utils.post_html import (
     parse_comments_from_ld_json,
     parse_post_author_from_html,
     parse_post_author_from_soup,
-    parse_post_body_markdown_from_soup,
     parse_post_images_from_ld_json,
     parse_post_meta_from_html,
 )
@@ -96,16 +95,6 @@ def test_parse_post_author_dom_fallback_feed_actor_name():
     meta = parse_post_author_from_soup(soup)
     assert meta["post_author"] == "Jane Example"
     assert "linkedin.com/in/example-author" in meta["post_author_url"]
-
-
-def test_parse_post_body_markdown_includes_external_and_linkedin_links():
-    soup = BeautifulSoup(_DOM_ONLY_HTML, "html.parser")
-    md = parse_post_body_markdown_from_soup(
-        soup, base_url="https://www.linkedin.com/posts/x"
-    )
-    assert "github.com/example/repo" in md
-    assert "[the repo]" in md
-    assert "feed/hashtag/ai" in md or "hashtag" in md.lower()
 
 
 def test_parse_post_author_skips_comment_actor_links():
