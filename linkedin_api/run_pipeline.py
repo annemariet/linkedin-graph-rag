@@ -12,6 +12,7 @@ Phase 3 LLM-summarizes posts that lack summary metadata.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import traceback
 from io import StringIO
@@ -270,6 +271,12 @@ def run_pipeline_ui_streaming(
 
 
 def main() -> int:
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger("linkedin_api.fetch_linked_content").setLevel(logging.INFO)
+
     parser = argparse.ArgumentParser(
         description="Run MVP pipeline: collect → enrich → summarize (including history)."
     )
