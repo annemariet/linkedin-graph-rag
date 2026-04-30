@@ -208,6 +208,47 @@ def is_comment_feed_url(url: str) -> bool:
     return bool(url and "urn:li:comment:" in url)
 
 
+# Hostname TLDs that are file extensions, not real web TLDs.
+# LinkedIn auto-links text like "llms.txt" or "Llama.cpp" as bare HTTP URLs;
+# these will never resolve to a useful page.
+_FILE_EXT_TLDS: frozenset[str] = frozenset(
+    {
+        "txt",
+        "cpp",
+        "py",
+        "js",
+        "ts",
+        "go",
+        "rs",
+        "md",
+        "json",
+        "yaml",
+        "yml",
+        "csv",
+        "log",
+        "sh",
+        "sql",
+        "c",
+        "h",
+        "rb",
+        "java",
+        "kt",
+        "swift",
+        "r",
+    }
+)
+
+
+def _host_looks_like_filename(url: str) -> bool:
+    """True when the hostname ends in a common file extension (e.g. llms.txt, Llama.cpp)."""
+    try:
+        host = urlparse(url).hostname or ""
+        tld = host.rsplit(".", 1)[-1].lower() if "." in host else ""
+        return tld in _FILE_EXT_TLDS
+    except Exception:
+        return False
+
+
 def should_ignore_url(url: str) -> bool:
     """Check if URL should be ignored (hashtags, profile links, auth pages, etc.)."""
     if "linkedin.com/in/" in url or "linkedin.com/pub/" in url:
@@ -221,6 +262,8 @@ def should_ignore_url(url: str) -> bool:
     if "linkedin.com/signup/" in url or "linkedin.com/authwall" in url:
         return True
     if "linkedin.com/showcase/" in url or "linkedin.com/school/" in url:
+        return True
+    if _host_looks_like_filename(url):
         return True
     return False
 

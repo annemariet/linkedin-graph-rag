@@ -269,5 +269,15 @@ class TestShouldIgnoreUrl:
     def test_linkedin_auth_wall(self):
         assert should_ignore_url("https://www.linkedin.com/authwall?trk=x") is True
 
+    def test_hostname_with_file_ext_tld_txt(self):
+        # LinkedIn auto-links "llms.txt" as http://llms.txt?trk=...
+        assert should_ignore_url("http://llms.txt?trk=public_post-text") is True
+
+    def test_hostname_with_file_ext_tld_cpp(self):
+        assert should_ignore_url("http://Llama.cpp?trk=public_post-text") is True
+
+    def test_real_url_with_txt_in_path_not_ignored(self):
+        assert should_ignore_url("https://example.com/readme.txt") is False
+
     def test_external_url(self):
         assert should_ignore_url("https://github.com/repo") is False
