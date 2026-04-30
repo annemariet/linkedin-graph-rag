@@ -39,6 +39,8 @@ from linkedin_api.utils.urls import (
     extract_urls_from_text,
     is_linkedin_internal_url,
     linkedin_hashtag_keyword,
+    linkedin_signup_redirect_hashtag,
+    should_ignore_url,
 )
 
 # Increment when DOM classification, markdown conversion, or metadata shape changes.
@@ -121,7 +123,7 @@ def classify_links_from_soup(
         href = _normalize_anchor_href(raw, base)
         if not href:
             continue
-        hk = linkedin_hashtag_keyword(href)
+        hk = linkedin_hashtag_keyword(href) or linkedin_signup_redirect_hashtag(href)
         if hk:
             tags_set.add(hk)
             continue
@@ -141,6 +143,8 @@ def classify_links_from_soup(
                 elif name and not (mentions_map[href].get("name") or "").strip():
                     mentions_map[href]["name"] = name
                 continue
+        if should_ignore_url(href):
+            continue
         if href not in seen_res:
             seen_res.add(href)
             resource_urls.append(href)
@@ -149,7 +153,7 @@ def classify_links_from_soup(
     for u in extract_urls_from_text(root.get_text(" ", strip=False)):
         if not u or u in seen_res:
             continue
-        hk = linkedin_hashtag_keyword(u)
+        hk = linkedin_hashtag_keyword(u) or linkedin_signup_redirect_hashtag(u)
         if hk:
             tags_set.add(hk)
             continue
@@ -166,6 +170,8 @@ def classify_links_from_soup(
                 if u not in mentions_map:
                     mentions_map[u] = {"name": "", "url": u}
                 continue
+        if should_ignore_url(u):
+            continue
         seen_res.add(u)
         resource_urls.append(u)
 

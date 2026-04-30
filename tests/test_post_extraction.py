@@ -9,6 +9,33 @@ from linkedin_api.post_extraction import (
 )
 
 
+def test_classify_links_signup_redirect_hashtag_goes_to_tags():
+    """LinkedIn wraps hashtag <a> tags in /signup/cold-join redirects for anon visitors."""
+    signup_href = (
+        "https://www.linkedin.com/signup/cold-join"
+        "?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ffeed%2Fhashtag%2Fslasheo"
+        "&trk=public_post-text"
+    )
+    html = f"""
+    <html><body>
+    <article data-id="x">
+    <p class="feed-shared-text">Post body with a hashtag
+    <a href="{signup_href}">#slasheo</a>
+    and an external link <a href="https://example.com/article">here</a>.
+    This text is long enough to pass the 50-char enrichment check easily.
+    </p>
+    </article>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    urls, mentions, tags, _ = classify_links_from_soup(
+        soup, "https://www.linkedin.com/posts/x"
+    )
+    assert "slasheo" in tags
+    assert signup_href not in urls
+    assert "https://example.com/article" in urls
+
+
 def test_classify_links_skips_comment_trk():
     html = """
     <html><body>

@@ -35,6 +35,32 @@ class TestExtractUrlsFromText:
         assert len(urls) == 1
 
 
+class TestLinkedinSignupRedirectHashtag:
+    def test_extracts_hashtag_from_signup_redirect(self):
+        from linkedin_api.utils.urls import linkedin_signup_redirect_hashtag
+
+        url = (
+            "https://www.linkedin.com/signup/cold-join"
+            "?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ffeed%2Fhashtag%2Fslasheo"
+            "&trk=public_post-text"
+        )
+        assert linkedin_signup_redirect_hashtag(url) == "slasheo"
+
+    def test_returns_none_for_non_signup_url(self):
+        from linkedin_api.utils.urls import linkedin_signup_redirect_hashtag
+
+        assert linkedin_signup_redirect_hashtag("https://example.com/foo") is None
+
+    def test_returns_none_when_redirect_is_not_hashtag(self):
+        from linkedin_api.utils.urls import linkedin_signup_redirect_hashtag
+
+        url = (
+            "https://www.linkedin.com/signup/cold-join"
+            "?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Fin%2Fsomeone"
+        )
+        assert linkedin_signup_redirect_hashtag(url) is None
+
+
 class TestExtractClassifiedLinks:
     def test_splits_mentions_tags_and_resource_urls(self):
         urls_in = [
@@ -47,6 +73,25 @@ class TestExtractClassifiedLinks:
         assert len(mentions) == 1
         assert mentions[0]["url"] == "https://www.linkedin.com/in/jane"
         assert "https://github.com/x/y" in urls
+
+    def test_signup_redirect_hashtag_goes_to_tags_not_urls(self):
+        signup_url = (
+            "https://www.linkedin.com/signup/cold-join"
+            "?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ffeed%2Fhashtag%2Fslasheo"
+            "&trk=public_post-text"
+        )
+        urls, mentions, tags = extract_classified_links(
+            [signup_url, "https://example.com/a"]
+        )
+        assert "slasheo" in tags
+        assert signup_url not in urls
+        assert "https://example.com/a" in urls
+
+    def test_signup_url_without_hashtag_redirect_excluded(self):
+        signup_url = "https://www.linkedin.com/signup/cold-join?trk=x"
+        urls, mentions, tags = extract_classified_links([signup_url])
+        assert signup_url not in urls
+        assert tags == []
 
     def test_linkedin_post_stays_in_urls(self):
         u = "https://www.linkedin.com/posts/foo_activity-123"
@@ -208,6 +253,21 @@ class TestShouldIgnoreUrl:
 
     def test_linkedin_hashtag(self):
         assert should_ignore_url("https://linkedin.com/feed/hashtag/ai") is True
+
+    def test_linkedin_signup_direct(self):
+        assert should_ignore_url("https://www.linkedin.com/signup/cold-join") is True
+
+    def test_linkedin_signup_hashtag_redirect(self):
+        # LinkedIn wraps hashtag links in signup redirects for unauthenticated HTML
+        url = (
+            "https://www.linkedin.com/signup/cold-join"
+            "?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ffeed%2Fhashtag%2Fslasheo"
+            "&trk=public_post-text"
+        )
+        assert should_ignore_url(url) is True
+
+    def test_linkedin_auth_wall(self):
+        assert should_ignore_url("https://www.linkedin.com/authwall?trk=x") is True
 
     def test_external_url(self):
         assert should_ignore_url("https://github.com/repo") is False

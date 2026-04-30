@@ -6,7 +6,7 @@ Extracted from extract_resources.py for reuse across modules.
 
 import re
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 def linkedin_hashtag_keyword(url: str) -> Optional[str]:
@@ -21,6 +21,34 @@ def linkedin_hashtag_keyword(url: str) -> Optional[str]:
     if not m:
         return None
     return unquote(m.group(1)).strip() or None
+
+
+def linkedin_signup_redirect_hashtag(url: str) -> Optional[str]:
+    """Return the hashtag keyword when a LinkedIn signup/authwall URL wraps a hashtag link.
+
+    LinkedIn serves static HTML where hashtag ``<a>`` tags point to
+    ``/signup/cold-join?session_redirect=.../feed/hashtag/<keyword>`` for
+    unauthenticated visitors.  This decodes the redirect destination and
+    extracts the hashtag keyword so callers can add it to ``tags`` rather
+    than treating the signup URL as a fetchable resource.
+    """
+    if not url or not is_linkedin_internal_url(url):
+        return None
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return None
+    path = parsed.path.lower()
+    if "/signup/" not in path and "/authwall" not in path:
+        return None
+    try:
+        params = parse_qs(parsed.query)
+        redirect = (params.get("session_redirect") or [""])[0]
+    except Exception:
+        return None
+    if not redirect:
+        return None
+    return linkedin_hashtag_keyword(unquote(redirect))
 
 
 def is_linkedin_mention_url(url: str) -> bool:
@@ -56,12 +84,14 @@ def extract_classified_links(
     resource_urls: List[str] = []
 
     for u in deduped:
-        hk = linkedin_hashtag_keyword(u)
+        hk = linkedin_hashtag_keyword(u) or linkedin_signup_redirect_hashtag(u)
         if hk:
             tags_set.add(hk)
             continue
         if is_linkedin_mention_url(u):
             mentions_map[u] = {"name": "", "url": u}
+            continue
+        if should_ignore_url(u):
             continue
         resource_urls.append(u)
 
@@ -179,7 +209,7 @@ def is_comment_feed_url(url: str) -> bool:
 
 
 def should_ignore_url(url: str) -> bool:
-    """Check if URL should be ignored (hashtags, profile links, etc.)."""
+    """Check if URL should be ignored (hashtags, profile links, auth pages, etc.)."""
     if "linkedin.com/in/" in url or "linkedin.com/pub/" in url:
         return True
     if "linkedin.com/feed/hashtag/" in url:
@@ -187,6 +217,10 @@ def should_ignore_url(url: str) -> bool:
     if "linkedin.com/company/" in url:
         return True
     if url.startswith("https://www.linkedin.com/feed/"):
+        return True
+    if "linkedin.com/signup/" in url or "linkedin.com/authwall" in url:
+        return True
+    if "linkedin.com/showcase/" in url or "linkedin.com/school/" in url:
         return True
     return False
 
