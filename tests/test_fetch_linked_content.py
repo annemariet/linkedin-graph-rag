@@ -499,3 +499,135 @@ class TestIterPostsWithUrls:
         save_metadata(self.URN)
 
         assert list(_iter_posts_with_urls()) == []
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare challenge detection
+# ---------------------------------------------------------------------------
+
+
+class TestCloudflareDetection:
+    def _cf_html(
+        self,
+        title: str = "Just a moment...",
+        body: str = "Enable JavaScript and cookies to continue",
+    ) -> str:
+        return (
+            f"<html><head><title>{title}</title></head>"
+            f"<body><p>{body}</p></body></html>"
+        )
+
+    def test_cloudflare_title_marker_detected(self):
+        with patch("requests.get", return_value=_mock_get_response(self._cf_html())):
+            result = fetch_linked_content(
+                "https://medium.com/@author/article", resolve_redirects=False
+            )
+        assert result.error == "cloudflare challenge"
+        assert result.ok is False
+        assert result.title == ""
+        assert result.content == ""
+
+    def test_cloudflare_body_marker_detected(self):
+        html = (
+            "<html><head><title>Some other title</title></head>"
+            "<body><p>Enable JavaScript and cookies to continue</p></body></html>"
+        )
+        with patch("requests.get", return_value=_mock_get_response(html)):
+            result = fetch_linked_content(
+                "https://medium.com/@author/article", resolve_redirects=False
+            )
+        assert result.error == "cloudflare challenge"
+
+    def test_non_cloudflare_page_not_detected(self):
+        html = (
+            "<html><head>"
+            '<meta property="og:title" content="Real Article"/>'
+            "</head><body><p>Actual content here.</p></body></html>"
+        )
+        with patch("requests.get", return_value=_mock_get_response(html)):
+            result = fetch_linked_content(
+                "https://medium.com/@author/real", resolve_redirects=False
+            )
+        assert result.ok is True
+        assert result.error == ""
+
+    def test_cloudflare_result_not_saved(self):
+        url = "https://medium.com/@author/cf-blocked"
+        with patch("requests.get", return_value=_mock_get_response(self._cf_html())):
+            results = process_post_linked_content([url], skip_cached=False)
+        assert not has_resource(url)
+        assert results[0].error == "cloudflare challenge"
+
+
+# ---------------------------------------------------------------------------
+# cited_by URN normalization
+# ---------------------------------------------------------------------------
+
+
+class TestCitedByUrnNormalization:
+    def test_save_resource_normalizes_legacy_urn_in_cited_by(self, tmp_path):
+        """Raw URN entries written before the hash-conversion fix are normalized."""
+        import hashlib
+        import json
+
+        from linkedin_api.fetch_linked_content import _resource_dir, _url_stem
+
+        url = "https://example.com/legacy-urn"
+        urn = "urn:li:activity:9999999999999"
+        expected_hash = hashlib.sha256(urn.encode()).hexdigest()
+
+        # Simulate a file written with a raw URN in cited_by
+        stem = _url_stem(url)
+        rdir = _resource_dir()
+        legacy_data = {
+            "url": url,
+            "resolved_url": url,
+            "title": "T",
+            "content": "C",
+            "url_type": "article",
+            "domain": "example.com",
+            "error": "",
+            "fetched_at": "2024-01-01",
+            "cited_by": [urn],  # old raw-URN format
+        }
+        (rdir / f"{stem}.json").write_text(json.dumps(legacy_data), encoding="utf-8")
+
+        # Re-save: the URN should be converted to a hash
+        result = FetchResult(
+            url=url, resolved_url=url, title="T", content="C", url_type="article"
+        )
+        save_resource(url, result, citing_post_urns=[])
+
+        saved = json.loads((rdir / f"{stem}.json").read_text(encoding="utf-8"))
+        assert urn not in saved["cited_by"]
+        assert expected_hash in saved["cited_by"]
+
+    def test_update_resource_cited_by_normalizes_legacy_urn(self, tmp_path):
+        """_update_resource_cited_by also converts existing URN entries to hashes."""
+        import hashlib
+        import json
+
+        from linkedin_api.fetch_linked_content import (
+            _resource_dir,
+            _update_resource_cited_by,
+            _url_stem,
+        )
+
+        url = "https://example.com/legacy-urn-update"
+        old_urn = "urn:li:activity:1111111111111"
+        new_urn = "urn:li:activity:2222222222222"
+        old_hash = hashlib.sha256(old_urn.encode()).hexdigest()
+        new_hash = hashlib.sha256(new_urn.encode()).hexdigest()
+
+        stem = _url_stem(url)
+        rdir = _resource_dir()
+        (rdir / f"{stem}.json").write_text(
+            json.dumps({"url": url, "cited_by": [old_urn]}), encoding="utf-8"
+        )
+
+        _update_resource_cited_by(url, [new_urn])
+
+        saved = json.loads((rdir / f"{stem}.json").read_text(encoding="utf-8"))
+        assert old_urn not in saved["cited_by"]
+        assert old_hash in saved["cited_by"]
+        assert new_hash in saved["cited_by"]

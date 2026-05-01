@@ -199,6 +199,11 @@ SKIP_TYPES: frozenset[str] = frozenset(
     {"image", "document", "presentation", "archive", "audio"}
 )
 
+# Cloudflare JS challenge markers — title and body fragments that identify a
+# challenge page rather than real content (Medium, some news sites).
+_CLOUDFLARE_TITLE_MARKER = "just a moment"
+_CLOUDFLARE_BODY_MARKERS = ("enable javascript and cookies to continue",)
+
 # ---------------------------------------------------------------------------
 # Resource store (keyed by SHA-256 of the resolved URL)
 # ---------------------------------------------------------------------------
@@ -243,9 +248,14 @@ def save_resource(
     existing_cited_by: list[str] = []
     if json_path.exists():
         try:
-            existing_cited_by = (
+            raw_cited = (
                 json.loads(json_path.read_text(encoding="utf-8")).get("cited_by") or []
             )
+            # Normalize legacy raw-URN entries (stored before hash-conversion fix)
+            existing_cited_by = [
+                hashlib.sha256(e.encode()).hexdigest() if e.startswith("urn:") else e
+                for e in raw_cited
+            ]
         except Exception:
             pass
 
@@ -272,7 +282,12 @@ def _update_resource_cited_by(url: str, urns: list[str]) -> None:
         return
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
-        existing = data.get("cited_by") or []
+        raw_existing = data.get("cited_by") or []
+        # Normalize legacy raw-URN entries
+        existing = [
+            hashlib.sha256(e.encode()).hexdigest() if e.startswith("urn:") else e
+            for e in raw_existing
+        ]
         new_hashes = [hashlib.sha256(u.encode()).hexdigest() for u in urns if u]
         data["cited_by"] = list(dict.fromkeys(existing + new_hashes))
         json_path.write_text(
@@ -333,6 +348,17 @@ def fetch_linked_content(
     try:
         title, content = strategy(resolved)
         logger.info("  -> %s", title[:80] if title else "(no title)")
+        if _CLOUDFLARE_TITLE_MARKER in title.lower() or any(
+            m in content.lower() for m in _CLOUDFLARE_BODY_MARKERS
+        ):
+            return FetchResult(
+                url=url,
+                resolved_url=resolved,
+                url_type=url_type,
+                domain=domain,
+                error="cloudflare challenge",
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+            )
         return FetchResult(
             url=url,
             resolved_url=resolved,
