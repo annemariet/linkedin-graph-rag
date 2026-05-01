@@ -14,10 +14,31 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+
+def _strip_utm(url: str) -> str:
+    """Strip utm_* params — mirrors fetch_linked_content.strip_utm_params."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        query = urlencode(
+            [
+                (k, v)
+                for k, v in parse_qsl(parsed.query)
+                if not k.lower().startswith("utm_")
+            ]
+        )
+        return urlunparse(parsed._replace(query=query))
+    except Exception:
+        return url
+
 
 # ---------------------------------------------------------------------------
 # Detection
@@ -62,7 +83,26 @@ def _is_linkedin_feed_url(url: str) -> bool:
     )
 
 
-def classify(data: dict) -> tuple[bool, str]:
+def _is_utm_orphan(stem: str, data: dict) -> bool:
+    """True if this file was keyed by a UTM-containing URL.
+
+    After the canonical-key change, resource files are stored under
+    hash(strip_utm(url)).  Files that were stored under the old
+    hash(url_with_utm) key will never be found by the pipeline again
+    and should be deleted so the next run re-fetches them under the
+    correct canonical key.
+    """
+    url = (data.get("url") or "").strip()
+    if not url:
+        return False
+    canonical = _strip_utm(url)
+    if canonical == url:
+        return False  # no UTM params — not orphaned
+    old_stem = hashlib.sha256(url.encode()).hexdigest()
+    return stem == old_stem
+
+
+def classify(data: dict, stem: str = "") -> tuple[bool, str]:
     """Return (is_noisy, reason). Uses resolved_url when available."""
     url = (data.get("resolved_url") or data.get("url") or "").strip()
     url_lower = url.lower()
@@ -78,6 +118,10 @@ def classify(data: dict) -> tuple[bool, str]:
     for bad in _LI_BAD_TITLES:
         if bad in title_lower:
             return True, f"LinkedIn auth title: {data.get('title')!r}"
+
+    if stem and _is_utm_orphan(stem, data):
+        canonical = _strip_utm(data.get("url") or "")
+        return True, f"UTM-orphaned key (canonical: {canonical})"
 
     return False, ""
 
@@ -119,7 +163,7 @@ def main() -> int:
             print(f"  SKIP (unreadable): {json_path.name} — {e}")
             continue
 
-        is_noisy, reason = classify(data)
+        is_noisy, reason = classify(data, stem=json_path.stem)
         if is_noisy:
             noisy.append((json_path, reason))
             reasons[reason.split(":")[0].strip()] += 1
