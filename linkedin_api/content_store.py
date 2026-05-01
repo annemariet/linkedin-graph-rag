@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from linkedin_api.activity_csv import get_data_dir
-from linkedin_api.utils.urls import resolve_redirect
+from linkedin_api.utils.urls import resolve_redirect, strip_utm_params
 
 
 def _content_dir() -> Path:
@@ -232,22 +232,30 @@ def _merge_tags(previous: list[Any] | None, incoming: list[Any] | None) -> list[
 
 
 def resolve_urls_for_metadata(urls: list[str] | None) -> list[str]:
-    """Return unique URLs after best-effort redirect resolution (see ``resolve_redirect``)."""
+    """Return unique URLs after best-effort redirect resolution (see ``resolve_redirect``).
+
+    Deduplicates by canonical URL (UTM params stripped) so two links to the same
+    article with different campaign tags produce a single entry.
+    """
     if not urls:
         return []
     out: list[str] = []
-    seen: set[str] = set()
+    seen_canon: set[str] = set()
     for u in urls:
         s = (u or "").strip()
-        if not s or s in seen:
+        if not s:
             continue
-        seen.add(s)
+        canon = strip_utm_params(s)
+        if canon in seen_canon:
+            continue
+        seen_canon.add(canon)
         try:
             resolved = resolve_redirect(s)
         except Exception:
             resolved = s
-        if resolved not in seen:
-            seen.add(resolved)
+        canon_resolved = strip_utm_params(resolved)
+        if canon_resolved not in seen_canon:
+            seen_canon.add(canon_resolved)
         out.append(resolved)
     return out
 

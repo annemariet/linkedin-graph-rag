@@ -6,7 +6,7 @@ Extracted from extract_resources.py for reuse across modules.
 
 import re
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 
 def linkedin_hashtag_keyword(url: str) -> Optional[str]:
@@ -215,6 +215,28 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
         return {"domain": domain, "type": resource_type}
     except Exception:
         return {"domain": None, "type": "unknown"}
+
+
+def strip_utm_params(url: str) -> str:
+    """Return *url* with all ``utm_*`` tracking parameters removed.
+
+    Used for resource-store deduplication: two URLs that differ only in UTM
+    campaign tags refer to the same canonical resource.
+    """
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        query = urlencode(
+            [
+                (k, v)
+                for k, v in parse_qsl(parsed.query)
+                if not k.lower().startswith("utm_")
+            ]
+        )
+        return urlunparse(parsed._replace(query=query))
+    except Exception:
+        return url
 
 
 def is_linkedin_internal_url(url: str) -> bool:
