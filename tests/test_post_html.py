@@ -56,6 +56,26 @@ def test_linkedin_http_fetch_is_blocked_generic_og_without_post():
     assert linkedin_http_fetch_is_blocked(url, html) is True
 
 
+def test_linkedin_http_fetch_is_blocked_cookie_consent_url():
+    """Final URL redirected to LinkedIn cookie-policy page."""
+    url = "https://www.linkedin.com/cookie-policy"
+    html = "<html><body><p>We use cookies to improve your experience.</p></body></html>"
+    assert linkedin_http_fetch_is_blocked(url, html) is True
+
+
+def test_linkedin_http_fetch_is_blocked_cookie_consent_html():
+    """Cookie-consent gate served at original URL (no redirect)."""
+    url = "https://www.linkedin.com/feed/update/urn:li:activity:7454427215649337344/"
+    html = (
+        "<html><head><title>Before you continue to LinkedIn</title></head>"
+        "<body><p>Before you continue to LinkedIn</p>"
+        "<p>We use essential and optional cookies to provide, secure, analyze and improve "
+        "our Services. Click Accept All Cookies to agree or Cookies Settings to change "
+        "your preferences.</p></body></html>"
+    )
+    assert linkedin_http_fetch_is_blocked(url, html) is True
+
+
 def test_linkedin_http_fetch_not_blocked_real_post_has_jsonld():
     html = (
         '<script type="application/ld+json">'

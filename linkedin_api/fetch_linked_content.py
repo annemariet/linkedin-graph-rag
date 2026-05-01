@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -54,6 +55,8 @@ from linkedin_api.utils.urls import (
     resolve_redirect,
     should_ignore_url,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Request headers
@@ -109,18 +112,39 @@ FetchStrategy = Callable[[str], tuple[str, str]]  # returns (title, content)
 # ---------------------------------------------------------------------------
 
 
-def _fetch_soup(url: str, timeout: int = 15) -> tuple[BeautifulSoup, str]:
-    """Fetch *url* and return (parsed soup, og:title or <title>)."""
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MB — skip pathologically large pages
+
+
+def _fetch_soup(
+    url: str, timeout: tuple[int, int] = (5, 15)
+) -> tuple[BeautifulSoup, str]:
+    """Fetch *url* and return (parsed soup, og:title or <title>).
+
+    Uses streaming to cap download size at ``_MAX_RESPONSE_BYTES`` so a slow-
+    streaming server cannot block the pipeline indefinitely.
+    ``timeout`` is a (connect, read) tuple: connect must succeed within 5 s,
+    each read chunk within 15 s.
+    """
     resp = requests.get(
         url,
         timeout=timeout,
         allow_redirects=True,
         headers=_HEADERS,
         verify=_ssl_verify(),
+        stream=True,
     )
-    if resp.status_code >= 500 or not resp.text:
+    if resp.status_code >= 500:
         raise ValueError(f"HTTP {resp.status_code}")
-    soup = BeautifulSoup(resp.text, "html.parser")
+    raw = b""
+    for chunk in resp.iter_content(chunk_size=32768):
+        raw += chunk
+        if len(raw) >= _MAX_RESPONSE_BYTES:
+            break
+    resp.close()
+    if not raw:
+        raise ValueError("empty response")
+    html = raw.decode(resp.encoding or "utf-8", errors="replace")
+    soup = BeautifulSoup(html, "html.parser")
     og = soup.find("meta", property="og:title")
     title = (
         str(og["content"]).strip()
@@ -147,7 +171,7 @@ def _fetch_metadata_only(url: str) -> tuple[str, str]:
 
     Used for video platforms (YouTube), code repositories (GitHub), etc.
     """
-    _, title = _fetch_soup(url, timeout=10)
+    _, title = _fetch_soup(url, timeout=(5, 10))
     return title, ""
 
 
@@ -263,9 +287,11 @@ def fetch_linked_content(
             error=f"skipped ({url_type})",
         )
 
+    logger.info("GET %s [%s]", resolved, url_type)
     strategy = STRATEGIES.get(url_type, _fetch_html_body)
     try:
         title, content = strategy(resolved)
+        logger.info("  -> %s", title[:80] if title else "(no title)")
         return FetchResult(
             url=url,
             resolved_url=resolved,
@@ -276,6 +302,7 @@ def fetch_linked_content(
             fetched_at=datetime.now(timezone.utc).isoformat(),
         )
     except Exception as exc:
+        logger.warning("  -> failed: %s", exc)
         return FetchResult(
             url=url,
             resolved_url=resolved,
@@ -322,20 +349,38 @@ def process_post_linked_content(
 def fetch_linked_content_streaming(
     limit: int | None = None,
     skip_cached: bool = True,
+    urns: set[str] | None = None,
 ):
     """
-    Generator for pipeline use. Yields (posts_done, total_posts) after each post.
+    Generator for pipeline use. Yields (urls_done, total_urls) after each URL.
 
-    Returns total URLs fetched via StopIteration.value.
+    Only processes URLs from posts whose URN is in ``urns`` (if provided), and
+    skips URLs already in the resource store when ``skip_cached`` is True.
+    Deduplicates URLs across posts so each URL is fetched at most once.
+
+    Returns total URLs successfully fetched via StopIteration.value.
     """
-    posts = list(_iter_posts_with_urls())
+    seen: set[str] = set()
+    jobs: list[str] = []
+    for _urn, urls in _iter_posts_with_urls(urns=urns):
+        for url in urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            if skip_cached and has_resource(url):
+                continue
+            jobs.append(url)
+
     if limit:
-        posts = posts[:limit]
+        jobs = jobs[:limit]
+
     urls_fetched = 0
-    for i, (urn, urls) in enumerate(posts):
-        results = process_post_linked_content(urls, skip_cached=skip_cached)
-        urls_fetched += sum(1 for r in results if r.ok)
-        yield i + 1, len(posts)
+    for i, url in enumerate(jobs):
+        result = fetch_linked_content(url)
+        if result.ok:
+            save_resource(url, result)
+            urls_fetched += 1
+        yield i + 1, len(jobs)
     return urls_fetched
 
 
@@ -363,8 +408,13 @@ def _urls_from_metadata(meta: dict) -> list[str]:
     return out
 
 
-def _iter_posts_with_urls():
-    """Yield (urn, urls) for all posts that have URLs.
+def _iter_posts_with_urls(urns: set[str] | None = None):
+    """Yield (urn, urls) for posts that have URLs.
+
+    Args:
+        urns: When provided, only posts whose URN is in this set are yielded.
+              Pass the set of URNs from the current fetch period to avoid
+              re-processing the entire content store every run.
 
     First checks ``urls`` and ``mentions`` in ``.meta.json``; if empty, falls back to
     extracting URLs from the ``.md`` content file and persists them so future
@@ -381,6 +431,9 @@ def _iter_posts_with_urls():
 
         stem = meta_path.name.replace(".meta.json", "")
         urn = registry.get(stem, "")
+
+        if urns is not None and urn not in urns:
+            continue
 
         urls = _urls_from_metadata(meta)
         if not urls and urn:

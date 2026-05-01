@@ -318,7 +318,7 @@ def create_llm(
                 break
         if not quiet:
             print(f"  LLM: Anthropic ({model}, max_tokens={max_tokens})")
-        model_params = {"temperature": 0, "max_tokens": max_tokens}
+        model_params: dict[str, object] = {"max_tokens": max_tokens}
         return AnthropicLLM(
             model_name=model,
             model_params=model_params,

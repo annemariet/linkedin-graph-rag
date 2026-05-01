@@ -24,6 +24,17 @@ def use_tmp_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("LINKEDIN_DATA_DIR", str(tmp_path))
 
 
+def _mock_get_response(html: str, status_code: int = 200) -> MagicMock:
+    """Build a requests.get mock that supports iter_content (streaming)."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.encoding = "utf-8"
+    resp.text = html  # kept for tests that still read .text directly
+    raw = html.encode("utf-8")
+    resp.iter_content.return_value = iter([raw])
+    return resp
+
+
 # ---------------------------------------------------------------------------
 # FetchResult
 # ---------------------------------------------------------------------------
@@ -88,11 +99,7 @@ class TestFetchLinkedContent:
             '<meta property="og:title" content="Great Article"/>'
             "</head><body><p>Hello world</p></body></html>"
         )
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
-
-        with patch("requests.get", return_value=mock_resp):
+        with patch("requests.get", return_value=_mock_get_response(html)):
             result = fetch_linked_content(
                 "https://medium.com/some-article", resolve_redirects=False
             )
@@ -103,11 +110,9 @@ class TestFetchLinkedContent:
         assert result.url_type == "article"
 
     def test_server_error_returns_error_result(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = ""
-
-        with patch("requests.get", return_value=mock_resp):
+        with patch(
+            "requests.get", return_value=_mock_get_response("", status_code=500)
+        ):
             result = fetch_linked_content(
                 "https://example.com/broken", resolve_redirects=False
             )
@@ -122,11 +127,9 @@ class TestFetchLinkedContent:
             '<meta property="og:title" content="Repo Title"/>'
             "</head><body></body></html>"
         )
-        mock_resp = MagicMock()
-        mock_resp.status_code = 406
-        mock_resp.text = html
-
-        with patch("requests.get", return_value=mock_resp):
+        with patch(
+            "requests.get", return_value=_mock_get_response(html, status_code=406)
+        ):
             result = fetch_linked_content(
                 "https://github.com/org/repo", resolve_redirects=False
             )
@@ -149,11 +152,7 @@ class TestFetchLinkedContent:
             '<meta property="og:title" content="My Video"/>'
             "</head><body><p>lots of content</p></body></html>"
         )
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = html
-
-        with patch("requests.get", return_value=mock_resp):
+        with patch("requests.get", return_value=_mock_get_response(html)):
             result = fetch_linked_content(
                 "https://www.youtube.com/watch?v=abc123", resolve_redirects=False
             )
@@ -186,11 +185,11 @@ class TestShortUrlResolution:
                 "linkedin_api.fetch_linked_content.resolve_redirect",
                 return_value="https://github.com/user/repo",
             ),
-            patch("requests.get") as mock_get,
+            patch(
+                "requests.get",
+                return_value=_mock_get_response(self._mock_html("Some Repo")),
+            ),
         ):
-            mock_get.return_value = MagicMock(
-                status_code=200, text=self._mock_html("Some Repo")
-            )
             result = fetch_linked_content(
                 "https://lnkd.in/erbBvi7E", resolve_redirects=True
             )
@@ -208,11 +207,11 @@ class TestShortUrlResolution:
                 "linkedin_api.fetch_linked_content.resolve_redirect",
                 return_value="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             ),
-            patch("requests.get") as mock_get,
+            patch(
+                "requests.get",
+                return_value=_mock_get_response(self._mock_html("My Video")),
+            ),
         ):
-            mock_get.return_value = MagicMock(
-                status_code=200, text=self._mock_html("My Video")
-            )
             result = fetch_linked_content(
                 "https://lnkd.in/erbBvi7E", resolve_redirects=True
             )
@@ -228,12 +227,13 @@ class TestShortUrlResolution:
                 "linkedin_api.fetch_linked_content.resolve_redirect",
                 return_value="https://medium.com/@author/some-article-abc123",
             ),
-            patch("requests.get") as mock_get,
+            patch(
+                "requests.get",
+                return_value=_mock_get_response(
+                    self._mock_html("Great Article", "Article body here")
+                ),
+            ),
         ):
-            mock_get.return_value = MagicMock(
-                status_code=200,
-                text=self._mock_html("Great Article", "Article body here"),
-            )
             result = fetch_linked_content(
                 "https://lnkd.in/erbBvi7E", resolve_redirects=True
             )
@@ -268,7 +268,7 @@ class TestShortUrlResolution:
             ),
             patch("requests.get") as mock_get,
         ):
-            mock_get.return_value = MagicMock(status_code=200, text="<html></html>")
+            mock_get.return_value = _mock_get_response("<html></html>")
             result = fetch_linked_content(
                 "https://lnkd.in/erbBvi7E", resolve_redirects=True
             )

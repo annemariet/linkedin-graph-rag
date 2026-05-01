@@ -279,10 +279,14 @@ def linkedin_http_fetch_is_blocked(final_url: str, html: str) -> bool:
 
     Unauthenticated requests to ``/feed/update/urn:li:…`` commonly redirect to
     ``/signup/cold-join``; parsing ``og:description`` then yields generic marketing
-    copy that must not be stored as post content.
+    copy that must not be stored as post content.  Also detects the GDPR cookie-consent
+    wall ("Before you continue to LinkedIn") which serves HTTP 200 at the original URL
+    or after a redirect to ``/cookie-policy``.
     """
     u = (final_url or "").lower()
     if "linkedin.com/signup" in u or "linkedin.com/uas/login" in u:
+        return True
+    if "linkedin.com/cookie-policy" in u or "linkedin.com/legal/cookie" in u:
         return True
     h = html or ""
     if "d_registration-cold-join" in h:
@@ -290,6 +294,8 @@ def linkedin_http_fetch_is_blocked(final_url: str, html: str) -> bool:
     if 'data-app-id="com.linkedin.registration-frontend' in h:
         return True
     hl = h.lower()
+    if "before you continue to linkedin" in hl:
+        return True
     if _LI_GENERIC_OG_BLURB.lower() in hl and _LI_GENERIC_OG_BLURB_2.lower() in hl:
         if "socialmediaposting" not in hl:
             return True
