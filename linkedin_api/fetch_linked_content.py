@@ -249,10 +249,11 @@ def save_resource(
         except Exception:
             pass
 
+    # Store content-store hashes (sha256(urn)) so cited_by entries are
+    # directly usable as filenames: content/<hash>.md / content/<hash>.meta.json
+    new_hashes = [hashlib.sha256(u.encode()).hexdigest() for u in citing_post_urns if u]
     data = asdict(result)
-    data["cited_by"] = list(
-        dict.fromkeys(existing_cited_by + [u for u in citing_post_urns if u])
-    )
+    data["cited_by"] = list(dict.fromkeys(existing_cited_by + new_hashes))
     json_path.write_text(
         json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
     )
@@ -272,7 +273,8 @@ def _update_resource_cited_by(url: str, urns: list[str]) -> None:
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
         existing = data.get("cited_by") or []
-        data["cited_by"] = list(dict.fromkeys(existing + [u for u in urns if u]))
+        new_hashes = [hashlib.sha256(u.encode()).hexdigest() for u in urns if u]
+        data["cited_by"] = list(dict.fromkeys(existing + new_hashes))
         json_path.write_text(
             json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
         )
