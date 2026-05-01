@@ -131,12 +131,65 @@ def classify(data: dict, stem: str = "") -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 
+def _fix_metadata_urls(content_dir: Path, *, dry_run: bool, verbose: bool) -> int:
+    """Canonical-dedup urls field in all meta.json files (no HTTP requests).
+
+    Returns the number of files modified.
+    """
+    meta_files = sorted(content_dir.glob("*.meta.json"))
+    modified = 0
+    for path in meta_files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  SKIP (unreadable): {path.name} — {e}")
+            continue
+
+        urls = data.get("urls")
+        if not isinstance(urls, list):
+            continue
+
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for u in urls:
+            c = _strip_utm(u)
+            if c not in seen:
+                seen.add(c)
+                deduped.append(u)
+
+        if deduped == urls:
+            if verbose:
+                print(f"  ok     {path.name}")
+            continue
+
+        removed = len(urls) - len(deduped)
+        print(f"  FIX    {path.name}  ({removed} duplicate(s) removed)")
+        if verbose:
+            dupes = [u for u in urls if urls.count(u) > 1]
+            for d in dict.fromkeys(dupes):
+                print(f"         dup: {d}")
+
+        if not dry_run:
+            data["urls"] = deduped
+            path.write_text(
+                json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
+            )
+        modified += 1
+
+    return modified
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--delete",
         action="store_true",
         help="Actually delete noisy files (default: dry-run only).",
+    )
+    parser.add_argument(
+        "--fix-metadata-urls",
+        action="store_true",
+        help="Canonical-dedup urls field in all meta.json files (no HTTP). Dry-run unless --delete.",
     )
     parser.add_argument(
         "--verbose",
@@ -146,7 +199,27 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    resources_dir = Path.home() / ".linkedin_api" / "data" / "resources"
+    data_dir = Path.home() / ".linkedin_api" / "data"
+
+    if args.fix_metadata_urls:
+        content_dir = data_dir / "content"
+        if not content_dir.exists():
+            print(f"Content directory not found: {content_dir}", file=sys.stderr)
+            return 1
+        dry_run = not args.delete
+        modified = _fix_metadata_urls(
+            content_dir, dry_run=dry_run, verbose=args.verbose
+        )
+        print()
+        if dry_run:
+            print(f"Found {modified} meta.json file(s) with duplicate URLs.")
+            if modified:
+                print("Dry-run — pass --delete to apply fixes.")
+        else:
+            print(f"Fixed {modified} meta.json file(s).")
+        return 0
+
+    resources_dir = data_dir / "resources"
     if not resources_dir.exists():
         print(f"Resources directory not found: {resources_dir}", file=sys.stderr)
         return 1
