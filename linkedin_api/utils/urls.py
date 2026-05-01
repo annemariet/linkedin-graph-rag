@@ -51,6 +51,34 @@ def linkedin_signup_redirect_hashtag(url: str) -> Optional[str]:
     return linkedin_hashtag_keyword(unquote(redirect))
 
 
+def linkedin_redir_unwrap_url(url: str) -> str | None:
+    """Extract the real target from a LinkedIn /redir/redirect?url=... wrapper.
+
+    LinkedIn replaces external ``<a href>`` links in its HTML with a JS/meta-refresh
+    redirect page (title "External Redirection | LinkedIn", 3-second delay).
+    ``requests`` cannot follow JS redirects, so the target must be extracted
+    statically from the ``url`` query parameter.
+
+    Returns the decoded target URL, or ``None`` if this is not a redir wrapper.
+    """
+    if not url or not is_linkedin_internal_url(url):
+        return None
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return None
+    if parsed.path.lower().rstrip("/") not in (
+        "/redir/redirect",
+        "/redir/externalredirect",
+    ):
+        return None
+    try:
+        target = (parse_qs(parsed.query).get("url") or [""])[0]
+    except Exception:
+        return None
+    return unquote(target) if target else None
+
+
 def is_linkedin_mention_url(url: str) -> bool:
     """True for LinkedIn profile, company, or school URLs."""
     if not url or not is_linkedin_internal_url(url):
@@ -84,6 +112,7 @@ def extract_classified_links(
     resource_urls: List[str] = []
 
     for u in deduped:
+        u = linkedin_redir_unwrap_url(u) or u
         hk = linkedin_hashtag_keyword(u) or linkedin_signup_redirect_hashtag(u)
         if hk:
             tags_set.add(hk)
@@ -278,6 +307,15 @@ def resolve_redirect(url: str, max_redirects: int = 5) -> str:
     Returns:
         Final URL after following redirects, or original URL if resolution fails
     """
+    if max_redirects <= 0:
+        return url
+
+    # Statically unwrap LinkedIn's JS-redirect wrapper before any HTTP request.
+    # The page uses a meta-refresh delay so requests cannot follow it automatically.
+    unwrapped = linkedin_redir_unwrap_url(url)
+    if unwrapped:
+        return resolve_redirect(unwrapped, max_redirects=max_redirects - 1)
+
     import os
 
     import requests

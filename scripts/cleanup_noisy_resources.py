@@ -36,6 +36,8 @@ _LI_INTERNAL_PATHS = [
     "linkedin.com/in/",
     "linkedin.com/pub/",
     "linkedin.com/school/",
+    "linkedin.com/redir/redirect",
+    "linkedin.com/redir/externalredirect",
 ]
 
 # Titles that indicate a LinkedIn auth page, not a real resource page.
@@ -48,6 +50,7 @@ _LI_BAD_TITLES = [
     "before you continue to linkedin",
     "linkedin: log in or sign up",
     "log in or sign up | linkedin",
+    "external redirection | linkedin",
 ]
 
 

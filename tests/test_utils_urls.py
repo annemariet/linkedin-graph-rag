@@ -61,6 +61,43 @@ class TestLinkedinSignupRedirectHashtag:
         assert linkedin_signup_redirect_hashtag(url) is None
 
 
+class TestLinkedinRedirUnwrapUrl:
+    def test_extracts_lnkd_in_target(self):
+        from linkedin_api.utils.urls import linkedin_redir_unwrap_url
+
+        url = (
+            "https://www.linkedin.com/redir/redirect"
+            "?url=https%3A%2F%2Flnkd.in%2FeRgDaRJ8"
+            "&urlhash=YcyT&trk=public_post-text"
+        )
+        assert linkedin_redir_unwrap_url(url) == "https://lnkd.in/eRgDaRJ8"
+
+    def test_externalredirect_path_also_unwrapped(self):
+        from linkedin_api.utils.urls import linkedin_redir_unwrap_url
+
+        url = (
+            "https://www.linkedin.com/redir/externalRedirect"
+            "?url=https%3A%2F%2Fexample.com%2Farticle"
+        )
+        assert linkedin_redir_unwrap_url(url) == "https://example.com/article"
+
+    def test_returns_none_for_non_redir_url(self):
+        from linkedin_api.utils.urls import linkedin_redir_unwrap_url
+
+        assert linkedin_redir_unwrap_url("https://example.com/foo") is None
+        assert linkedin_redir_unwrap_url("https://www.linkedin.com/in/jane") is None
+
+    def test_returns_none_when_url_param_missing(self):
+        from linkedin_api.utils.urls import linkedin_redir_unwrap_url
+
+        assert (
+            linkedin_redir_unwrap_url(
+                "https://www.linkedin.com/redir/redirect?urlhash=YcyT"
+            )
+            is None
+        )
+
+
 class TestExtractClassifiedLinks:
     def test_splits_mentions_tags_and_resource_urls(self):
         urls_in = [
@@ -92,6 +129,17 @@ class TestExtractClassifiedLinks:
         urls, mentions, tags = extract_classified_links([signup_url])
         assert signup_url not in urls
         assert tags == []
+
+    def test_redir_wrapper_unwrapped_to_lnkd_in(self):
+        redir_url = (
+            "https://www.linkedin.com/redir/redirect"
+            "?url=https%3A%2F%2Flnkd.in%2FeRgDaRJ8"
+            "&urlhash=YcyT&trk=public_post-text"
+        )
+        urls, _, _ = extract_classified_links([redir_url, "https://example.com/a"])
+        assert redir_url not in urls
+        assert "https://lnkd.in/eRgDaRJ8" in urls
+        assert "https://example.com/a" in urls
 
     def test_linkedin_post_stays_in_urls(self):
         u = "https://www.linkedin.com/posts/foo_activity-123"

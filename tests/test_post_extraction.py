@@ -36,6 +36,31 @@ def test_classify_links_signup_redirect_hashtag_goes_to_tags():
     assert "https://example.com/article" in urls
 
 
+def test_classify_links_unwraps_redir_wrapper():
+    """LinkedIn wraps external <a> hrefs in /redir/redirect?url=... for tracking."""
+    redir_href = (
+        "https://www.linkedin.com/redir/redirect"
+        "?url=https%3A%2F%2Flnkd.in%2FeRgDaRJ8"
+        "&urlhash=YcyT&trk=public_post-text"
+    )
+    html = f"""
+    <html><body>
+    <article data-id="x">
+    <p class="feed-shared-text">Check out this great article
+    <a href="{redir_href}">link</a>
+    and also <a href="https://example.com/other">another</a>.
+    This text is long enough to pass the 50-char enrichment check easily.
+    </p>
+    </article>
+    </body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    urls, _, _, _ = classify_links_from_soup(soup, "https://www.linkedin.com/posts/x")
+    assert redir_href not in urls
+    assert "https://lnkd.in/eRgDaRJ8" in urls
+    assert "https://example.com/other" in urls
+
+
 def test_classify_links_skips_comment_trk():
     html = """
     <html><body>

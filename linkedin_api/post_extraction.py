@@ -39,6 +39,7 @@ from linkedin_api.utils.urls import (
     extract_urls_from_text,
     is_linkedin_internal_url,
     linkedin_hashtag_keyword,
+    linkedin_redir_unwrap_url,
     linkedin_signup_redirect_hashtag,
     should_ignore_url,
 )
@@ -143,6 +144,7 @@ def classify_links_from_soup(
                 elif name and not (mentions_map[href].get("name") or "").strip():
                     mentions_map[href]["name"] = name
                 continue
+        href = linkedin_redir_unwrap_url(href) or href
         if should_ignore_url(href):
             continue
         if href not in seen_res:
@@ -170,6 +172,7 @@ def classify_links_from_soup(
                 if u not in mentions_map:
                     mentions_map[u] = {"name": "", "url": u}
                 continue
+        u = linkedin_redir_unwrap_url(u) or u
         if should_ignore_url(u):
             continue
         seen_res.add(u)
