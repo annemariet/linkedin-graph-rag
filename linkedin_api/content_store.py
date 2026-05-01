@@ -345,7 +345,20 @@ def save_metadata(
         meta["people"] = people
     if category is not None:
         meta["category"] = category or ""
-    meta["urls"] = resolve_urls_for_metadata(urls or [])
+    # Resolve incoming URLs (HTTP redirect-following + canonical dedup).
+    # Then merge with existing and re-dedup by canonical so that:
+    #   (a) existing duplicates are cleaned up, and
+    #   (b) new URLs that canonicalise to an already-stored URL are dropped.
+    existing_urls: list[str] = existing.get("urls") or []
+    resolved_new = resolve_urls_for_metadata(urls or [])
+    seen_canon: set[str] = set()
+    merged: list[str] = []
+    for u in existing_urls + resolved_new:
+        c = strip_utm_params(u)
+        if c not in seen_canon:
+            seen_canon.add(c)
+            merged.append(u)
+    meta["urls"] = merged
     prev_mentions = (
         existing.get("mentions") if isinstance(existing.get("mentions"), list) else None
     )

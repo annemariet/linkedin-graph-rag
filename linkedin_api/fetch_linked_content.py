@@ -263,6 +263,9 @@ def save_resource(
     # directly usable as filenames: content/<hash>.md / content/<hash>.meta.json
     new_hashes = [hashlib.sha256(u.encode()).hexdigest() for u in citing_post_urns if u]
     data = asdict(result)
+    # Strip UTM from url/resolved_url — the file is keyed by canonical URL anyway
+    data["url"] = strip_utm_params(data["url"])
+    data["resolved_url"] = strip_utm_params(data["resolved_url"])
     data["cited_by"] = list(dict.fromkeys(existing_cited_by + new_hashes))
     json_path.write_text(
         json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
