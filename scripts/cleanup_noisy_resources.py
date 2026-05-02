@@ -14,10 +14,31 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from collections import Counter
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+
+def _strip_utm(url: str) -> str:
+    """Strip utm_* params — mirrors fetch_linked_content.strip_utm_params."""
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        query = urlencode(
+            [
+                (k, v)
+                for k, v in parse_qsl(parsed.query)
+                if not k.lower().startswith("utm_")
+            ]
+        )
+        return urlunparse(parsed._replace(query=query))
+    except Exception:
+        return url
+
 
 # ---------------------------------------------------------------------------
 # Detection
@@ -62,7 +83,26 @@ def _is_linkedin_feed_url(url: str) -> bool:
     )
 
 
-def classify(data: dict) -> tuple[bool, str]:
+def _is_utm_orphan(stem: str, data: dict) -> bool:
+    """True if this file was keyed by a UTM-containing URL.
+
+    After the canonical-key change, resource files are stored under
+    hash(strip_utm(url)).  Files that were stored under the old
+    hash(url_with_utm) key will never be found by the pipeline again
+    and should be deleted so the next run re-fetches them under the
+    correct canonical key.
+    """
+    url = (data.get("url") or "").strip()
+    if not url:
+        return False
+    canonical = _strip_utm(url)
+    if canonical == url:
+        return False  # no UTM params — not orphaned
+    old_stem = hashlib.sha256(url.encode()).hexdigest()
+    return stem == old_stem
+
+
+def classify(data: dict, stem: str = "") -> tuple[bool, str]:
     """Return (is_noisy, reason). Uses resolved_url when available."""
     url = (data.get("resolved_url") or data.get("url") or "").strip()
     url_lower = url.lower()
@@ -79,12 +119,64 @@ def classify(data: dict) -> tuple[bool, str]:
         if bad in title_lower:
             return True, f"LinkedIn auth title: {data.get('title')!r}"
 
+    if stem and _is_utm_orphan(stem, data):
+        canonical = _strip_utm(data.get("url") or "")
+        return True, f"UTM-orphaned key (canonical: {canonical})"
+
     return False, ""
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+
+def _fix_metadata_urls(content_dir: Path, *, dry_run: bool, verbose: bool) -> int:
+    """Canonical-dedup urls field in all meta.json files (no HTTP requests).
+
+    Returns the number of files modified.
+    """
+    meta_files = sorted(content_dir.glob("*.meta.json"))
+    modified = 0
+    for path in meta_files:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"  SKIP (unreadable): {path.name} — {e}")
+            continue
+
+        urls = data.get("urls")
+        if not isinstance(urls, list):
+            continue
+
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for u in urls:
+            c = _strip_utm(u)
+            if c not in seen:
+                seen.add(c)
+                deduped.append(u)
+
+        if deduped == urls:
+            if verbose:
+                print(f"  ok     {path.name}")
+            continue
+
+        removed = len(urls) - len(deduped)
+        print(f"  FIX    {path.name}  ({removed} duplicate(s) removed)")
+        if verbose:
+            dupes = [u for u in urls if urls.count(u) > 1]
+            for d in dict.fromkeys(dupes):
+                print(f"         dup: {d}")
+
+        if not dry_run:
+            data["urls"] = deduped
+            path.write_text(
+                json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
+            )
+        modified += 1
+
+    return modified
 
 
 def main() -> int:
@@ -95,6 +187,11 @@ def main() -> int:
         help="Actually delete noisy files (default: dry-run only).",
     )
     parser.add_argument(
+        "--fix-metadata-urls",
+        action="store_true",
+        help="Canonical-dedup urls field in all meta.json files (no HTTP). Dry-run unless --delete.",
+    )
+    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -102,7 +199,27 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    resources_dir = Path.home() / ".linkedin_api" / "data" / "resources"
+    data_dir = Path.home() / ".linkedin_api" / "data"
+
+    if args.fix_metadata_urls:
+        content_dir = data_dir / "content"
+        if not content_dir.exists():
+            print(f"Content directory not found: {content_dir}", file=sys.stderr)
+            return 1
+        dry_run = not args.delete
+        modified = _fix_metadata_urls(
+            content_dir, dry_run=dry_run, verbose=args.verbose
+        )
+        print()
+        if dry_run:
+            print(f"Found {modified} meta.json file(s) with duplicate URLs.")
+            if modified:
+                print("Dry-run — pass --delete to apply fixes.")
+        else:
+            print(f"Fixed {modified} meta.json file(s).")
+        return 0
+
+    resources_dir = data_dir / "resources"
     if not resources_dir.exists():
         print(f"Resources directory not found: {resources_dir}", file=sys.stderr)
         return 1
@@ -119,7 +236,7 @@ def main() -> int:
             print(f"  SKIP (unreadable): {json_path.name} — {e}")
             continue
 
-        is_noisy, reason = classify(data)
+        is_noisy, reason = classify(data, stem=json_path.stem)
         if is_noisy:
             noisy.append((json_path, reason))
             reasons[reason.split(":")[0].strip()] += 1

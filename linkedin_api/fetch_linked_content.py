@@ -54,6 +54,7 @@ from linkedin_api.utils.urls import (
     extract_urls_from_text,
     resolve_redirect,
     should_ignore_url,
+    strip_utm_params,
 )
 
 logger = logging.getLogger(__name__)
@@ -198,6 +199,11 @@ SKIP_TYPES: frozenset[str] = frozenset(
     {"image", "document", "presentation", "archive", "audio"}
 )
 
+# Cloudflare JS challenge markers — title and body fragments that identify a
+# challenge page rather than real content (Medium, some news sites).
+_CLOUDFLARE_TITLE_MARKER = "just a moment"
+_CLOUDFLARE_BODY_MARKERS = ("enable javascript and cookies to continue",)
+
 # ---------------------------------------------------------------------------
 # Resource store (keyed by SHA-256 of the resolved URL)
 # ---------------------------------------------------------------------------
@@ -211,8 +217,8 @@ def _resource_dir() -> Path:
 
 
 def _url_stem(url: str) -> str:
-    """Stable filename stem derived from the URL."""
-    return hashlib.sha256(url.encode()).hexdigest()
+    """Stable filename stem derived from the canonical URL (UTM params stripped)."""
+    return hashlib.sha256(strip_utm_params(url).encode()).hexdigest()
 
 
 def has_resource(url: str) -> bool:
@@ -220,19 +226,49 @@ def has_resource(url: str) -> bool:
     return (_resource_dir() / f"{_url_stem(url)}.json").exists()
 
 
-def save_resource(url: str, result: FetchResult) -> Path:
-    """Persist *result* for *url*.
+def save_resource(
+    url: str,
+    result: FetchResult,
+    *,
+    citing_post_urns: list[str] | tuple[str, ...] = (),
+) -> Path:
+    """Persist *result* for *url*, keyed by canonical URL (UTM stripped).
 
     Writes:
-    - ``{stem}.json``  — full FetchResult dict (always)
+    - ``{stem}.json``  — FetchResult dict + ``cited_by`` list (always)
     - ``{stem}.md``    — body text (only when content is non-empty)
+
+    ``cited_by`` is merged with any existing entries so multiple posts citing
+    the same resource accumulate rather than overwrite.
     """
     stem = _url_stem(url)
     resource_dir = _resource_dir()
-
     json_path = resource_dir / f"{stem}.json"
+
+    existing_cited_by: list[str] = []
+    if json_path.exists():
+        try:
+            raw_cited = (
+                json.loads(json_path.read_text(encoding="utf-8")).get("cited_by") or []
+            )
+            # Normalize legacy raw-URN entries (stored before hash-conversion fix)
+            existing_cited_by = [
+                hashlib.sha256(e.encode()).hexdigest() if e.startswith("urn:") else e
+                for e in raw_cited
+            ]
+        except Exception:
+            pass
+
+    # Store content-store hashes (sha256(urn)) so cited_by entries are
+    # directly usable as filenames: content/<hash>.md / content/<hash>.meta.json
+    new_hashes = [hashlib.sha256(u.encode()).hexdigest() for u in citing_post_urns if u]
+    data = asdict(result)
+    # Strip UTM from url/resolved_url — the file is keyed by canonical URL anyway
+    data["url"] = strip_utm_params(data["url"])
+    data["resolved_url"] = strip_utm_params(data["resolved_url"])
+    data["cited_by"] = list(dict.fromkeys(existing_cited_by + new_hashes))
     json_path.write_text(
-        json.dumps(asdict(result), indent=0, ensure_ascii=False), encoding="utf-8"
+        json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
     )
 
     if result.content:
@@ -242,12 +278,35 @@ def save_resource(url: str, result: FetchResult) -> Path:
     return json_path
 
 
+def _update_resource_cited_by(url: str, urns: list[str]) -> None:
+    """Merge *urns* into the ``cited_by`` list of an already-stored resource."""
+    json_path = _resource_dir() / f"{_url_stem(url)}.json"
+    if not json_path.exists() or not urns:
+        return
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        raw_existing = data.get("cited_by") or []
+        # Normalize legacy raw-URN entries
+        existing = [
+            hashlib.sha256(e.encode()).hexdigest() if e.startswith("urn:") else e
+            for e in raw_existing
+        ]
+        new_hashes = [hashlib.sha256(u.encode()).hexdigest() for u in urns if u]
+        data["cited_by"] = list(dict.fromkeys(existing + new_hashes))
+        json_path.write_text(
+            json.dumps(data, indent=0, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def load_resource(url: str) -> FetchResult | None:
     """Load a stored FetchResult for *url*, or ``None`` if not found."""
     json_path = _resource_dir() / f"{_url_stem(url)}.json"
     if not json_path.exists():
         return None
     data: dict = json.loads(json_path.read_text(encoding="utf-8"))
+    data.pop("cited_by", None)  # stored alongside but not part of FetchResult
     return FetchResult(**data)
 
 
@@ -292,6 +351,17 @@ def fetch_linked_content(
     try:
         title, content = strategy(resolved)
         logger.info("  -> %s", title[:80] if title else "(no title)")
+        if _CLOUDFLARE_TITLE_MARKER in title.lower() or any(
+            m in content.lower() for m in _CLOUDFLARE_BODY_MARKERS
+        ):
+            return FetchResult(
+                url=url,
+                resolved_url=resolved,
+                url_type=url_type,
+                domain=domain,
+                error="cloudflare challenge",
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+            )
         return FetchResult(
             url=url,
             resolved_url=resolved,
@@ -317,26 +387,32 @@ def process_post_linked_content(
     urls: list[str],
     *,
     skip_cached: bool = True,
+    citing_post_urn: str = "",
 ) -> list[FetchResult]:
     """Fetch and store content for a list of URLs extracted from a post.
 
     Args:
         urls: URLs to process (typically from post metadata).
         skip_cached: If True, skip URLs already in the resource store.
+        citing_post_urn: URN of the post that references these URLs; recorded
+            in ``cited_by`` so each resource tracks which posts linked to it.
 
     Returns:
         List of :class:`FetchResult` (including failures and skips).
     """
+    urns = [citing_post_urn] if citing_post_urn else []
     results: list[FetchResult] = []
     for url in urls:
         if skip_cached and has_resource(url):
             cached = load_resource(url)
             if cached is not None:
+                if urns:
+                    _update_resource_cited_by(url, urns)
                 results.append(cached)
                 continue
         result = fetch_linked_content(url)
         if result.ok:
-            save_resource(url, result)
+            save_resource(url, result, citing_post_urns=urns)
         results.append(result)
     return results
 
@@ -356,29 +432,41 @@ def fetch_linked_content_streaming(
 
     Only processes URLs from posts whose URN is in ``urns`` (if provided), and
     skips URLs already in the resource store when ``skip_cached`` is True.
-    Deduplicates URLs across posts so each URL is fetched at most once.
+    Deduplicates by canonical URL (UTM stripped) so variants of the same resource
+    are fetched once and accumulate all citing URNs in ``cited_by``.
 
     Returns total URLs successfully fetched via StopIteration.value.
     """
-    seen: set[str] = set()
-    jobs: list[str] = []
-    for _urn, urls in _iter_posts_with_urls(urns=urns):
-        for url in urls:
-            if url in seen:
-                continue
-            seen.add(url)
-            if skip_cached and has_resource(url):
-                continue
-            jobs.append(url)
+    # Collect canonical_url → (first_raw_url, [citing_urns])
+    url_to_urns: dict[str, list[str]] = {}
+    canonical_to_raw: dict[str, str] = {}
+    for post_urn, post_urls in _iter_posts_with_urls(urns=urns):
+        for url in post_urls:
+            canon = strip_utm_params(url)
+            if canon not in url_to_urns:
+                url_to_urns[canon] = []
+                canonical_to_raw[canon] = url
+            if post_urn and post_urn not in url_to_urns[canon]:
+                url_to_urns[canon].append(post_urn)
+
+    # For already-cached resources update cited_by; collect the rest to fetch.
+    jobs: list[tuple[str, list[str]]] = []
+    for canon, citing_urns in url_to_urns.items():
+        raw_url = canonical_to_raw[canon]
+        if skip_cached and has_resource(raw_url):
+            if citing_urns:
+                _update_resource_cited_by(raw_url, citing_urns)
+        else:
+            jobs.append((raw_url, citing_urns))
 
     if limit:
         jobs = jobs[:limit]
 
     urls_fetched = 0
-    for i, url in enumerate(jobs):
+    for i, (url, citing_urns) in enumerate(jobs):
         result = fetch_linked_content(url)
         if result.ok:
-            save_resource(url, result)
+            save_resource(url, result, citing_post_urns=citing_urns)
             urls_fetched += 1
         yield i + 1, len(jobs)
     return urls_fetched
