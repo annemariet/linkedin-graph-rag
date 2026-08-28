@@ -227,6 +227,23 @@ class TestFetchLinkedContent:
         assert result.title == "My Video"
         assert result.content == ""  # metadata-only: no body
 
+    def test_metadata_only_strategy_for_podcast(self):
+        html = (
+            "<html><head>"
+            '<meta property="og:title" content="Some Episode"/>'
+            "</head><body><p>Let's find some podcasts to follow</p></body></html>"
+        )
+        with patch("requests.get", return_value=_mock_get_response(html)):
+            result = fetch_linked_content(
+                "https://open.spotify.com/episode/4vALGUeV42unt2qrJadIUW",
+                resolve_redirects=False,
+            )
+
+        assert result.url_type == "podcast"
+        assert result.title == "Some Episode"
+        assert result.content == ""
+        assert not is_exportable_resource(result)
+
 
 # ---------------------------------------------------------------------------
 # Short URL resolution → classification
@@ -285,6 +302,30 @@ class TestShortUrlResolution:
         assert result.url_type == "video"
         assert result.content == ""  # metadata-only
         assert result.title == "My Video"
+
+    def test_lnkd_in_to_spotify_classified_as_podcast(self):
+        """lnkd.in → open.spotify.com must be dispatched as 'podcast'."""
+        with (
+            patch(
+                "linkedin_api.fetch_linked_content.resolve_redirect",
+                return_value="https://open.spotify.com/episode/4vALGUeV42unt2qrJadIUW",
+            ),
+            patch(
+                "requests.get",
+                return_value=_mock_get_response(self._mock_html("Some Episode")),
+            ),
+        ):
+            result = fetch_linked_content(
+                "https://lnkd.in/erbBvi7E", resolve_redirects=True
+            )
+
+        assert result.url_type == "podcast"
+        assert result.resolved_url == (
+            "https://open.spotify.com/episode/4vALGUeV42unt2qrJadIUW"
+        )
+        assert result.content == ""
+        assert result.title == "Some Episode"
+        assert not is_exportable_resource(result)
 
     def test_lnkd_in_to_medium_article_classified_as_article(self):
         """lnkd.in → medium.com must be classified as 'article' and body-fetched."""
@@ -1477,6 +1518,29 @@ class TestIsExportableResource:
                 url="https://example.com/blog/x",
                 title="Hello",
                 content="A real paragraph of article text.",
+                url_type="article",
+            )
+        )
+
+    def test_rejects_spotify_even_with_scraped_player_body(self):
+        assert not is_exportable_resource(
+            FetchResult(
+                url="https://open.spotify.com/episode/4vALGUeV42unt2qrJadIUW",
+                title="From Chrome DevTools to AI Engineering",
+                content="Let's find some podcasts to follow\nBrowse podcasts\n",
+                url_type="article",
+            )
+        )
+
+    def test_rejects_apple_podcasts_url(self):
+        assert not is_exportable_resource(
+            FetchResult(
+                url=(
+                    "https://podcasts.apple.com/us/podcast/"
+                    "the-pragmatic-engineer/id1769051199"
+                ),
+                title="The Pragmatic Engineer",
+                content="Listen on Apple Podcasts",
                 url_type="article",
             )
         )

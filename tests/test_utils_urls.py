@@ -194,6 +194,24 @@ class TestCategorizeUrl:
         result = categorize_url("https://youtube.com/watch?v=123")
         assert result["type"] == "video"
 
+    def test_spotify_episode_is_podcast(self):
+        result = categorize_url(
+            "https://open.spotify.com/episode/4vALGUeV42unt2qrJadIUW"
+        )
+        assert result["type"] == "podcast"
+
+    def test_apple_podcasts_is_podcast(self):
+        result = categorize_url(
+            "https://podcasts.apple.com/us/podcast/"
+            "from-chrome-devtools-to-ai-engineering-with-addy-osmani/"
+            "id1769051199?i=1000784385465"
+        )
+        assert result["type"] == "podcast"
+
+    def test_spotify_engineering_blog_is_article(self):
+        result = categorize_url("https://engineering.atspotify.com/2024/xirp")
+        assert result["type"] == "article"
+
     def test_medium(self):
         result = categorize_url("https://medium.com/@user/article")
         assert result["type"] == "article"

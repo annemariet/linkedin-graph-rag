@@ -196,6 +196,36 @@ def fix_mojibake(text: str) -> str:
     )
 
 
+def _host_matches(domain: str, hosts: tuple[str, ...]) -> bool:
+    """True when *domain* is one of *hosts* or a subdomain of one."""
+    return any(domain == host or domain.endswith("." + host) for host in hosts)
+
+
+# Listen/embed hosts: scrape yields a player chrome + suggested shows, not the
+# episode. Keep the URL on the citing post; do not fetch a body.
+_PODCAST_HOSTS = (
+    "open.spotify.com",
+    "podcasters.spotify.com",
+    "podcasts.apple.com",
+    "podcasts.google.com",
+    "overcast.fm",
+    "pca.st",
+    "pocketcasts.com",
+    "anchor.fm",
+    "castro.fm",
+    "castbox.fm",
+    "podcastaddict.com",
+    "podbean.com",
+    "transistor.fm",
+    "buzzsprout.com",
+    "simplecast.com",
+    "spreaker.com",
+    "iheart.com",
+    "player.fm",
+    "radiopublic.com",
+)
+
+
 def categorize_url(url: str) -> Dict[str, Optional[str]]:
     """
     Categorize a URL by domain and type.
@@ -240,6 +270,10 @@ def categorize_url(url: str) -> Dict[str, Optional[str]]:
             resource_type = "video"
         elif any(d in domain for d in ["github.com", "gitlab.com", "bitbucket.org"]):
             resource_type = "repository"
+        elif _host_matches(domain, _PODCAST_HOSTS) or (
+            domain == "itunes.apple.com" and "/podcast" in path
+        ):
+            resource_type = "podcast"
         elif any(d in domain for d in ["docs.", "readthedocs.io"]):
             resource_type = "documentation"
         elif any(
