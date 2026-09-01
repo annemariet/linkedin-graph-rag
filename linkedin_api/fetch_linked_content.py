@@ -146,10 +146,24 @@ class FetchResult:
 
 _BINARY_CONTENT_MARKERS = ("%PDF-", "\x89PNG")
 
+#: URL types that are always metadata-only (body extraction deferred), regardless
+#: of ``LINKEDIN_EXTRACTOR`` — no Tavily credits on YouTube / GitHub / podcasts.
+_METADATA_ONLY_URL_TYPES: frozenset[str] = frozenset({"video", "repository", "podcast"})
+
 
 def is_exportable_resource(result: FetchResult) -> bool:
-    """Skip binary PDFs, errors, empty bodies, and URL-only interstitial noise."""
+    """Skip binary PDFs, errors, empty bodies, and URL-only interstitial noise.
+
+    YouTube, GitHub, and podcast hosts (Spotify, Apple Podcasts, …) are
+    link-only: even a cached scrape of the player page must not become a
+    catalog note. The citing post already keeps the URL.
+    """
     if result.error:
+        return False
+    url = (result.resolved_url or result.url or "").strip()
+    if url and categorize_url(url).get("type") in _METADATA_ONLY_URL_TYPES:
+        return False
+    if result.url_type in _METADATA_ONLY_URL_TYPES:
         return False
     body = (result.content or "").strip()
     title = (result.title or "").strip()
@@ -338,7 +352,8 @@ def _fetch_x_status(url: str) -> tuple[str, str, list[str]]:
 def _fetch_metadata_only(url: str) -> tuple[str, str, list[str]]:
     """Title-only fetch (og:title / <title>); body extraction deferred.
 
-    Used for video platforms (YouTube), code repositories (GitHub), etc.
+    Used for video (YouTube), repositories (GitHub), and podcasts (Spotify,
+    Apple Podcasts, …). The player/home page is not the episode.
     """
     _, title = _fetch_soup(url, timeout=(5, 10))
     return title, "", []
@@ -519,10 +534,6 @@ _BODY_BACKENDS: dict[str, FetchStrategy] = {
     "httpx": _fetch_html_body,
     "tavily": _fetch_tavily,
 }
-
-#: URL types that are always metadata-only (body extraction deferred), regardless
-#: of ``LINKEDIN_EXTRACTOR`` — no point spending Tavily credits on YouTube/GitHub.
-_METADATA_ONLY_URL_TYPES: frozenset[str] = frozenset({"video", "repository", "podcast"})
 
 #: URL types whose content we never attempt to fetch (binary / media files).
 SKIP_TYPES: frozenset[str] = frozenset(
